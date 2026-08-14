@@ -197,11 +197,11 @@ import simd
 // alpha = 4 G M / (b c^2).
 // ============================================================
 */
-// MARK: - Constants
 import SwiftUI
 import SceneKit
 import simd
 import Combine
+import UIKit
 
 // ============================================================
 // PHYSICAL CONSTANTS
@@ -247,7 +247,7 @@ struct QRTLParameters {
     var magneticFieldCoupling: Double = 1.0
     var photonEMCoupling: Double = 0.0
     var epsilon: Double = 1.0e-12
-    var potentialIntegrationSteps: Int = 4_000
+    var potentialIntegrationSteps: Int = 2_500
 }
 
 // ============================================================
@@ -274,28 +274,6 @@ struct GaussianMassModel {
 }
 
 // ============================================================
-// FIELD SAMPLES
-// ============================================================
-
-struct QRTLElectromagneticSample {
-    let effectiveCurrent: SIMD3<Double>
-    let electricEnergyDensity: Double
-    let magneticEnergyDensity: Double
-    let totalEnergyDensity: Double
-}
-
-struct QRTLFieldSample {
-    let position: SIMD3<Double>
-    let baryonicDensity: Double
-    let qrtlCurrent: SIMD3<Double>
-    let qrtlEnergyDensity: Double
-    let effectiveGravitatingDensity: Double
-    let gravitationalPotential: Double
-    let gravitationalAcceleration: SIMD3<Double>
-    let electromagnetic: QRTLElectromagneticSample
-}
-
-// ============================================================
 // QRTL FIELD
 // ============================================================
 
@@ -312,10 +290,6 @@ final class QRTLField {
         massModel.density(r: simd_length(position))
     }
 
-    func qrtlSource(at position: SIMD3<Double>) -> Double {
-        parameters.alphaQ * density(at: position)
-    }
-
     func qrtlCurrent(at position: SIMD3<Double>) -> SIMD3<Double> {
         let r = simd_length(position)
         if r <= parameters.epsilon { return .zero }
@@ -326,9 +300,8 @@ final class QRTLField {
     }
 
     func qrtlEnergyDensity(at position: SIMD3<Double>) -> Double {
-        let current = qrtlCurrent(at: position)
-        let j2 = simd_dot(current, current)
-        return j2 / (2.0 * max(parameters.chiQ, parameters.epsilon))
+        let j = qrtlCurrent(at: position)
+        return simd_dot(j, j) / (2.0 * max(parameters.chiQ, parameters.epsilon))
     }
 
     func effectiveGravitatingDensity(at position: SIMD3<Double>) -> Double {
@@ -339,13 +312,12 @@ final class QRTLField {
 
     func enclosedEffectiveMass(r: Double) -> Double {
         if r <= 0 { return 0 }
-        let steps = max(parameters.potentialIntegrationSteps, 100)
+        let steps = max(parameters.potentialIntegrationSteps, 60)
         let dr = r / Double(steps)
         var mass = 0.0
         for i in 0..<steps {
             let radius = (Double(i) + 0.5) * dr
-            let pos = SIMD3<Double>(radius, 0, 0)
-            let dens = effectiveGravitatingDensity(at: pos)
+            let dens = effectiveGravitatingDensity(at: SIMD3(radius, 0, 0))
             mass += dens * 4.0 * .pi * radius * radius * dr
         }
         return mass
@@ -354,10 +326,10 @@ final class QRTLField {
     func gravitationalPotential(at position: SIMD3<Double>) -> Double {
         let r = simd_length(position)
         let sigma = massModel.characteristicRadius
-        let outer = max(20.0 * sigma, 4.0 * r, sigma)
+        let outer = max(12.0 * sigma, 2.5 * r, sigma)
         let safeR = max(r, parameters.epsilon)
         let enclosed = enclosedEffectiveMass(r: safeR)
-        let steps = max(parameters.potentialIntegrationSteps, 100)
+        let steps = max(parameters.potentialIntegrationSteps, 60)
         let dr = (outer - safeR) / Double(steps)
         var exterior = 0.0
         if dr > 0 {
@@ -370,15 +342,7 @@ final class QRTLField {
         return -PhysicalConstants.G * (enclosed / safeR + 4.0 * .pi * exterior)
     }
 
-    func gravitationalAcceleration(at position: SIMD3<Double>) -> SIMD3<Double> {
-        let r = simd_length(position)
-        if r <= parameters.epsilon { return .zero }
-        let enclosed = enclosedEffectiveMass(r: r)
-        let mag = -PhysicalConstants.G * enclosed / (r * r)
-        return (position / r) * mag
-    }
-
-    func electromagneticField(at position: SIMD3<Double>) -> QRTLElectromagneticSample {
+    func electromagneticField(at position: SIMD3<Double>) -> (energy: Double, currentMag: Double) {
         let r = max(simd_length(position), parameters.epsilon)
         let jq = qrtlCurrent(at: position)
         let jeff = parameters.electromagneticCoupling * jq
@@ -388,26 +352,7 @@ final class QRTLField {
         let mScale = parameters.magneticFieldCoupling * parameters.magneticFieldCoupling
         let uE = eScale * j2 / (geo * PhysicalConstants.epsilon0)
         let uB = mScale * PhysicalConstants.mu0 * j2 / geo
-        return QRTLElectromagneticSample(
-            effectiveCurrent: jeff,
-            electricEnergyDensity: uE,
-            magneticEnergyDensity: uB,
-            totalEnergyDensity: uE + uB
-        )
-    }
-
-    func sample(at position: SIMD3<Double>) -> QRTLFieldSample {
-        let em = electromagneticField(at: position)
-        return QRTLFieldSample(
-            position: position,
-            baryonicDensity: density(at: position),
-            qrtlCurrent: qrtlCurrent(at: position),
-            qrtlEnergyDensity: qrtlEnergyDensity(at: position),
-            effectiveGravitatingDensity: effectiveGravitatingDensity(at: position),
-            gravitationalPotential: gravitationalPotential(at: position),
-            gravitationalAcceleration: gravitationalAcceleration(at: position),
-            electromagnetic: em
-        )
+        return (uE + uB, sqrt(simd_dot(jq, jq)))
     }
 }
 
@@ -428,7 +373,7 @@ final class QRTLPhotonTracer {
     }
 
     func electromagneticIndex(at position: SIMD3<Double>) -> Double {
-        let energy = field.electromagneticField(at: position).totalEnergyDensity
+        let (energy, _) = field.electromagneticField(at: position)
         return 1.0 + field.parameters.photonEMCoupling * energy
     }
 
@@ -438,7 +383,7 @@ final class QRTLPhotonTracer {
 
     func totalIndexGradient(at position: SIMD3<Double>) -> SIMD3<Double> {
         let r = max(simd_length(position), 1.0)
-        let step = max(0.0005 * r, 1.0)
+        let step = max(0.001 * r, 3.0)
         let dx = SIMD3(step, 0, 0)
         let dy = SIMD3(0, step, 0)
         let dz = SIMD3(0, 0, step)
@@ -448,18 +393,11 @@ final class QRTLPhotonTracer {
         let ym = totalIndex(at: position - dy)
         let zp = totalIndex(at: position + dz)
         let zm = totalIndex(at: position - dz)
-        return SIMD3(
-            (xp - xm) / (2 * step),
-            (yp - ym) / (2 * step),
-            (zp - zm) / (2 * step)
-        )
+        return SIMD3((xp-xm)/(2*step), (yp-ym)/(2*step), (zp-zm)/(2*step))
     }
 
-    func trace(start: SIMD3<Double>,
-               direction: SIMD3<Double>,
-               totalDistance: Double,
-               stepSize: Double) -> [SIMD3<Double>] {
-        precondition(stepSize > 0 && totalDistance > 0)
+    func trace(start: SIMD3<Double>, direction: SIMD3<Double>,
+               totalDistance: Double, stepSize: Double) -> [SIMD3<Double>] {
         var pos = start
         var dir = simd_normalize(direction)
         var path: [SIMD3<Double>] = [pos]
@@ -478,21 +416,8 @@ final class QRTLPhotonTracer {
 }
 
 // ============================================================
-// DIAGNOSTICS
+// EXPERIMENT
 // ============================================================
-
-struct LensingComparison {
-    static func GRDeflection(mass: Double, impactParameter: Double) -> Double {
-        4.0 * PhysicalConstants.G * mass / (impactParameter * PhysicalConstants.c * PhysicalConstants.c)
-    }
-    static func arcseconds(radians: Double) -> Double {
-        radians * PhysicalConstants.radiansToArcseconds
-    }
-    static func angleBetween(_ a: SIMD3<Double>, _ b: SIMD3<Double>) -> Double {
-        let c = clamped(simd_dot(simd_normalize(a), simd_normalize(b)), minimum: -1, maximum: 1)
-        return acos(c)
-    }
-}
 
 struct QRTLExperimentResult {
     let qrtlDeflection: Double
@@ -501,10 +426,6 @@ struct QRTLExperimentResult {
     let qrtlDeflectionArcseconds: Double
     let grDeflectionArcseconds: Double
 }
-
-// ============================================================
-// EXPERIMENT
-// ============================================================
 
 final class QRTLExperiment {
     let field: QRTLField
@@ -516,32 +437,135 @@ final class QRTLExperiment {
         self.tracer = QRTLPhotonTracer(field: field)
     }
 
-    func run(impactParameter: Double,
-             startDistance: Double,
-             endDistance: Double,
-             stepSize: Double) -> QRTLExperimentResult {
+    func run(impactParameter: Double, startDistance: Double,
+             endDistance: Double, stepSize: Double) -> QRTLExperimentResult {
         let start = SIMD3(-startDistance, impactParameter, 0)
-        let dir = SIMD3(1.0, 0.0, 0.0)
-        let path = tracer.trace(start: start, direction: dir,
-                                totalDistance: startDistance + endDistance,
-                                stepSize: stepSize)
+        let path = tracer.trace(start: start, direction: SIMD3(1,0,0),
+                                totalDistance: startDistance + endDistance, stepSize: stepSize)
         guard path.count >= 3 else {
             return QRTLExperimentResult(qrtlDeflection: 0, grDeflection: 0, differencePercent: 0,
                                         qrtlDeflectionArcseconds: 0, grDeflectionArcseconds: 0)
         }
         let incoming = simd_normalize(path[1] - path[0])
         let outgoing = simd_normalize(path[path.count-1] - path[path.count-2])
-        let qrtlAngle = LensingComparison.angleBetween(incoming, outgoing)
-        let grAngle = LensingComparison.GRDeflection(mass: field.massModel.totalMass,
-                                                     impactParameter: impactParameter)
+        let cos = clamped(simd_dot(incoming, outgoing), minimum: -1, maximum: 1)
+        let qrtlAngle = acos(cos)
+        let grAngle = 4.0 * PhysicalConstants.G * field.massModel.totalMass /
+            (impactParameter * PhysicalConstants.c * PhysicalConstants.c)
         let diff = grAngle > 0 ? 100 * (qrtlAngle - grAngle) / grAngle : 0
         return QRTLExperimentResult(
             qrtlDeflection: qrtlAngle,
             grDeflection: grAngle,
             differencePercent: diff,
-            qrtlDeflectionArcseconds: LensingComparison.arcseconds(radians: qrtlAngle),
-            grDeflectionArcseconds: LensingComparison.arcseconds(radians: grAngle)
+            qrtlDeflectionArcseconds: qrtlAngle * PhysicalConstants.radiansToArcseconds,
+            grDeflectionArcseconds: grAngle * PhysicalConstants.radiansToArcseconds
         )
+    }
+}
+
+// ============================================================
+// HEATMAP (bottom plane)
+// ============================================================
+
+final class QRTLHeatmapGenerator {
+    static func makeHeatmapImage(field: QRTLField, size: Int = 96, halfExtent: Double) -> UIImage {
+        UIGraphicsBeginImageContextWithOptions(CGSize(width: size, height: size), true, 1)
+        guard let ctx = UIGraphicsGetCurrentContext() else { return UIImage() }
+
+        var maxVal: Double = 1e-30
+        var samples = [[Double]](repeating: [Double](repeating: 0, count: size), count: size)
+
+        for j in 0..<size {
+            for i in 0..<size {
+                let x = -halfExtent + (Double(i)+0.5)*(2*halfExtent/Double(size))
+                let z = -halfExtent + (Double(j)+0.5)*(2*halfExtent/Double(size))
+                let pos = SIMD3(x, 0, z)
+                let (em, jMag) = field.electromagneticField(at: pos)
+                let val = jMag * 1e12 + em * 1e22
+                samples[j][i] = val
+                if val > maxVal { maxVal = val }
+            }
+        }
+
+        for j in 0..<size {
+            for i in 0..<size {
+                let t = CGFloat(samples[j][i] / maxVal)
+                let color: UIColor
+                if t < 0.25 {
+                    color = UIColor(red: 0, green: 0, blue: t*4, alpha: 1)
+                } else if t < 0.5 {
+                    color = UIColor(red: 0, green: (t-0.25)*4, blue: 1, alpha: 1)
+                } else if t < 0.75 {
+                    color = UIColor(red: (t-0.5)*4, green: 1, blue: 1-(t-0.5)*4, alpha: 1)
+                } else {
+                    color = UIColor(red: 1, green: 1, blue: max(0, 1-(t-0.75)*4), alpha: 1)
+                }
+                ctx.setFillColor(color.cgColor)
+                ctx.fill(CGRect(x: i, y: size-1-j, width: 1, height: 1))
+            }
+        }
+        let img = UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
+        UIGraphicsEndImageContext()
+        return img
+    }
+}
+
+// ============================================================
+// PROJECTION ACCUMULATOR  ← the missing stage
+// ============================================================
+
+final class ProjectionAccumulator {
+    let resolution: Int
+    let halfExtent: Double          // physical size of the plane (same units as simulation)
+    private var buffer: [[Float]]
+
+    init(resolution: Int = 256, halfExtent: Double) {
+        self.resolution = resolution
+        self.halfExtent = halfExtent
+        self.buffer = [[Float]](repeating: [Float](repeating: 0, count: resolution), count: resolution)
+    }
+
+    func reset() {
+        for j in 0..<resolution {
+            for i in 0..<resolution {
+                buffer[j][i] = 0
+            }
+        }
+    }
+
+    /// Record a photon hit at physical (y,z) on the observation plane
+    func addHit(y: Double, z: Double, weight: Float = 1.0) {
+        let u = (y + halfExtent) / (2 * halfExtent)   // 0…1
+        let v = (z + halfExtent) / (2 * halfExtent)
+        let i = Int(u * Double(resolution - 1))
+        let j = Int(v * Double(resolution - 1))
+        guard i >= 0, i < resolution, j >= 0, j < resolution else { return }
+        buffer[j][i] += weight
+    }
+
+    /// Convert the accumulator into a UIImage that can be used as a texture
+    func makeImage() -> UIImage {
+        var maxVal: Float = 1e-6
+        for row in buffer {
+            for v in row { if v > maxVal { maxVal = v } }
+        }
+
+        UIGraphicsBeginImageContextWithOptions(CGSize(width: resolution, height: resolution), false, 1)
+        guard let ctx = UIGraphicsGetCurrentContext() else { return UIImage() }
+
+        for j in 0..<resolution {
+            for i in 0..<resolution {
+                let t = CGFloat(buffer[j][i] / maxVal)
+                // bright yellow-white galaxy light
+                let alpha = min(1.0, t * 1.8)
+                let color = UIColor(red: 1, green: 0.95, blue: 0.7, alpha: alpha)
+                ctx.setFillColor(color.cgColor)
+                ctx.fill(CGRect(x: i, y: resolution-1-j, width: 1, height: 1))
+            }
+        }
+        let img = UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
+        UIGraphicsEndImageContext()
+        return img
     }
 }
 
@@ -552,46 +576,52 @@ final class QRTLExperiment {
 final class LensingSceneController: ObservableObject {
     let scene = SCNScene()
     private var pathNodes: [SCNNode] = []
+    private var sourceGalaxyNodes: [SCNNode] = []
     private var massNode: SCNNode?
-    private var planeNode: SCNNode?
+    private var frontPlaneNode: SCNNode?
+    private var bottomPlaneNode: SCNNode?
+    
+  
+    // ------------------------------------------------------------
+    // 2. In LensingSceneController – replace the geometry constants
+    // ------------------------------------------------------------
+    let sourceX: Float       = -3200
+    let frontPlaneX: Float   =  2600
+    let bottomY: Float       = -1600
+    let planeHalfExtent: Float = 1800
+    let heatmapHalfExtent: Float = 2000
+    let startDistance: Double = 3200          // now pure numbers
+    let endDistance: Double   = 3200
+
+    // Projection
+    private let accumulator = ProjectionAccumulator(resolution: 192, halfExtent: 1800.0 * PhysicalConstants.solarRadius)
 
     init() {
         setupCameraLights()
         addAxes()
+        addFrontProjectionPlane(empty: true)
+        addBottomPlaceholder()
     }
 
     private func setupCameraLights() {
         let cam = SCNNode()
         cam.camera = SCNCamera()
-        cam.camera?.zFar = 2e6
-        cam.position = SCNVector3(0, 25_000, 60_000)
-        cam.look(at: SCNVector3(0, 0, 0))
+        cam.camera?.zNear = 1
+        cam.camera?.zFar  = 20000          // large enough
+        cam.position = SCNVector3(800, 1200, 3500)
+        cam.look(at: SCNVector3(0, -200, 0))
         scene.rootNode.addChildNode(cam)
-
-        let ambient = SCNNode()
-        ambient.light = SCNLight()
-        ambient.light?.type = .ambient
-        ambient.light?.intensity = 500
-        scene.rootNode.addChildNode(ambient)
-
-        let dir = SCNNode()
-        dir.light = SCNLight()
-        dir.light?.type = .directional
-        dir.light?.intensity = 900
-        dir.eulerAngles = SCNVector3(-Double.pi/4, Double.pi/4, 0)
-        scene.rootNode.addChildNode(dir)
+        // … lights stay the same
     }
-
     private func addAxes() {
-        let len: Float = 20_000
+        let len: Float = 1600
         for (v, col) in [
-            (SCNVector3(len, 0, 0), UIColor.red),
-            (SCNVector3(0, len, 0), UIColor.green),
-            (SCNVector3(0, 0, len), UIColor.blue)
+            (SCNVector3(len,0,0), UIColor.systemRed),
+            (SCNVector3(0,len,0), UIColor.systemGreen),
+            (SCNVector3(0,0,len), UIColor.systemBlue)
         ] {
-            let geo = SCNCylinder(radius: 30, height: CGFloat(len))
-            let mat = SCNMaterial()
-            mat.diffuse.contents = col
+            let geo = SCNCylinder(radius: 18, height: CGFloat(len))
+            let mat = SCNMaterial(); mat.diffuse.contents = col
             geo.materials = [mat]
             let node = SCNNode(geometry: geo)
             node.position = SCNVector3(v.x/2, v.y/2, v.z/2)
@@ -601,54 +631,137 @@ final class LensingSceneController: ObservableObject {
         }
     }
 
-    func clearPaths() {
+    func clearDynamic() {
         pathNodes.forEach { $0.removeFromParentNode() }
         pathNodes.removeAll()
+        sourceGalaxyNodes.forEach { $0.removeFromParentNode() }
+        sourceGalaxyNodes.removeAll()
         massNode?.removeFromParentNode()
-        planeNode?.removeFromParentNode()
+        massNode = nil
+        bottomPlaneNode?.removeFromParentNode()
+        bottomPlaneNode = nil
+        accumulator.reset()
     }
 
-    func addCentralMass(radius: Double) {
-        let r = Float(max(radius * 0.8, 200))
+    // MARK: - Source galaxy (real 2-D distribution)
+    func addSourceGalaxy(radius: Double = 450 * PhysicalConstants.solarRadius, nStars: Int = 180) {
+        sourceGalaxyNodes.forEach { $0.removeFromParentNode() }
+        sourceGalaxyNodes.removeAll()
+
+        // simple exponential-disk + spiral arms
+        for _ in 0..<nStars {
+            let r = radius * pow(Double.random(in: 0...1), 0.7)
+            let theta = Double.random(in: 0...(2 * .pi))
+            // weak spiral
+            let arm = 0.6 * sin(2.5 * theta)
+            let y = (r + arm * radius * 0.15) * cos(theta)
+            let z = (r + arm * radius * 0.15) * sin(theta)
+
+            let star = SCNSphere(radius: CGFloat.random(in: 12...28))
+            let mat = SCNMaterial()
+            mat.diffuse.contents = UIColor.yellow
+            mat.emission.contents = UIColor.yellow.withAlphaComponent(0.9)
+            mat.lightingModel = .constant
+            star.materials = [mat]
+            let node = SCNNode(geometry: star)
+            node.position = SCNVector3(Float(sourceX), Float(y), Float(z))
+            scene.rootNode.addChildNode(node)
+            sourceGalaxyNodes.append(node)
+        }
+    }
+
+    // MARK: - Front observation plane with projected image
+    func addFrontProjectionPlane(empty: Bool) {
+        frontPlaneNode?.removeFromParentNode()
+
+        let size = planeHalfExtent * 2
+        let plane = SCNPlane(width: CGFloat(size), height: CGFloat(size))
+        let mat = SCNMaterial()
+        if empty {
+            mat.diffuse.contents = UIColor.cyan.withAlphaComponent(0.15)
+            mat.emission.contents = UIColor.cyan.withAlphaComponent(0.05)
+        } else {
+            let img = accumulator.makeImage()
+            mat.diffuse.contents = img
+            mat.emission.contents = img
+        }
+        mat.isDoubleSided = true
+        plane.materials = [mat]
+
+        let node = SCNNode(geometry: plane)
+        node.position = SCNVector3(Float(frontPlaneX), 0, 0)
+        node.eulerAngles.y = .pi / 2
+        scene.rootNode.addChildNode(node)
+        frontPlaneNode = node
+    }
+
+    // MARK: - Bottom QRTL heatmap
+    func addBottomPlaceholder() {
+        let size = heatmapHalfExtent * 2
+        let plane = SCNPlane(width: CGFloat(size), height: CGFloat(size))
+        let mat = SCNMaterial()
+        mat.diffuse.contents = UIColor(white: 0.07, alpha: 0.9)
+        mat.isDoubleSided = true
+        plane.materials = [mat]
+        let node = SCNNode(geometry: plane)
+        node.position = SCNVector3(0, Float(bottomY), 0)
+        node.eulerAngles.x = -.pi / 2
+        scene.rootNode.addChildNode(node)
+        bottomPlaneNode = node
+    }
+
+    func updateBottomHeatmap(field: QRTLField) {
+        bottomPlaneNode?.removeFromParentNode()
+        
+        let img = QRTLHeatmapGenerator.makeHeatmapImage(
+            field: field,
+            halfExtent: Double(heatmapHalfExtent)          // ← Fixed here
+        )
+        
+        let size = heatmapHalfExtent * 2
+        let plane = SCNPlane(width: CGFloat(size), height: CGFloat(size))
+        
+        let mat = SCNMaterial()
+        mat.diffuse.contents = img
+        mat.emission.contents = img
+        mat.isDoubleSided = true
+        plane.materials = [mat]
+        
+        let node = SCNNode(geometry: plane)
+        node.position = SCNVector3(0, Float(bottomY), 0)
+        node.eulerAngles.x = -.pi / 2
+        scene.rootNode.addChildNode(node)
+        bottomPlaneNode = node
+    }
+
+    // MARK: - Globular cluster
+    func addCluster(radius: Double) {
+        massNode?.removeFromParentNode()
+        let r = Float(max(radius * 1.1, 150))
         let sphere = SCNSphere(radius: CGFloat(r))
         let mat = SCNMaterial()
         mat.diffuse.contents = UIColor.orange
-        mat.emission.contents = UIColor.orange.withAlphaComponent(0.6)
+        mat.emission.contents = UIColor.orange.withAlphaComponent(0.7)
         sphere.materials = [mat]
         let node = SCNNode(geometry: sphere)
         scene.rootNode.addChildNode(node)
         massNode = node
     }
 
-    func addObservationPlane(atX x: Double, size: Double) {
-        let plane = SCNPlane(width: CGFloat(size), height: CGFloat(size))
-        let mat = SCNMaterial()
-        mat.diffuse.contents = UIColor.cyan.withAlphaComponent(0.15)
-        mat.isDoubleSided = true
-        plane.materials = [mat]
-        let node = SCNNode(geometry: plane)
-        node.position = SCNVector3(Float(x), 0, 0)
-        node.eulerAngles.y = .pi / 2
-        scene.rootNode.addChildNode(node)
-        planeNode = node
-    }
-
-    func addPhotonPath(_ points: [SIMD3<Double>], color: UIColor, lineWidth: CGFloat = 2) {
+    // MARK: - Photon path (optional visual aid)
+    func addPhotonPath(_ points: [SIMD3<Double>]) {
         guard points.count > 1 else { return }
-        var vertices: [SCNVector3] = points.map {
-            SCNVector3(Float($0.x), Float($0.y), Float($0.z))
-        }
+        let vertices = points.map { SCNVector3(Float($0.x), Float($0.y), Float($0.z)) }
         let source = SCNGeometrySource(vertices: vertices)
         var indices: [Int32] = []
         for i in 0..<vertices.count-1 {
-            indices.append(Int32(i))
-            indices.append(Int32(i+1))
+            indices.append(Int32(i)); indices.append(Int32(i+1))
         }
         let element = SCNGeometryElement(indices: indices, primitiveType: .line)
         let geo = SCNGeometry(sources: [source], elements: [element])
         let mat = SCNMaterial()
-        mat.diffuse.contents = color
-        mat.emission.contents = color
+        mat.diffuse.contents = UIColor.cyan.withAlphaComponent(0.35)
+        mat.emission.contents = UIColor.cyan.withAlphaComponent(0.35)
         mat.lightingModel = .constant
         geo.materials = [mat]
         let node = SCNNode(geometry: geo)
@@ -656,164 +769,148 @@ final class LensingSceneController: ObservableObject {
         pathNodes.append(node)
     }
 
-    /// Generate a fan of parallel rays representing photons from a distant source galaxy
-    func generateSourceGalaxyRays(
-        experiment: QRTLExperiment,
-        impactParams: [Double],          // list of impact parameters (y)
-        startDist: Double,
-        endDist: Double,
-        step: Double,
-        color: UIColor
-    ) {
-        for b in impactParams {
-            let start = SIMD3(-startDist, b, 0)
-            let dir = SIMD3(1.0, 0.0, 0.0)
-            let path = experiment.tracer.trace(
-                start: start,
-                direction: dir,
-                totalDistance: startDist + endDist,
-                stepSize: step
-            )
-            addPhotonPath(path, color: color)
+    // MARK: - Core pipeline: source → rays → plane hits → image
+    func runProjectionPipeline(experiment: QRTLExperiment,
+                               sourceRadius: Double,
+                               nRaysPerSide: Int,
+                               step: Double,
+                               showPaths: Bool = false) {
+        accumulator.reset()
+
+        let half = sourceRadius
+        let dy = 2 * half / Double(nRaysPerSide - 1)
+
+        for iy in 0..<nRaysPerSide {
+            for iz in 0..<nRaysPerSide {
+                let y = -half + Double(iy) * dy
+                let z = -half + Double(iz) * dy
+                
+                // skip corners of the square to make a roughly circular galaxy
+                if y*y + z*z > half*half * 1.05 { continue }
+
+                // Explicit Double conversion – fixes the Scalar conflict
+                let start = SIMD3<Double>(Double(sourceX), y, z)
+                
+                let path = experiment.tracer.trace(
+                    start: start,
+                    direction: SIMD3<Double>(1, 0, 0),
+                    totalDistance: startDistance + endDistance,
+                    stepSize: step
+                )
+
+                if showPaths && (iy % 4 == 0 && iz % 4 == 0) {
+                    addPhotonPath(path)
+                }
+
+                // Find intersection with the observation plane (x = frontPlaneX)
+                for k in 1..<path.count {
+                    let p0 = path[k-1]
+                    let p1 = path[k]
+                    
+                    if (p0.x - Double(frontPlaneX)) * (p1.x - Double(frontPlaneX)) <= 0 {
+                        let t = (Double(frontPlaneX) - p0.x) / (p1.x - p0.x + 1e-30)
+                        let yHit = p0.y + t * (p1.y - p0.y)
+                        let zHit = p0.z + t * (p1.z - p0.z)
+                        accumulator.addHit(y: yHit, z: zHit)
+                        break
+                    }
+                }
+            }
         }
+
+        // Apply the accumulated image onto the observation plane
+        addFrontProjectionPlane(empty: false)
     }
 }
 
 // ============================================================
-// SWIFTUI 3-D VIEW
+// SWIFTUI SCENE VIEW
 // ============================================================
 
 struct LensingSceneView: UIViewRepresentable {
     @ObservedObject var controller: LensingSceneController
-
     func makeUIView(context: Context) -> SCNView {
-        let view = SCNView()
-        view.scene = controller.scene
-        view.allowsCameraControl = true
-        view.autoenablesDefaultLighting = false
-        view.backgroundColor = UIColor.black
-        view.antialiasingMode = .multisampling4X
-        return view
+        let v = SCNView()
+        v.scene = controller.scene
+        v.allowsCameraControl = true
+        v.autoenablesDefaultLighting = false
+        v.backgroundColor = .black
+        v.antialiasingMode = .multisampling4X
+        return v
     }
-
     func updateUIView(_ uiView: SCNView, context: Context) {}
 }
 
 // ============================================================
-// MAIN CONTENT VIEW
+// HALF-SHEET CONTROLS
 // ============================================================
 
-struct ContentView: View {
-    // Source
-    @State private var massSolar: Double = 1.0
-    @State private var radiusSolar: Double = 1.0
-    @State private var impactSolar: Double = 100.0
-
-    // QRTL parameters (start pure GR)
-    @State private var alphaQ: Double = 0.0
-    @State private var etaQ: Double = 0.0
-    @State private var gammaQ: Double = 1.0
-    @State private var electromagneticCoupling: Double = 0.0
-    @State private var photonEMCoupling: Double = 0.0
-    @State private var chiQ: Double = 1.0
-    @State private var interactionRate: Double = 0.0
-
-    // Results & UI state
-    @State private var result: QRTLExperimentResult?
-    @State private var isRunning = false
-    @State private var statusMessage = "Ready – pure GR baseline"
-    @State private var show3D = false
-
-    @StateObject private var sceneController = LensingSceneController()
+struct ControlsSheet: View {
+    @Binding var massSolar: Double
+    @Binding var radiusSolar: Double
+    @Binding var alphaQ: Double
+    @Binding var etaQ: Double
+    @Binding var gammaQ: Double
+    @Binding var electromagneticCoupling: Double
+    @Binding var photonEMCoupling: Double
+    @Binding var chiQ: Double
+    @Binding var interactionRate: Double
+    @Binding var result: QRTLExperimentResult?
+    @Binding var isRunning: Bool
+    @Binding var statusMessage: String
+    var onRun: () -> Void
+    var onReset: () -> Void
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Source") {
-                    numericField("Mass (M☉)", value: $massSolar)
-                    numericField("Radius (R☉)", value: $radiusSolar)
-                    numericField("Impact b (R☉)", value: $impactSolar)
+                Section("Globular Cluster (10⁶ M☉)") {
+                    HStack {
+                        Text("Mass (M☉)")
+                        Spacer()
+                        TextField("", value: $massSolar, format: .number)
+                            .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 100)
+                    }
+                    HStack {
+                        Text("Radius (R☉)")
+                        Spacer()
+                        TextField("", value: $radiusSolar, format: .number)
+                            .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 100)
+                    }
                 }
-
-                Section("QRTL Parameters") {
-                    slider("α_Q", value: $alphaQ, range: 0...1e-5)
-                    slider("η_Q", value: $etaQ, range: 0...10)
+                Section("QRTL / Bolgarino") {
+                    slider("α_Q", value: $alphaQ, range: 0...3e-5)
+                    slider("η_Q", value: $etaQ, range: 0...20)
                     slider("γ_Q", value: $gammaQ, range: 0.5...1.5)
                     slider("χ_Q", value: $chiQ, range: 0.1...10)
-                    slider("Γ_Q", value: $interactionRate, range: 0...1e-6)
+                    slider("Γ_Q", value: $interactionRate, range: 0...3e-6)
                 }
-
-                Section("QRTL → EM → Photon") {
-                    slider("g_QE", value: $electromagneticCoupling, range: 0...1e-10)
-                    slider("κ_EM", value: $photonEMCoupling, range: 0...1e-20)
+                Section("EM Coupling") {
+                    slider("g_QE", value: $electromagneticCoupling, range: 0...1e-9)
+                    slider("κ_EM", value: $photonEMCoupling, range: 0...1e-19)
                 }
-
                 Section {
-                    Button {
-                        runExperiment(with3D: false)
-                    } label: {
-                        Label(isRunning ? "Running…" : "Run Numerical Experiment",
-                              systemImage: "play.fill")
+                    Button(action: onRun) {
+                        Label(isRunning ? "Running…" : "Run Full Projection Pipeline", systemImage: "play.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .disabled(isRunning)
                     .buttonStyle(.borderedProminent)
-
-                    Button {
-                        runExperiment(with3D: true)
-                    } label: {
-                        Label("Run + Show 3D Photon Paths", systemImage: "cube.transparent")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .disabled(isRunning)
-
-                    Button("Reset to pure GR") { resetToGR() }
-                        .disabled(isRunning)
+                    Button("Reset to pure GR", action: onReset).disabled(isRunning)
                 }
-
                 if let r = result {
-                    Section("Results") {
-                        resultRow("QRTL α", r.qrtlDeflection, "rad")
-                        resultRow("QRTL α", r.qrtlDeflectionArcseconds, "arcsec")
-                        resultRow("GR α", r.grDeflection, "rad")
-                        resultRow("GR α", r.grDeflectionArcseconds, "arcsec")
-                        resultRow("Difference", r.differencePercent, "%")
+                    Section("Deflection") {
+                        Text("QRTL: \(String(format: "%.4e", r.qrtlDeflectionArcseconds)) arcsec")
+                        Text("GR:   \(String(format: "%.4e", r.grDeflectionArcseconds)) arcsec")
+                        Text("Δ:    \(String(format: "%.2f", r.differencePercent)) %")
                     }
                 }
-
                 Section("Status") {
-                    Text(statusMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Text(statusMessage).font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("QRTL Lensing")
-            .sheet(isPresented: $show3D) {
-                NavigationStack {
-                    LensingSceneView(controller: sceneController)
-                        .ignoresSafeArea()
-                        .navigationTitle("Source Galaxy Photons → Projected Plane")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Close") { show3D = false }
-                            }
-                        }
-                }
-            }
-        }
-    }
-
-    // MARK: - UI Helpers
-
-    private func numericField(_ title: String, value: Binding<Double>) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            TextField("", value: value, format: .number)
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.trailing)
-                .frame(width: 90)
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 
@@ -823,39 +920,102 @@ struct ContentView: View {
                 Text(title)
                 Spacer()
                 Text(String(format: "%.3e", value.wrappedValue))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
             }
             Slider(value: value, in: range)
         }
     }
+}
 
-    private func resultRow(_ title: String, _ value: Double, _ unit: String) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(String(format: "%.6e %@", value, unit))
-                .font(.body.monospacedDigit())
+// ============================================================
+// MAIN VIEW
+// ============================================================
+
+struct ContentView: View {
+    @State private var massSolar: Double = 1_000_000
+    @State private var radiusSolar: Double = 35
+    @State private var alphaQ: Double = 5e-6
+    @State private var etaQ: Double = 3.0
+    @State private var gammaQ: Double = 1.0
+    @State private var electromagneticCoupling: Double = 2e-11
+    @State private var photonEMCoupling: Double = 5e-21
+    @State private var chiQ: Double = 1.0
+    @State private var interactionRate: Double = 0.0
+
+    @State private var result: QRTLExperimentResult?
+    @State private var isRunning = false
+    @State private var statusMessage = "Ready – source galaxy → QRTL lens → projected images"
+    @State private var showControls = false
+
+    @StateObject private var scene = LensingSceneController()
+
+    var body: some View {
+        ZStack {
+            LensingSceneView(controller: scene)
+                .ignoresSafeArea()
+
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button { showControls = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(16)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .padding([.trailing, .bottom], 28)
+                }
+            }
+        }
+        .sheet(isPresented: $showControls) {
+            ControlsSheet(
+                massSolar: $massSolar,
+                radiusSolar: $radiusSolar,
+                alphaQ: $alphaQ,
+                etaQ: $etaQ,
+                gammaQ: $gammaQ,
+                electromagneticCoupling: $electromagneticCoupling,
+                photonEMCoupling: $photonEMCoupling,
+                chiQ: $chiQ,
+                interactionRate: $interactionRate,
+                result: $result,
+                isRunning: $isRunning,
+                statusMessage: $statusMessage,
+                onRun: runFullPipeline,
+                onReset: reset
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .onAppear {
+            scene.addCluster(radius: radiusSolar * PhysicalConstants.solarRadius)
+            scene.addSourceGalaxy()
         }
     }
 
-    private func resetToGR() {
+    private func reset() {
         alphaQ = 0; etaQ = 0; gammaQ = 1
         electromagneticCoupling = 0; photonEMCoupling = 0
         chiQ = 1; interactionRate = 0
         result = nil
-        statusMessage = "Reset to pure GR (α=η=g=κ=0, γ=1)"
+        statusMessage = "Reset to pure GR"
+        scene.clearDynamic()
+        scene.addCluster(radius: radiusSolar * PhysicalConstants.solarRadius)
+        scene.addSourceGalaxy()
+        scene.addFrontProjectionPlane(empty: true)
+        scene.addBottomPlaceholder()
     }
 
-    private func runExperiment(with3D: Bool) {
+    private func runFullPipeline() {
         isRunning = true
-        statusMessage = "Integrating photon trajectories…"
+        statusMessage = "Tracing 2-D source galaxy through QRTL field…"
         result = nil
-        sceneController.clearPaths()
+        scene.clearDynamic()
 
         let mass = massSolar * PhysicalConstants.solarMass
         let radius = radiusSolar * PhysicalConstants.solarRadius
-        let impact = impactSolar * PhysicalConstants.solarRadius
 
         var params = QRTLParameters()
         params.alphaQ = alphaQ
@@ -869,54 +1029,36 @@ struct ContentView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             let experiment = QRTLExperiment(mass: mass, radius: radius, parameters: params)
 
-            // Single-ray numerical result
+            // Diagnostic single-ray deflection
             let outcome = experiment.run(
-                impactParameter: impact,
-                startDistance: 5_000 * PhysicalConstants.solarRadius,
-                endDistance: 5_000 * PhysicalConstants.solarRadius,
-                stepSize: 0.05 * PhysicalConstants.solarRadius
+                impactParameter: 100 * PhysicalConstants.solarRadius,
+                startDistance: scene.startDistance,
+                endDistance: scene.endDistance,
+                stepSize: 0.08 * PhysicalConstants.solarRadius
             )
 
-            // 3-D multi-ray visualization (source galaxy plane)
-            if with3D {
-                let startD = 4_000.0 * PhysicalConstants.solarRadius
-                let endD   = 4_000.0 * PhysicalConstants.solarRadius
-                let step   = 0.08 * PhysicalConstants.solarRadius
-
-                // Impact parameters covering a “source galaxy” plane
-                let impacts: [Double] = stride(from: -180.0, through: 180.0, by: 30.0)
-                    .map { $0 * PhysicalConstants.solarRadius }
-
-                DispatchQueue.main.async {
-                    self.sceneController.addCentralMass(radius: radius)
-                    self.sceneController.addObservationPlane(
-                        atX: endD * 0.85,
-                        size: 500 * PhysicalConstants.solarRadius
-                    )
-                    self.sceneController.generateSourceGalaxyRays(
-                        experiment: experiment,
-                        impactParams: impacts,
-                        startDist: startD,
-                        endDist: endD,
-                        step: step,
-                        color: .cyan
-                    )
-                }
-            }
-
             DispatchQueue.main.async {
+                // 1. Source galaxy
+                self.scene.addSourceGalaxy()
+
+                // 2. Lens
+                self.scene.addCluster(radius: radius)
+
+                // 3. Bottom QRTL heatmap
+                self.scene.updateBottomHeatmap(field: experiment.field)
+
+                // 4. Full projection pipeline → two (or more) images on the front plane
+                self.scene.runProjectionPipeline(
+                    experiment: experiment,
+                    sourceRadius: 480 * PhysicalConstants.solarRadius,
+                    nRaysPerSide: 28,               // 28×28 ≈ 600 rays (circular mask)
+                    step: 0.10 * PhysicalConstants.solarRadius,
+                    showPaths: false                // set true if you want to see a few cyan trajectories
+                )
+
                 self.result = outcome
                 self.isRunning = false
-                if with3D { self.show3D = true }
-
-                if abs(outcome.differencePercent) < 0.8 &&
-                    params.alphaQ == 0 && params.etaQ == 0 &&
-                    params.electromagneticCoupling == 0 &&
-                    params.photonEMCoupling == 0 {
-                    self.statusMessage = "Pure GR baseline recovered"
-                } else {
-                    self.statusMessage = "QRTL / EM contributions active"
-                }
+                self.statusMessage = "Projection complete – lensed galaxy images on front plane"
             }
         }
     }
