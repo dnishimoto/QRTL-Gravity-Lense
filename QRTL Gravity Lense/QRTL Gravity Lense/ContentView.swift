@@ -3413,9 +3413,9 @@ final class LensingSceneController:
         // 4. CREATE PROJECTION PLANE
         // =========================================================
 
-        //addFrontProjectionPlane(
-        //    empty: false
-        //)
+        addFrontProjectionPlane(
+            empty: false
+        )
     }
 
     // ========================================================
