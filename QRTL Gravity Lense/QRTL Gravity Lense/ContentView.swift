@@ -771,107 +771,204 @@ final class QRTLField {
     // as it passes through the cluster.
     // =========================================================
 
+    // =============================================================
+    // ELECTROMAGNETIC PHOTON INFLUENCE
+    //
+    // The EM field is centered on the globular cluster.
+    //
+    // Its magnitude follows the local QRTL / mass density.
+    // Its direction is radial from the cluster center.
+    //
+    // Therefore:
+    //
+    //        upper photon → bends upward
+    //
+    //              ↑
+    //              │
+    //              ●  cluster
+    //              │
+    //              ↓
+    //
+    //        lower photon → bends downward
+    //
+    // This produces the two-sided lensing geometry.
+    // =============================================================
+
     func electromagneticInfluence(
         at position:
             SIMD3<Float>
     ) -> SIMD3<Float> {
 
+        // =========================================================
+        // DISTANCE FROM CLUSTER CENTER
+        // =========================================================
+
         let radius =
-            simd_length(
-                position
-            )
+            simd_length(position)
 
-
-        guard radius >
-            0.000001
+        guard radius.isFinite,
+              radius > 0.000001
         else {
-
-            return
-                SIMD3<Float>.zero
+            return .zero
         }
 
 
-        // -----------------------------------------------------
-        // Radial direction.
-        // -----------------------------------------------------
+        // =========================================================
+        // RADIAL DIRECTION
+        // =========================================================
 
-        let radial =
-            position /
-            radius
-
-
-        // -----------------------------------------------------
-        // Tangential / circulating field.
-        //
-        // This prevents the EM component from being merely
-        // a radial push directly away from the cluster.
-        // -----------------------------------------------------
-
-        let tangentCandidate =
-            SIMD3<Float>(
-                -radial.z,
-                0.0,
-                radial.x
-            )
+        let radialDirection =
+            position / radius
 
 
-        let tangentLength =
-            simd_length(
-                tangentCandidate
-            )
-
-
-        guard tangentLength >
-            0.000001
-        else {
-
-            return
-                SIMD3<Float>.zero
-        }
-
-
-        let tangential =
-            tangentCandidate /
-            tangentLength
-
-
-        // -----------------------------------------------------
+        // =========================================================
         // LOCAL DENSITY
-        // -----------------------------------------------------
+        // =========================================================
 
         let density =
             normalizedDensity(
+                at: position
+            )
+
+        guard density.isFinite,
+              density > 0.0
+        else {
+            return .zero
+        }
+
+
+        // =========================================================
+        // SAMPLE DENSITY A LITTLE CLOSER TO THE CENTER
+        //
+        // This gives us the local density gradient.
+        // =========================================================
+
+        let sampleDistance =
+            max(
+                radius * 0.01,
+                0.001
+            )
+
+
+        let inwardPosition =
+            position -
+            radialDirection *
+            sampleDistance
+
+
+        let inwardDensity =
+            normalizedDensity(
+                at:
+                    inwardPosition
+            )
+
+
+        // =========================================================
+        // DENSITY GRADIENT
+        //
+        // Positive value means density increases toward the center.
+        // =========================================================
+
+        let densityGradient =
+            (
+                density -
+                inwardDensity
+            ) /
+            Float(sampleDistance)
+
+
+        // =========================================================
+        // LOCAL QRTL FIELD
+        // =========================================================
+
+        let qrtlVector =
+            influence(
                 at:
                     position
             )
 
-
-        // -----------------------------------------------------
-        // DISTANCE FALL-OFF
-        // -----------------------------------------------------
-
-        let distanceFalloff =
-            1.0 /
-            max(
-                radius,
-                0.01
+        let qrtlMagnitude =
+            simd_length(
+                qrtlVector
             )
 
 
-        // -----------------------------------------------------
-        // ELECTROMAGNETIC STRENGTH
+        // =========================================================
+        // COUPLINGS
+        // =========================================================
+
+        let electromagneticCoupling =
+            Float(
+                parameters.electromagneticCoupling
+            )
+
+        let photonEMCoupling =
+            Float(
+                parameters.photonEMCoupling
+            )
+
+
+        // =========================================================
+        // DENSITY-DEPENDENT FIELD STRENGTH
         //
-        // Density is the primary local control.
-        // -----------------------------------------------------
+        // The first term makes the field stronger in dense regions.
+        //
+        // The second term makes the bending respond to the CHANGE
+        // in density as the photon moves through the cluster.
+        // =========================================================
 
-        let strength =
-            density *
-            distanceFalloff
+        let densityTerm =
+            density
 
 
-        return
-            tangential *
-            strength
+        let gradientTerm =
+            max(
+                densityGradient,
+                0.0
+            )
+
+
+        let fieldStrength =
+            (
+                densityTerm +
+                gradientTerm
+            )
+            *
+            (
+                1.0 +
+                qrtlMagnitude
+            )
+            *
+            electromagneticCoupling
+            *
+            photonEMCoupling
+
+
+        guard fieldStrength.isFinite,
+              fieldStrength > 0.0
+        else {
+            return .zero
+        }
+
+
+        // =========================================================
+        // RADIAL FIELD
+        // =========================================================
+
+        let field =
+            radialDirection *
+            fieldStrength
+
+
+        guard field.x.isFinite,
+              field.y.isFinite,
+              field.z.isFinite
+        else {
+            return .zero
+        }
+
+
+        return field
     }
 }
 
@@ -1730,10 +1827,10 @@ final class LensingSceneController:
 
         addAxes()
 
-        addFrontProjectionPlane(
+        /*addFrontProjectionPlane(
             empty:
                 true
-        )
+        )*/
 
         addBottomPlaceholder()
     }
@@ -3316,9 +3413,9 @@ final class LensingSceneController:
         // 4. CREATE PROJECTION PLANE
         // =========================================================
 
-        addFrontProjectionPlane(
-            empty: false
-        )
+        //addFrontProjectionPlane(
+        //    empty: false
+        //)
     }
 
     // ========================================================
