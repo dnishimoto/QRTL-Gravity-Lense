@@ -406,114 +406,34 @@ final class LensingProjectionAccumulator {
 
 struct LensingProjectionHit {
 
-    // =========================================================
-    // 3D PROJECTION-PLANE INTERSECTION
-    // =========================================================
+    let point:
+        SIMD3<Float>
 
-    /// Exact 3D world-space position where the photon
-    /// intersects the projection plane.
-    let point: SIMD3<Float>
+    let coordinates:
+        SIMD2<Float>
 
+    let sourceCoordinates:
+        SIMD2<Float>
 
-    // =========================================================
-    // 2D PROJECTION COORDINATES
-    // =========================================================
+    let direction:
+        SIMD3<Float>
 
-    /// Coordinates of the photon on the projection plane.
-    ///
-    /// x = plane horizontal coordinate
-    /// y = plane vertical coordinate
-    let coordinates: SIMD2<Float>
+    let traveledDistance:
+        Float
 
+    let interactionCount:
+        Int
 
-    // =========================================================
-    // PHOTON DIRECTION
-    // =========================================================
+    let maximumMagneticField:
+        Float
 
-    /// Photon direction when it reaches the projection plane.
-    let direction: SIMD3<Float>
+    let maximumQRTLInfluence:
+        Float
 
+    let maximumMagneticPhotonInfluence:
+        Float
 
-    // =========================================================
-    // PROPAGATION INFORMATION
-    // =========================================================
-
-    /// Total distance traveled by the photon.
-    let traveledDistance: Float
-
-    /// Number of field interactions encountered.
-    let interactionCount: Int
-
-
-    // =========================================================
-    // FIELD INFORMATION
-    // =========================================================
-
-    /// Maximum magnetic-field magnitude encountered
-    /// during the photon trace.
-    let maximumMagneticField: Float
-
-    /// Maximum QRTL-field influence encountered
-    /// during the photon trace.
-    let maximumQRTLInfluence: Float
-
-    /// Maximum magnetic-photon influence encountered
-    /// during the photon trace.
-    let maximumMagneticPhotonInfluence: Float
-
-
-    // =========================================================
-    // SOURCE GALAXY
-    // =========================================================
-
-    /// Identifies which source galaxy emitted the photon.
-    ///
-    /// 0 = Source Galaxy A
-    /// 1 = Source Galaxy B
-    let sourceID: Int
-
-
-    // =========================================================
-    // INITIALIZER
-    // =========================================================
-
-    init(
-        point: SIMD3<Float>,
-        coordinates: SIMD2<Float>,
-        direction: SIMD3<Float>,
-        traveledDistance: Float,
-        interactionCount: Int,
-        maximumMagneticField: Float,
-        maximumQRTLInfluence: Float,
-        maximumMagneticPhotonInfluence: Float,
-        sourceID: Int = 0
-    ) {
-
-        self.point =
-            point
-
-        self.coordinates =
-            coordinates
-
-        self.direction =
-            direction
-
-        self.traveledDistance =
-            traveledDistance
-
-        self.interactionCount =
-            interactionCount
-
-        self.maximumMagneticField =
-            maximumMagneticField
-
-        self.maximumQRTLInfluence =
-            maximumQRTLInfluence
-
-        self.maximumMagneticPhotonInfluence =
-            maximumMagneticPhotonInfluence
-
-        self.sourceID =
-            sourceID
-    }
+    let sourceID:
+        Int
 }
+

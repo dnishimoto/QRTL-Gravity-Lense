@@ -400,104 +400,191 @@ struct QRTLParameters {
 
 struct GaussianMassModel {
 
-    let totalMass: Double
+    // =========================================================
+    // TOTAL MASS
+    // =========================================================
 
-    let characteristicRadius: Double
+    let totalMass:
+        Double
+
+
+    // =========================================================
+    // CHARACTERISTIC RADIUS
+    //
+    // Controls the spatial size of the Gaussian mass
+    // distribution.
+    // =========================================================
+
+    let characteristicRadius:
+        Double
+
+
+    // =========================================================
+    // INITIALIZER
+    // =========================================================
+
+    init(
+        totalMass:
+            Double,
+
+        characteristicRadius:
+            Double
+    ) {
+
+        self.totalMass =
+            totalMass
+
+        self.characteristicRadius =
+            max(
+                characteristicRadius,
+                0.000001
+            )
+    }
+
+
+    // =========================================================
+    // MASS DENSITY
+    //
+    // 3D Gaussian distribution:
+    //
+    //     rho(r) =
+    //     M / ((2π)^(3/2) σ³)
+    //     × exp(-r² / (2σ²))
+    //
+    // The integral over all space is approximately TOTAL MASS.
+    // =========================================================
 
     func density(
-        r: Double
+        at position:
+            SIMD3<Double>
     ) -> Double {
 
         let sigma =
-            max(
-                characteristicRadius,
-                Double.leastNonzeroMagnitude
-            )
+            characteristicRadius
+
+
+        // -----------------------------------------------------
+        // Distance from lens center.
+        // -----------------------------------------------------
+
+        let radiusSquared =
+            position.x * position.x +
+            position.y * position.y +
+            position.z * position.z
+
+
+        // -----------------------------------------------------
+        // Gaussian normalization.
+        // -----------------------------------------------------
 
         let normalization =
             totalMass /
-            pow(
-                2.0 * .pi,
-                1.5
-            ) /
-            pow(
-                sigma,
-                3.0
-            )
-
-        return normalization *
-            exp(
-                -r * r /
-                (
-                    2.0 *
-                    sigma *
-                    sigma
+            (
+                pow(
+                    2.0 * Double.pi,
+                    1.5
+                ) *
+                pow(
+                    sigma,
+                    3.0
                 )
             )
+
+
+        // -----------------------------------------------------
+        // Gaussian falloff.
+        // -----------------------------------------------------
+
+        let exponent =
+            -radiusSquared /
+            (
+                2.0 *
+                sigma *
+                sigma
+            )
+
+
+        return
+            normalization *
+            exp(exponent)
     }
 
-    func enclosedMass(
-        r: Double
+
+    // =========================================================
+    // NORMALIZED DENSITY
+    //
+    // Returns density relative to the center.
+    //
+    // Center = 1
+    // Far away → 0
+    // =========================================================
+
+    func normalizedDensity(
+        at position:
+            SIMD3<Double>
     ) -> Double {
 
-        if r <= 0 {
-            return 0
-        }
-
         let sigma =
-            max(
-                characteristicRadius,
-                Double.leastNonzeroMagnitude
-            )
+            characteristicRadius
 
-        let x =
-            r /
+
+        let radiusSquared =
+            position.x * position.x +
+            position.y * position.y +
+            position.z * position.z
+
+
+        let exponent =
+            -radiusSquared /
             (
-                sqrt(2.0) *
+                2.0 *
+                sigma *
                 sigma
             )
 
-        let fraction =
-            erf(x) -
-            sqrt(
-                2.0 / .pi
-            ) *
-            (
-                r /
-                sigma
-            ) *
-            exp(
-                -r * r /
-                (
-                    2.0 *
-                    sigma *
-                    sigma
-                )
-            )
 
-        return clamped(
-            totalMass * fraction,
-            minimum: 0,
-            maximum: totalMass
-        )
+        return
+            exp(exponent)
     }
 }
 
-// ============================================================
-// QRTL FIELD
-// ============================================================
-
 final class QRTLField {
+
+    // =========================================================
+    // MASS MODEL
+    // =========================================================
 
     let massModel:
         GaussianMassModel
 
+
+    // =========================================================
+    // QRTL PARAMETERS
+    // =========================================================
+
     let parameters:
         QRTLParameters
+
+
+    // =========================================================
+    // REFERENCE DENSITY
+    //
+    // Density at the center of the lens.
+    // Used to normalize the local cluster density.
+    // =========================================================
+
+    let referenceDensity:
+        Float
+
+
+    // =========================================================
+    // INITIALIZER
+    // =========================================================
 
     init(
         massModel:
             GaussianMassModel,
+
         parameters:
             QRTLParameters
     ) {
@@ -507,287 +594,284 @@ final class QRTLField {
 
         self.parameters =
             parameters
+
+
+        // -----------------------------------------------------
+        // Calculate central reference density.
+        // -----------------------------------------------------
+
+        let centerDensity =
+            massModel.density(
+                at:
+                    SIMD3<Double>(
+                        0.0,
+                        0.0,
+                        0.0
+                    )
+            )
+
+
+        self.referenceDensity =
+            max(
+                Float(centerDensity),
+                0.000001
+            )
     }
 
-    func density(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
 
-        massModel.density(
-            r:
-                simd_length(
-                    position
-                )
+    // =========================================================
+    // MASS DENSITY
+    //
+    // Returns the local mass density at the photon position.
+    //
+    // This is sampled at EVERY photon integration step.
+    // =========================================================
+
+    func massDensity(
+        at position:
+            SIMD3<Float>
+    ) -> Float {
+
+        let p =
+            SIMD3<Double>(
+                Double(position.x),
+                Double(position.y),
+                Double(position.z)
+            )
+
+        return Float(
+            massModel.density(
+                at:
+                    p
+            )
         )
     }
+
+
+    // =========================================================
+    // NORMALIZED DENSITY
+    //
+    // 0.0 = negligible density
+    // 1.0 = maximum/reference density
+    // =========================================================
+
+    func normalizedDensity(
+        at position:
+            SIMD3<Float>
+    ) -> Float {
+
+        let density =
+            massDensity(
+                at:
+                    position
+            )
+
+        return min(
+            max(
+                density /
+                referenceDensity,
+                0.0
+            ),
+            1.0
+        )
+    }
+
+
+    // =========================================================
+    // QRTL / GRAVITY INFLUENCE
+    //
+    // The photon is pulled toward the lens center.
+    //
+    // Density controls how strongly the local mass
+    // distribution contributes.
+    // =========================================================
 
     func influence(
-           at position: SIMD3<Float>
-       ) -> SIMD3<Float> {
-
-           let radius =
-               simd_length(position)
-
-           guard radius > 0.000001 else {
-               return .zero
-           }
-
-           let radialDirection =
-               simd_normalize(position)
-
-           return radialDirection
-       }
-    
-    func qrtlCurrent(
         at position:
-            SIMD3<Double>
-    ) -> SIMD3<Double> {
+            SIMD3<Float>
+    ) -> SIMD3<Float> {
 
-        let r =
-            simd_length(position)
+        let radius =
+            simd_length(
+                position
+            )
 
-        if r <= parameters.epsilon {
-            return .zero
+
+        guard radius >
+            0.000001
+        else {
+
+            return
+                SIMD3<Float>.zero
         }
 
-        let enclosed =
-            massModel.enclosedMass(
-                r: r
+
+        // -----------------------------------------------------
+        // Direction toward lens center.
+        // -----------------------------------------------------
+
+        let inwardDirection =
+            -position /
+            radius
+
+
+        // -----------------------------------------------------
+        // Local cluster density.
+        // -----------------------------------------------------
+
+        let density =
+            normalizedDensity(
+                at:
+                    position
             )
 
-        let velocity =
+
+        // -----------------------------------------------------
+        // Distance falloff.
+        // -----------------------------------------------------
+
+        let distanceFalloff =
+            1.0 /
             max(
-                parameters.qrtlVelocity,
-                parameters.epsilon
+                radius * radius,
+                0.01
             )
 
-        let attenuation =
-            exp(
-                -parameters.interactionRate *
-                r /
-                velocity
-            )
 
-        let magnitude =
-            parameters.alphaQ *
-            enclosed /
-            (
-                4.0 *
-                .pi *
-                r *
-                r
+        // -----------------------------------------------------
+        // QRTL field strength.
+        // -----------------------------------------------------
+
+        let strength =
+            Float(
+                parameters.alphaQ
             ) *
-            attenuation
+            density *
+            distanceFalloff
 
-        return (
+
+        return
+            inwardDirection *
+            strength
+    }
+
+
+    // =========================================================
+    // ELECTROMAGNETIC INFLUENCE
+    //
+    // The electromagnetic field changes continuously with
+    // the density of the globular cluster.
+    //
+    // The photon therefore experiences:
+    //
+    //     low density  -> weak distortion
+    //     high density -> strong distortion
+    //     low density  -> weak distortion
+    //
+    // as it passes through the cluster.
+    // =========================================================
+
+    func electromagneticInfluence(
+        at position:
+            SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let radius =
+            simd_length(
+                position
+            )
+
+
+        guard radius >
+            0.000001
+        else {
+
+            return
+                SIMD3<Float>.zero
+        }
+
+
+        // -----------------------------------------------------
+        // Radial direction.
+        // -----------------------------------------------------
+
+        let radial =
             position /
-            r
-        ) *
-        magnitude
-    }
+            radius
 
-    // --------------------------------------------------------
-    // QRTL ENERGY DENSITY
-    // --------------------------------------------------------
 
-    func qrtlEnergyDensity(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
+        // -----------------------------------------------------
+        // Tangential / circulating field.
+        //
+        // This prevents the EM component from being merely
+        // a radial push directly away from the cluster.
+        // -----------------------------------------------------
 
-        let current =
-            qrtlCurrent(
-                at: position
+        let tangentCandidate =
+            SIMD3<Float>(
+                -radial.z,
+                0.0,
+                radial.x
             )
 
-        let currentSquared =
-            simd_dot(
-                current,
-                current
+
+        let tangentLength =
+            simd_length(
+                tangentCandidate
             )
 
-        return currentSquared /
-            (
-                2.0 *
-                max(
-                    parameters.chiQ,
-                    parameters.epsilon
-                )
-            )
-    }
 
-    // --------------------------------------------------------
-    // EFFECTIVE GRAVITATING DENSITY
-    // --------------------------------------------------------
+        guard tangentLength >
+            0.000001
+        else {
 
-    func effectiveGravitatingDensity(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
+            return
+                SIMD3<Float>.zero
+        }
 
-        let rhoB =
-            density(
-                at: position
-            )
 
-        let uQ =
-            qrtlEnergyDensity(
-                at: position
+        let tangential =
+            tangentCandidate /
+            tangentLength
+
+
+        // -----------------------------------------------------
+        // LOCAL DENSITY
+        // -----------------------------------------------------
+
+        let density =
+            normalizedDensity(
+                at:
+                    position
             )
 
-        let c2 =
-            PhysicalConstants.c *
-            PhysicalConstants.c
 
-        return rhoB +
-            parameters.etaQ *
-            uQ /
-            c2
-    }
+        // -----------------------------------------------------
+        // DISTANCE FALL-OFF
+        // -----------------------------------------------------
 
-    // --------------------------------------------------------
-    // GRAVITATIONAL POTENTIAL
-    //
-    // Gaussian baryonic mass has an analytic potential:
-    //
-    // Phi = -GM erf(r / sqrt(2)sigma) / r
-    //
-    // The QRTL contribution is represented as an effective
-    // enclosed QRTL mass.
-    // --------------------------------------------------------
-
-    func gravitationalPotential(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
-
-        let r =
+        let distanceFalloff =
+            1.0 /
             max(
-                simd_length(position),
-                parameters.epsilon
+                radius,
+                0.01
             )
 
-        let sigma =
-            max(
-                massModel.characteristicRadius,
-                parameters.epsilon
-            )
 
-        let x =
-            r /
-            (
-                sqrt(2.0) *
-                sigma
-            )
+        // -----------------------------------------------------
+        // ELECTROMAGNETIC STRENGTH
+        //
+        // Density is the primary local control.
+        // -----------------------------------------------------
 
-        let baryonicPotential =
-            -PhysicalConstants.G *
-            massModel.totalMass *
-            erf(x) /
-            r
+        let strength =
+            density *
+            distanceFalloff
 
-        let uQ =
-            qrtlEnergyDensity(
-                at: position
-            )
 
-        let qrtlMassEquivalent =
-            parameters.etaQ *
-            uQ *
-            (
-                4.0 / 3.0
-            ) *
-            .pi *
-            pow(
-                r,
-                3.0
-            ) /
-            (
-                PhysicalConstants.c *
-                PhysicalConstants.c
-            )
-
-        let qrtlPotential =
-            -PhysicalConstants.G *
-            qrtlMassEquivalent /
-            r
-
-        return baryonicPotential +
-            qrtlPotential
-    }
-
-    // --------------------------------------------------------
-    // EFFECTIVE ELECTROMAGNETIC ENERGY
-    // --------------------------------------------------------
-
-    func electromagneticField(
-        at position:
-            SIMD3<Double>
-    ) -> (
-        energy: Double,
-        currentMag: Double
-    ) {
-
-        let r =
-            max(
-                simd_length(position),
-                parameters.epsilon
-            )
-
-        let jq =
-            qrtlCurrent(
-                at: position
-            )
-
-        let jeff =
-            parameters.electromagneticCoupling *
-            jq
-
-        let j2 =
-            simd_dot(
-                jeff,
-                jeff
-            )
-
-        let geometry =
-            32.0 *
-            .pi *
-            .pi *
-            r *
-            r
-
-        let electricScale =
-            parameters.electricFieldCoupling *
-            parameters.electricFieldCoupling
-
-        let magneticScale =
-            parameters.magneticFieldCoupling *
-            parameters.magneticFieldCoupling
-
-        let uE =
-            electricScale *
-            j2 /
-            (
-                geometry *
-                PhysicalConstants.epsilon0
-            )
-
-        let uB =
-            magneticScale *
-            PhysicalConstants.mu0 *
-            j2 /
-            geometry
-
-        return (
-            uE + uB,
-            sqrt(
-                simd_dot(
-                    jq,
-                    jq
-                )
-            )
-        )
+        return
+            tangential *
+            strength
     }
 }
 
@@ -795,320 +879,7 @@ final class QRTLField {
 // PHOTON RAY TRACER
 // ============================================================
 
-final class QRTLPhotonTracer {
 
-    let field:
-        QRTLField
-
-    init(
-        field:
-            QRTLField
-    ) {
-
-        self.field =
-            field
-    }
-
-    // --------------------------------------------------------
-    // GRAVITATIONAL INDEX
-    // --------------------------------------------------------
-
-    func gravitationalIndex(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
-
-        let phi =
-            field.gravitationalPotential(
-                at: position
-            )
-
-        let c2 =
-            PhysicalConstants.c *
-            PhysicalConstants.c
-
-        return 1.0 -
-            (
-                1.0 +
-                field.parameters.gammaQ
-            ) *
-            phi /
-            c2
-    }
-
-    // --------------------------------------------------------
-    // EM INDEX
-    // --------------------------------------------------------
-
-    func electromagneticIndex(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
-
-        let result =
-            field.electromagneticField(
-                at: position
-            )
-
-        return 1.0 +
-            field.parameters.photonEMCoupling *
-            result.energy
-    }
-
-    // --------------------------------------------------------
-    // TOTAL INDEX
-    //
-    // n_total = n_G * n_EM
-    // --------------------------------------------------------
-
-    func totalIndex(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
-
-        let nG =
-            gravitationalIndex(
-                at: position
-            )
-
-        let nEM =
-            electromagneticIndex(
-                at: position
-            )
-
-        let value =
-            nG * nEM
-
-        if value.isFinite {
-            return max(
-                value,
-                1.0e-12
-            )
-        }
-
-        return 1.0
-    }
-
-    // --------------------------------------------------------
-    // TOTAL INDEX GRADIENT
-    //
-    // Central finite difference.
-    //
-    // Six index evaluations are required.
-    // --------------------------------------------------------
-
-    func totalIndexGradient(
-        at position:
-            SIMD3<Double>
-    ) -> SIMD3<Double> {
-
-        let r =
-            simd_length(position)
-
-        guard r > 1.0 else {
-            return .zero
-        }
-
-        let step =
-            max(
-                r * 0.002,
-                1.0e5
-            )
-
-        let dx =
-            SIMD3<Double>(
-                step,
-                0,
-                0
-            )
-
-        let dy =
-            SIMD3<Double>(
-                0,
-                step,
-                0
-            )
-
-        let dz =
-            SIMD3<Double>(
-                0,
-                0,
-                step
-            )
-
-        let xp =
-            totalIndex(
-                at: position + dx
-            )
-
-        let xm =
-            totalIndex(
-                at: position - dx
-            )
-
-        let yp =
-            totalIndex(
-                at: position + dy
-            )
-
-        let ym =
-            totalIndex(
-                at: position - dy
-            )
-
-        let zp =
-            totalIndex(
-                at: position + dz
-            )
-
-        let zm =
-            totalIndex(
-                at: position - dz
-            )
-
-        return SIMD3<Double>(
-            (xp - xm) /
-                (2.0 * step),
-
-            (yp - ym) /
-                (2.0 * step),
-
-            (zp - zm) /
-                (2.0 * step)
-        )
-    }
-
-    // --------------------------------------------------------
-    // TRACE
-    // --------------------------------------------------------
-
-    func trace(
-        start:
-            SIMD3<Double>,
-
-        direction:
-            SIMD3<Double>,
-
-        totalDistance:
-            Double,
-
-        stepSize:
-            Double
-    ) -> [SIMD3<Double>] {
-
-        var position =
-            start
-
-        var directionVector =
-            simd_normalize(
-                direction
-            )
-
-        var path:
-            [SIMD3<Double>] = [
-                position
-            ]
-
-        let minimumStep =
-            field.parameters.minimumStepSolarRadii *
-            PhysicalConstants.solarRadius
-
-        let effectiveStep =
-            max(
-                stepSize,
-                minimumStep
-            )
-
-        let calculatedSteps =
-            Int(
-                ceil(
-                    totalDistance /
-                    effectiveStep
-                )
-            )
-
-        let nSteps =
-            min(
-                max(
-                    calculatedSteps,
-                    1
-                ),
-                field.parameters.maximumRaySteps
-            )
-
-        path.reserveCapacity(
-            nSteps + 1
-        )
-
-        for _ in 0..<nSteps {
-
-            let n =
-                max(
-                    totalIndex(
-                        at: position
-                    ),
-                    1.0e-12
-                )
-
-            let gradient =
-                totalIndexGradient(
-                    at: position
-                )
-
-            let propagationGradient =
-                gradient /
-                n
-
-            let transverse =
-                transverseComponent(
-                    propagationGradient,
-                    relativeTo:
-                        directionVector
-                )
-
-            var newDirection =
-                directionVector +
-                transverse *
-                effectiveStep
-
-            let magnitude =
-                simd_length(
-                    newDirection
-                )
-
-            guard magnitude.isFinite,
-                  magnitude > 1.0e-20
-            else {
-                break
-            }
-
-            newDirection =
-                simd_normalize(
-                    newDirection
-                )
-
-            directionVector =
-                newDirection
-
-            position +=
-                directionVector *
-                effectiveStep
-
-            guard position.x.isFinite,
-                  position.y.isFinite,
-                  position.z.isFinite
-            else {
-                break
-            }
-
-            path.append(
-                position
-            )
-        }
-
-        return path
-    }
-}
 
 // ============================================================
 // EXPERIMENT RESULT
@@ -1323,248 +1094,8 @@ final class QRTLExperiment {
     }
 }
 
-// ============================================================
-// HEATMAP
-// ============================================================
 
-final class QRTLHeatmapGenerator {
 
-    static func makeHeatmapImage(
-        field:
-            QRTLField,
-
-        size:
-            Int = 64,
-
-        halfExtent:
-            Double
-    ) -> UIImage {
-
-        UIGraphicsBeginImageContextWithOptions(
-            CGSize(
-                width:
-                    size,
-
-                height:
-                    size
-            ),
-
-            true,
-
-            1
-        )
-
-        guard let context =
-            UIGraphicsGetCurrentContext()
-        else {
-            return UIImage()
-        }
-
-        var maxValue =
-            1.0e-30
-
-        var samples =
-            [[Double]](
-                repeating:
-                    [Double](
-                        repeating:
-                            0,
-
-                        count:
-                            size
-                    ),
-
-                count:
-                    size
-            )
-
-        for j in 0..<size {
-
-            for i in 0..<size {
-
-                let x =
-                    -halfExtent +
-                    (
-                        Double(i) +
-                        0.5
-                    ) *
-                    (
-                        2.0 *
-                        halfExtent /
-                        Double(size)
-                    )
-
-                let z =
-                    -halfExtent +
-                    (
-                        Double(j) +
-                        0.5
-                    ) *
-                    (
-                        2.0 *
-                        halfExtent /
-                        Double(size)
-                    )
-
-                let position =
-                    SIMD3<Double>(
-                        x,
-                        0,
-                        z
-                    )
-
-                let result =
-                    field.electromagneticField(
-                        at:
-                            position
-                    )
-
-                let value =
-                    result.currentMag *
-                    1.0e12 +
-                    result.energy *
-                    1.0e22
-
-                samples[j][i] =
-                    value
-
-                maxValue =
-                    max(
-                        maxValue,
-                        value
-                    )
-            }
-        }
-
-        for j in 0..<size {
-
-            for i in 0..<size {
-
-                let t =
-                    CGFloat(
-                        clamped(
-                            samples[j][i] /
-                            maxValue,
-
-                            minimum:
-                                0,
-
-                            maximum:
-                                1
-                        )
-                    )
-
-                let color:
-                    UIColor
-
-                if t < 0.25 {
-
-                    color =
-                        UIColor(
-                            red:
-                                0,
-
-                            green:
-                                0,
-
-                            blue:
-                                t * 4.0,
-
-                            alpha:
-                                1
-                        )
-
-                } else if t < 0.5 {
-
-                    color =
-                        UIColor(
-                            red:
-                                0,
-
-                            green:
-                                (t - 0.25) * 4.0,
-
-                            blue:
-                                1,
-
-                            alpha:
-                                1
-                        )
-
-                } else if t < 0.75 {
-
-                    color =
-                        UIColor(
-                            red:
-                                (t - 0.5) * 4.0,
-
-                            green:
-                                1,
-
-                            blue:
-                                1 -
-                                (t - 0.5) * 4.0,
-
-                            alpha:
-                                1
-                        )
-
-                } else {
-
-                    color =
-                        UIColor(
-                            red:
-                                1,
-
-                            green:
-                                1,
-
-                            blue:
-                                max(
-                                    0,
-                                    1 -
-                                    (t - 0.75) * 4.0
-                                ),
-
-                            alpha:
-                                1
-                        )
-                }
-
-                context.setFillColor(
-                    color.cgColor
-                )
-
-                context.fill(
-                    CGRect(
-                        x:
-                            i,
-
-                        y:
-                            size -
-                            1 -
-                            j,
-
-                        width:
-                            1,
-
-                        height:
-                            1
-                    )
-                )
-            }
-        }
-
-        
-        let image =
-            UIGraphicsGetImageFromCurrentImageContext()
-            ?? UIImage()
-
-        UIGraphicsEndImageContext()
-
-        return image
-    }
-}
 
 // ============================================================
 // PROJECTION ACCUMULATOR
@@ -4482,7 +4013,7 @@ struct ContentView:
 
         scene.clearDynamic()
 
-        scene.addCluster(
+        scene.addGlobularCluster(
             radius:
                 radiusSolar *
                 PhysicalConstants.solarRadius
@@ -4497,10 +4028,6 @@ struct ContentView:
 
         scene.addBottomPlaceholder()
     }
-
-    // ========================================================
-    // FULL PIPELINE
-    // ========================================================
 
     private func runFullPipeline() {
 
@@ -4529,6 +4056,20 @@ struct ContentView:
 
         let showPaths =
             showPhotonPaths
+
+
+        // =========================================================
+        // SCENE / SOURCE PARAMETERS
+        // =========================================================
+
+        let sourceGalaxyRadius:
+            Float = 0.75
+
+        let photonCount:
+            Int = 1200
+
+        let clusterSceneRadius:
+            Double = 3.0
 
 
         // =========================================================
@@ -4565,8 +4106,7 @@ struct ContentView:
         // =========================================================
 
         scene.clearDynamic()
-        
-  
+
 
         // =========================================================
         // BACKGROUND PHYSICS
@@ -4629,13 +4169,13 @@ struct ContentView:
                 // =====================================================
                 // STAGE 2
                 //
-                // TRACE PHOTONS
+                // TRACE PHOTON POPULATION
                 // =====================================================
 
                 DispatchQueue.main.async {
 
                     self.statusMessage =
-                        "Stage 2/4 — tracing photons…"
+                        "Stage 2/4 — tracing photon population…"
                 }
 
 
@@ -4650,34 +4190,26 @@ struct ContentView:
                 lensingParameters.stepSize =
                     0.04
 
-
                 lensingParameters.maxSteps =
                     1200
-
 
                 lensingParameters.magneticPhotonCoupling =
                     1.0
 
-
                 lensingParameters.magneticBendingStrength =
                     1.0
-
 
                 lensingParameters.qrtlFieldCoupling =
                     1.0
 
-
                 lensingParameters.currentCoupling =
                     1.0
-
 
                 lensingParameters.electromagneticCoupling =
                     1.0
 
-
                 lensingParameters.projectionDistance =
                     6.0
-
 
                 lensingParameters.projectionPlaneHalfExtent =
                     3.0
@@ -4707,101 +4239,159 @@ struct ContentView:
 
 
                 // =====================================================
-                // PHOTON A
-                // =====================================================
-
-                let traceA =
-                    tracePhoton(
-                        origin:
-                            SIMD3<Float>(
-                                -6.5,
-                                 0.0,
-                                 0.0
-                            ),
-
-                        direction:
-                            SIMD3<Float>(
-                                1.0,
-                                0.0,
-                                0.0
-                            ),
-
-                        field:
-                            field,
-
-                        parameters:
-                            lensingParameters
-                    )
-
-
-                // =====================================================
-                // PHOTON B
-                // =====================================================
-
-                let traceB =
-                    tracePhoton(
-                        origin:
-                            SIMD3<Float>(
-                                -6.5,
-                                 1.5,
-                                 0.0
-                            ),
-
-                        direction:
-                            SIMD3<Float>(
-                                1.0,
-                                0.0,
-                                0.0
-                            ),
-
-                        field:
-                            field,
-
-                        parameters:
-                            lensingParameters
-                    )
-
-
-                // =====================================================
-                // BUILD HIT ARRAY
+                // HIT ARRAY
                 // =====================================================
 
                 var hits:
                     [LensingProjectionHit] = []
 
-
-                if let hitA =
-                    makeHit(
-                        from:
-                            traceA,
-
-                        sourceID:
-                            0
-                    ) {
-
-                    hits.append(
-                        hitA
-                    )
-                }
+                hits.reserveCapacity(
+                    photonCount
+                )
 
 
-                if let hitB =
-                    makeHit(
-                        from:
-                            traceB,
+                // =====================================================
+                // STORE TRACES FOR VISUALIZATION
+                // =====================================================
 
-                        sourceID:
-                            1
-                    ) {
+                var photonTraces:
+                    [PhotonTraceResult] = []
 
-                    hits.append(
-                        hitB
+                if showPaths {
+                    photonTraces.reserveCapacity(
+                        photonCount
                     )
                 }
 
 
                 // =====================================================
-                // CALCULATE PROJECTION RESULT
+                // TRACE SOURCE GALAXY PHOTONS
+                // =====================================================
+
+                for _ in 0..<photonCount {
+
+                    // -------------------------------------------------
+                    // RANDOM SOURCE POSITION
+                    //
+                    // Uniform distribution throughout circular
+                    // source-galaxy disk.
+                    // -------------------------------------------------
+
+                    let theta =
+                        Float.random(
+                            in: 0.0...(2.0 * Float.pi)
+                        )
+
+                    let radialFraction =
+                        sqrt(
+                            Float.random(
+                                in:
+                                    0.0...1.0
+                            )
+                        )
+
+                    let sourceRadius =
+                        sourceGalaxyRadius *
+                        radialFraction
+
+
+                    let sourceY =
+                        sourceRadius *
+                        cos(theta)
+
+                    let sourceZ =
+                        sourceRadius *
+                        sin(theta)
+
+
+                    // -------------------------------------------------
+                    // PHOTON ORIGIN
+                    // -------------------------------------------------
+
+                    let origin =
+                        SIMD3<Float>(
+                            -6.5,
+                            sourceY,
+                            sourceZ
+                        )
+
+
+                    // -------------------------------------------------
+                    // INITIAL DIRECTION
+                    // -------------------------------------------------
+
+                    let direction =
+                        SIMD3<Float>(
+                            1.0,
+                            0.0,
+                            0.0
+                        )
+
+
+                    // -------------------------------------------------
+                    // TRACE
+                    // -------------------------------------------------
+
+                    let trace =
+                        tracePhoton(
+                            origin:
+                                origin,
+
+                            direction:
+                                direction,
+
+                            field:
+                                field,
+
+                            parameters:
+                                lensingParameters
+                        )
+
+
+                    // -------------------------------------------------
+                    // SAVE TRACE
+                    // -------------------------------------------------
+
+                    if showPaths {
+
+                        photonTraces.append(
+                            trace
+                        )
+                    }
+
+
+                    // -------------------------------------------------
+                    // CONVERT TO PROJECTION HIT
+                    // -------------------------------------------------
+
+                    guard
+                        let hit =
+                            makeHit(
+                                from:
+                                    trace,
+
+                                sourceID:
+                                    0,
+
+                                sourceCoordinates:
+                                    SIMD2<Float>(
+                                        sourceY,
+                                        sourceZ
+                                    )
+                            )
+                    else {
+                        continue
+                    }
+
+
+                    hits.append(
+                        hit
+                    )
+                }
+
+
+                // =====================================================
+                // CALCULATE PROJECTION
                 // =====================================================
 
                 let projection =
@@ -4838,7 +4428,9 @@ struct ContentView:
 
                     self.scene.addSourceGalaxy(
                         radius:
-                            0.75,
+                            CGFloat(
+                                sourceGalaxyRadius
+                            ),
 
                         nStars:
                             220
@@ -4848,16 +4440,15 @@ struct ContentView:
                     // -------------------------------------------------
                     // CENTRAL GLOBULAR CLUSTER
                     // -------------------------------------------------
+
                     self.scene.addGlobularCluster(
                         radius:
-                            3.0
+                            clusterSceneRadius,
+
+                        nStars:
+                            3000
                     )
-                    /*
-                    self.scene.addCluster(
-                        radius:
-                            radius
-                    )
-                     */
+
 
                     // -------------------------------------------------
                     // QRTL HEATMAP
@@ -4884,13 +4475,12 @@ struct ContentView:
 
                     if showPaths {
 
-                        self.scene.renderPhotonPath(
-                            traceA.path
-                        )
+                        for trace in photonTraces {
 
-                        self.scene.renderPhotonPath(
-                            traceB.path
-                        )
+                            self.scene.renderPhotonPath(
+                                trace.path
+                            )
+                        }
                     }
 
 
@@ -4917,6 +4507,7 @@ struct ContentView:
             }
         }
     }
+
     
     // =====================================================
     // CONVERT TRACE TO PROJECTION HIT
@@ -4924,7 +4515,8 @@ struct ContentView:
 
     func makeHit(
         from trace: PhotonTraceResult,
-        sourceID: Int
+        sourceID: Int,
+        sourceCoordinates: SIMD2<Float>
     ) -> LensingProjectionHit? {
 
         guard
@@ -4937,7 +4529,6 @@ struct ContentView:
             return nil
         }
 
-
         return LensingProjectionHit(
 
             point:
@@ -4945,6 +4536,9 @@ struct ContentView:
 
             coordinates:
                 coordinates,
+
+            sourceCoordinates:
+                sourceCoordinates,
 
             direction:
                 trace.finalDirection,
@@ -5031,7 +4625,10 @@ struct ContentView:
         // TARGET PROJECTION PLANE
         //
         // Photon travels primarily along +X.
-        // Therefore the projection plane is X = projectionDistance.
+        //
+        // Projection plane:
+        //
+        //     X = projectionDistance
         // =========================================================
 
         let targetX =
@@ -5039,7 +4636,7 @@ struct ContentView:
 
 
         // =========================================================
-        // STEP THROUGH QRTL FIELD
+        // INTEGRATE PHOTON PATH
         // =========================================================
 
         for _ in 0..<parameters.maxSteps {
@@ -5048,95 +4645,134 @@ struct ContentView:
 
 
             // =====================================================
-            // CURRENT RADIUS FROM LENS CENTER
+            // CURRENT DISTANCE FROM LENS
             // =====================================================
 
             let radius =
-                simd_length(position)
+                simd_length(
+                    position
+                )
 
 
-            if radius > parameters.maxRadius {
+            if radius >
+                parameters.maxRadius {
+
                 break
             }
 
 
             // =====================================================
             // SAMPLE QRTL FIELD
-            // =====================================================
             //
-            // IMPORTANT:
-            // QRTLField must provide this local vector.
+            // This vector represents the local QRTL/gravity
+            // influence on the photon.
             //
-            // This is the one remaining interface that must match
-            // your actual QRTLField implementation.
+            // It should point toward the lens.
             // =====================================================
 
-            let influence =
+            let qrtlInfluence =
                 field.influence(
-                    at: position
+                    at:
+                        position
                 )
 
 
-            let qrtlInfluenceMagnitude =
+            let qrtlMagnitude =
                 simd_length(
-                    influence
+                    qrtlInfluence
                 )
 
 
             maximumQRTLInfluence =
                 max(
                     maximumQRTLInfluence,
-                    qrtlInfluenceMagnitude
+                    qrtlMagnitude
                 )
 
 
             // =====================================================
-            // COMPUTE QRTL DEFLECTION
+            // QRTL / GRAVITY DEFLECTION
             // =====================================================
 
-            let deflection =
-                influence *
+            let qrtlDeflection =
+                qrtlInfluence *
                 parameters.qrtlFieldCoupling *
                 parameters.deflectionStrength
 
 
             // =====================================================
-            // MAGNETIC PHOTON CONTRIBUTION
+            // SAMPLE ELECTROMAGNETIC FIELD
             //
-            // These values must ultimately come from the QRTL
-            // electromagnetic/current field calculation.
+            // IMPORTANT:
+            //
+            // This must be the LOCAL EM field at the photon
+            // position. It is therefore different at different
+            // locations inside the globular cluster.
             // =====================================================
 
-            let magneticPhotonInfluence =
-                SIMD3<Float>.zero
+            let electromagneticInfluence =
+                field.electromagneticInfluence(
+                    at:
+                        position
+                )
 
 
-            let magneticPhotonMagnitude =
+            let electromagneticMagnitude =
                 simd_length(
-                    magneticPhotonInfluence
+                    electromagneticInfluence
                 )
 
 
             maximumMagneticPhotonInfluence =
                 max(
                     maximumMagneticPhotonInfluence,
-                    magneticPhotonMagnitude
+                    electromagneticMagnitude
                 )
 
 
             // =====================================================
-            // COMBINE DEFLECTION
+            // ELECTROMAGNETIC PHOTON DEFLECTION
             // =====================================================
 
-            let totalDeflection =
-                deflection +
-                magneticPhotonInfluence *
+            let electromagneticDeflection =
+                electromagneticInfluence *
+                parameters.electromagneticCoupling *
                 parameters.magneticPhotonCoupling *
                 parameters.magneticBendingStrength
 
 
             // =====================================================
-            // BEND PHOTON
+            // MAGNETIC FIELD DIAGNOSTIC
+            //
+            // If electromagneticInfluence represents the magnetic
+            // field used for photon bending, use its magnitude here.
+            // =====================================================
+
+            maximumMagneticField =
+                max(
+                    maximumMagneticField,
+                    electromagneticMagnitude
+                )
+
+
+            // =====================================================
+            // NET LOCAL DEFLECTION
+            //
+            //                 QRTL
+            //                  ↓
+            //
+            //       EM →  PHOTON  ← EM
+            //
+            // The actual vector directions come from the two fields.
+            // =====================================================
+
+            let totalDeflection =
+                qrtlDeflection +
+                electromagneticDeflection
+
+
+            // =====================================================
+            // UPDATE PHOTON DIRECTION
             // =====================================================
 
             let newDirection =
@@ -5144,7 +4780,9 @@ struct ContentView:
                 totalDeflection
 
 
-            if simd_length_squared(newDirection) >
+            if simd_length_squared(
+                newDirection
+            ) >
                 0.000000001 {
 
                 rayDirection =
@@ -5155,7 +4793,7 @@ struct ContentView:
 
 
             // =====================================================
-            // PREVIOUS POSITION
+            // SAVE PREVIOUS POSITION
             // =====================================================
 
             let previousPosition =
@@ -5176,7 +4814,7 @@ struct ContentView:
 
 
             // =====================================================
-            // RECORD PATH
+            // RECORD PHOTON PATH
             // =====================================================
 
             path.append(
@@ -5185,7 +4823,7 @@ struct ContentView:
 
 
             // =====================================================
-            // CHECK X-PLANE INTERSECTION
+            // TARGET PLANE INTERSECTION
             // =====================================================
 
             let previousX =
@@ -5203,18 +4841,23 @@ struct ContentView:
                     previousX
 
 
-                guard abs(dx) > 0.000001 else {
+                guard
+                    abs(dx) >
+                        0.000001
+                else {
                     continue
                 }
 
 
-                // -------------------------------------------------
-                // INTERPOLATE EXACT X-PLANE HIT
-                // -------------------------------------------------
+                // =================================================
+                // EXACT INTERSECTION WITH X = TARGET
+                // =================================================
 
                 let t =
-                    (targetX - previousX) /
-                    dx
+                    (
+                        targetX -
+                        previousX
+                    ) / dx
 
 
                 let hitPoint =
@@ -5225,12 +4868,13 @@ struct ContentView:
                     ) * t
 
 
-                // -------------------------------------------------
-                // PROJECTION COORDINATES
+                // =================================================
+                // 2D PROJECTION COORDINATES
                 //
-                // Y and Z become the 2D coordinates on the
-                // projection plane.
-                // -------------------------------------------------
+                // X = depth
+                // Y = horizontal image coordinate
+                // Z = vertical image coordinate
+                // =================================================
 
                 let projectionCoordinates =
                     SIMD2<Float>(
@@ -5239,9 +4883,9 @@ struct ContentView:
                     )
 
 
-                // -------------------------------------------------
-                // RETURN SUCCESSFUL TRACE
-                // -------------------------------------------------
+                // =================================================
+                // SUCCESSFUL PHOTON TRACE
+                // =================================================
 
                 return PhotonTraceResult(
 
@@ -5280,7 +4924,7 @@ struct ContentView:
 
 
         // =========================================================
-        // PHOTON DID NOT REACH PROJECTION PLANE
+        // PHOTON DID NOT REACH TARGET
         // =========================================================
 
         return PhotonTraceResult(
