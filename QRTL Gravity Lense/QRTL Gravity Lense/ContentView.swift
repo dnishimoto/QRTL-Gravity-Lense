@@ -1793,13 +1793,7 @@ final class ProjectionAccumulator {
     }
 }
 
-// ============================================================
-// PROJECTION RESULT
-// ============================================================
 
-// =============================================================
-// LENSING PROJECTION RESULT
-// =============================================================
 
 struct LensingProjectionResult {
 
@@ -2109,6 +2103,10 @@ struct LensingProjectionResult {
 final class LensingSceneController:
     ObservableObject {
 
+    let clusterSceneRadius: Double = 0.75
+    
+    private var globularClusterNode: SCNNode?
+    
     let scene =
         SCNScene()
 
@@ -2601,6 +2599,203 @@ final class LensingSceneController:
             )
         }
     }
+    func addGlobularCluster(
+        radius: Double = 5.0,
+        nStars: Int = 3000
+    ) {
+
+        // =========================================================
+        // CLEAR PREVIOUS CLUSTER
+        // =========================================================
+
+        globularClusterNode?.removeFromParentNode()
+
+
+        // =========================================================
+        // CREATE CLUSTER NODE
+        // =========================================================
+
+        let clusterNode =
+            SCNNode()
+
+        globularClusterNode =
+            clusterNode
+
+
+        // =========================================================
+        // CREATE STARS THROUGHOUT SPHERICAL VOLUME
+        // =========================================================
+
+        for _ in 0..<nStars {
+
+            // -----------------------------------------------------
+            // RANDOM DIRECTION
+            // -----------------------------------------------------
+
+            let theta =
+                Double.random(
+                    in: 0.0...(2.0 * Double.pi)
+                )
+
+            let zDirection =
+                Double.random(
+                    in: -1.0...1.0
+                )
+
+            let radialXY =
+                sqrt(
+                    max(
+                        0.0,
+                        1.0 -
+                        zDirection * zDirection
+                    )
+                )
+
+
+            // -----------------------------------------------------
+            // UNIFORM VOLUME DISTRIBUTION
+            // -----------------------------------------------------
+
+            let radialFraction =
+                pow(
+                    Double.random(
+                        in: 0.0...1.0
+                    ),
+                    1.0 / 3.0
+                )
+
+            let r =
+                radius *
+                radialFraction
+
+
+            // -----------------------------------------------------
+            // SPHERICAL → CARTESIAN
+            // -----------------------------------------------------
+
+            let x =
+                r *
+                radialXY *
+                cos(theta)
+
+            let y =
+                r *
+                radialXY *
+                sin(theta)
+
+            let z =
+                r *
+                zDirection
+
+
+            let position =
+                SIMD3<Float>(
+                    Float(x),
+                    Float(y),
+                    Float(z)
+                )
+
+
+            // -----------------------------------------------------
+            // DISTANCE FROM CENTER
+            // -----------------------------------------------------
+
+            let distanceFromCenter =
+                r
+
+
+            // -----------------------------------------------------
+            // CORE DENSITY
+            // -----------------------------------------------------
+
+            let normalizedRadius =
+                radius > 0.0
+                ? distanceFromCenter / radius
+                : 0.0
+
+            let coreFactor =
+                max(
+                    0.0,
+                    1.0 -
+                    normalizedRadius
+                )
+
+
+            // -----------------------------------------------------
+            // STAR SIZE
+            // -----------------------------------------------------
+
+            let starRadius =
+                Float(
+                    0.009 +
+                    Double.random(
+                        in: 0.0...0.012
+                    ) +
+                    coreFactor * 0.008
+                )
+
+
+            // -----------------------------------------------------
+            // CREATE STAR GEOMETRY
+            // -----------------------------------------------------
+
+            let starGeometry =
+                SCNSphere(
+                    radius:
+                        CGFloat(
+                            starRadius
+                        )
+                )
+
+
+            let material =
+                SCNMaterial()
+
+            material.diffuse.contents =
+                UIColor.white
+
+            material.emission.contents =
+                UIColor.white
+
+            material.lightingModel =
+                .constant
+
+            starGeometry.firstMaterial =
+                material
+
+
+            // -----------------------------------------------------
+            // CREATE STAR NODE
+            // -----------------------------------------------------
+
+            let starNode =
+                SCNNode(
+                    geometry:
+                        starGeometry
+                )
+
+            starNode.position =
+                SCNVector3(
+                    position.x,
+                    position.y,
+                    position.z
+                )
+
+
+            clusterNode.addChildNode(
+                starNode
+            )
+        }
+
+
+        // =========================================================
+        // ADD CLUSTER TO SCENE
+        // =========================================================
+
+        scene.rootNode.addChildNode(
+            clusterNode
+        )
+    }
 
     // ========================================================
     // FRONT PROJECTION PLANE
@@ -2989,66 +3184,159 @@ final class LensingSceneController:
     // ========================================================
 
     func addCluster(
-        radius:
-            Double
+        radius: Double,
+        nStars: Int = 3000
     ) {
 
-        massNode?.removeFromParentNode()
+        // =========================================================
+        // REMOVE PREVIOUS CLUSTER
+        // =========================================================
 
-        let sceneRadius =
-            radius /
-            PhysicalConstants.solarRadius
+        globularClusterNode?.removeFromParentNode()
 
-        let visualRadius =
-            Float(
-                max(
-                    sceneRadius,
-                    0.08
+        let clusterNode =
+            SCNNode()
+
+        globularClusterNode =
+            clusterNode
+
+
+        // =========================================================
+        // CREATE STARS THROUGHOUT SPHERICAL VOLUME
+        // =========================================================
+
+        for _ in 0..<nStars {
+
+            // -----------------------------------------------------
+            // UNIFORM RANDOM DIRECTION
+            // -----------------------------------------------------
+
+            let theta =
+                Double.random(
+                    in: 0.0...(2.0 * Double.pi)
                 )
-            )
 
-        let sphere =
-            SCNSphere(
-                radius:
-                    CGFloat(
-                        visualRadius
+            let phi =
+                acos(
+                    Double.random(
+                        in: -1.0...1.0
                     )
+                )
+
+
+            // -----------------------------------------------------
+            // UNIFORM VOLUME DISTRIBUTION
+            //
+            // Cube-root distribution prevents stars from being
+            // concentrated toward the center.
+            // -----------------------------------------------------
+
+            let radialFraction =
+                pow(
+                    Double.random(
+                        in: 0.0...1.0
+                    ),
+                    1.0 / 3.0
+                )
+
+            let r =
+                radius *
+                radialFraction
+
+
+            // -----------------------------------------------------
+            // SPHERICAL → CARTESIAN
+            // -----------------------------------------------------
+
+            let sinPhi =
+                sin(phi)
+
+            let x =
+                r *
+                sinPhi *
+                cos(theta)
+
+            let y =
+                r *
+                sinPhi *
+                sin(theta)
+
+            let z =
+                r *
+                cos(phi)
+
+
+            // -----------------------------------------------------
+            // STAR SIZE
+            // -----------------------------------------------------
+
+            let starRadius =
+                0.006 +
+                Double.random(
+                    in: 0.0...0.010
+                )
+
+
+            // -----------------------------------------------------
+            // STAR GEOMETRY
+            // -----------------------------------------------------
+
+            let star =
+                SCNSphere(
+                    radius:
+                        CGFloat(
+                            starRadius
+                        )
+                )
+
+
+            let material =
+                SCNMaterial()
+
+            material.diffuse.contents =
+                UIColor.white
+
+            material.emission.contents =
+                UIColor.white
+
+            material.lightingModel =
+                .constant
+
+            star.firstMaterial =
+                material
+
+
+            // -----------------------------------------------------
+            // STAR NODE
+            // -----------------------------------------------------
+
+            let starNode =
+                SCNNode(
+                    geometry:
+                        star
+                )
+
+            starNode.position =
+                SCNVector3(
+                    x,
+                    y,
+                    z
+                )
+
+
+            clusterNode.addChildNode(
+                starNode
             )
+        }
 
-        let material =
-            SCNMaterial()
 
-        material.diffuse.contents =
-            UIColor.orange
-
-        material.emission.contents =
-            UIColor.orange
-
-        material.lightingModel =
-            .constant
-
-        sphere.materials =
-            [material]
-
-        let node =
-            SCNNode(
-                geometry:
-                    sphere
-            )
-
-        node.position =
-            SCNVector3(
-                0,
-                0,
-                0
-            )
+        // =========================================================
+        // ADD CLUSTER TO SCENE
+        // =========================================================
 
         scene.rootNode.addChildNode(
-            node
+            clusterNode
         )
-
-        massNode =
-            node
     }
 
     // ========================================================
@@ -4277,7 +4565,8 @@ struct ContentView:
         // =========================================================
 
         scene.clearDynamic()
-
+        
+  
 
         // =========================================================
         // BACKGROUND PHYSICS
@@ -4559,12 +4848,16 @@ struct ContentView:
                     // -------------------------------------------------
                     // CENTRAL GLOBULAR CLUSTER
                     // -------------------------------------------------
-
+                    self.scene.addGlobularCluster(
+                        radius:
+                            3.0
+                    )
+                    /*
                     self.scene.addCluster(
                         radius:
                             radius
                     )
-
+                     */
 
                     // -------------------------------------------------
                     // QRTL HEATMAP
