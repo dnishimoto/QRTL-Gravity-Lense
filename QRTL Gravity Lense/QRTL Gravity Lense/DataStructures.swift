@@ -10,13 +10,91 @@ import simd
 import SceneKit
 import SwiftUI
 
-struct SourceGalaxyStar {
+// ============================================================
+// PHOTON TRACE BATCH
+//
+// Contains the complete photon-tracing output for one
+// source galaxy.
+//
+// Physics:
+//     Source Galaxy
+//          ↓
+//     Photon origins
+//          ↓
+//     tracePhoton()
+//          ↓
+//     Photon paths
+//          ↓
+//     Projection hits
+//          ↓
+//     LensingProjectionResult
+// ============================================================
 
-    let id: Int
+struct PhotonTraceBatch {
 
-    let position: SIMD3<Float>
+    let traces:
+        [PhotonTraceResult]
 
-    let brightness: Float
+    let paths:
+        [[SIMD3<Float>]]
+
+    let hits:
+        [LensingProjectionHit]
+}
+
+
+import Foundation
+import simd
+
+struct SourceGalaxyStar:
+    Identifiable {
+
+    // ========================================================
+    // UNIQUE STAR ID
+    // ========================================================
+
+    let id:
+        Int
+
+    // ========================================================
+    // 3D POSITION
+    // ========================================================
+
+    let position:
+        SIMD3<Float>
+
+    // ========================================================
+    // VISUAL BRIGHTNESS
+    // ========================================================
+
+    let brightness:
+        Float
+
+    // ========================================================
+    // INITIALIZER
+    // ========================================================
+
+    init(
+        id:
+            Int,
+
+        position:
+            SIMD3<Float>,
+
+        brightness:
+            Float =
+            1.0
+    ) {
+
+        self.id =
+            id
+
+        self.position =
+            position
+
+        self.brightness =
+            brightness
+    }
 }
 
 struct ControlsSheet:

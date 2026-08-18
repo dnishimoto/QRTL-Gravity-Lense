@@ -16,6 +16,7 @@ import Foundation
 // ============================================================
 
 struct LensingParameters {
+    var qrtlPhotonCoupling: Float = 0.25
     var currentCoupling: Float = 1.0
     // ========================================================
     // PHOTON INTEGRATION

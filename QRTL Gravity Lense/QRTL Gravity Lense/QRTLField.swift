@@ -64,6 +64,120 @@ final class QRTLField {
         let electromagneticIndex: Float
         let totalIndex: Float
     }
+    // ========================================================
+     // LOCAL FIELD VECTOR
+     // ========================================================
+     //
+     // Returns the QRTL field vector at a scene position.
+     //
+     // The vector determines the local field-line direction.
+     //
+     // ========================================================
+
+     func vector(
+         at position: SIMD3<Float>
+     ) -> SIMD3<Float> {
+
+         // ----------------------------------------------------
+         // DISTANCE FROM QRTL CENTER
+         // ----------------------------------------------------
+
+         let distance =
+             simd_length(position)
+
+         guard distance > 1.0e-6,
+               distance.isFinite
+         else {
+             return SIMD3<Float>(
+                 0,
+                 0,
+                 0
+             )
+         }
+
+         // ----------------------------------------------------
+         // RADIAL DIRECTION
+         //
+         // This provides the basic QRTL field-line direction.
+         //
+         // If your actual QRTL model has a different field-line
+         // geometry, replace this section with that geometry.
+         // ----------------------------------------------------
+
+         let radialDirection =
+             simd_normalize(
+                 -position
+             )
+
+         // ----------------------------------------------------
+         // FIELD STRENGTH
+         // ----------------------------------------------------
+
+         let strength =
+             self.strength(
+                 at: position
+             )
+
+         // ----------------------------------------------------
+         // FIELD VECTOR
+         // ----------------------------------------------------
+
+         return
+             radialDirection *
+             Float(strength)
+     }
+
+
+     // ========================================================
+     // LOCAL FIELD STRENGTH
+     // ========================================================
+     //
+     // Returns the scalar QRTL field magnitude at a position.
+     //
+     // ========================================================
+
+     func strength(
+         at position: SIMD3<Float>
+     ) -> Float {
+
+         let distance =
+             simd_length(position)
+
+         guard distance.isFinite,
+               distance > 1.0e-6
+         else {
+             return 0.0
+         }
+
+         // ----------------------------------------------------
+         // INVERSE-DISTANCE FALL-OFF
+         //
+         // This is the basic field-strength model.
+         //
+         // Replace this expression with your actual QRTL
+         // field-strength equation if QRTLField already has one.
+         // ----------------------------------------------------
+
+         let normalizedDistance =
+             distance /
+             1.0
+
+         let value =
+             1.0 /
+             (
+                 1.0 +
+                 normalizedDistance *
+                 normalizedDistance
+             )
+
+         return max(
+             0.0,
+             min(
+                 1.0,
+                 value
+             )
+         )
+     }
     // =========================================================
     // QRTL MAGNETIC FIELD
     //
