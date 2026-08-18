@@ -174,9 +174,9 @@ final class LensingSceneController:
 
         cameraNode.position =
             SCNVector3(
-                10,
+                60,
                 6,
-                15
+                0
             )
 
         cameraNode.look(
@@ -1370,10 +1370,10 @@ final class LensingSceneController:
             SCNMaterial()
 
         material.diffuse.contents =
-            UIColor.white.withAlphaComponent(0.2)
+            UIColor.white.withAlphaComponent(0.9)
 
         material.emission.contents =
-            UIColor.white.withAlphaComponent(0.2)
+            UIColor.white.withAlphaComponent(0.9)
 
         material.lightingModel =
             .constant
