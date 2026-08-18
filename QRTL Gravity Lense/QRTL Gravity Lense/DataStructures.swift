@@ -349,51 +349,75 @@ struct ControlsSheet:
 
 struct LensingParameters {
 
+    // =========================================================
+    // PHOTON PROPAGATION
+    // =========================================================
+
+    let maximumPhotonSteps: Int
 
     var stepSize: Float
+
     var maxSteps: Int
+
     var maxRadius: Float
+
+    var maximumPropagationRadius: Float {
+        maxRadius
+    }
+
     var deflectionStrength: Float
 
+    var photonStepSize: Float {
+        stepSize
+    }
 
     // =========================================================
     // QRTL / ELECTROMAGNETIC COUPLING
     // =========================================================
 
     var magneticPhotonCoupling: Float
-    var magneticBendingStrength: Float
-    var qrtlFieldCoupling: Float
-    var currentCoupling: Float
-    var electromagneticCoupling: Float
 
+    var photonMagneticCoupling: Float {
+        magneticPhotonCoupling
+    }
+
+    var magneticBendingStrength: Float
+
+    var qrtlFieldCoupling: Float
+
+    var currentCoupling: Float
+
+    var electromagneticCoupling: Float
 
     // =========================================================
     // PROJECTION
     // =========================================================
 
     var projectionDistance: Float
-    var projectionPlaneHalfExtent: Float
 
+    var projectionPlaneHalfExtent: Float
 
     // =========================================================
     // INITIALIZER
     // =========================================================
 
     init(
+        maximumPhotonSteps: Int = 20_000,
         stepSize: Float = 0.05,
         maxSteps: Int = 20_000,
         maxRadius: Float = 500.0,
         deflectionStrength: Float = 0.01,
-
         magneticPhotonCoupling: Float = 1.0,
         magneticBendingStrength: Float = 1.0,
         qrtlFieldCoupling: Float = 1.0,
         currentCoupling: Float = 1.0,
         electromagneticCoupling: Float = 1.0,
-
         projectionDistance: Float = 6.0,
         projectionPlaneHalfExtent: Float = 3.0
     ) {
+
+        self.maximumPhotonSteps =
+            maximumPhotonSteps
 
         self.stepSize =
             stepSize
@@ -428,64 +452,8 @@ struct LensingParameters {
         self.projectionPlaneHalfExtent =
             projectionPlaneHalfExtent
     }
-
-
-  
 }
-struct PhotonTraceResult {
 
-    // ---------------------------------------------------------
-    // PHOTON PATH
-    // ---------------------------------------------------------
-
-    let path: [SIMD3<Float>]
-
-
-    // ---------------------------------------------------------
-    // PROJECTION
-    // ---------------------------------------------------------
-
-    /// Exact intersection with the target projection plane.
-    let projectionPoint: SIMD3<Float>?
-
-    /// 2D coordinates on the projection plane.
-    let projectionCoordinates: SIMD2<Float>?
-
-
-    // ---------------------------------------------------------
-    // FINAL PHOTON STATE
-    // ---------------------------------------------------------
-
-    /// Photon direction at the projection-plane intersection.
-    let finalDirection: SIMD3<Float>
-
-    /// Total distance traveled by the photon.
-    let traveledDistance: Float
-
-    /// Number of integration steps completed.
-    let stepCount: Int
-
-
-    // ---------------------------------------------------------
-    // FIELD DIAGNOSTICS
-    // ---------------------------------------------------------
-
-    /// Maximum magnetic-field magnitude encountered.
-    let maximumMagneticField: Float
-
-    /// Maximum QRTL-field influence encountered.
-    let maximumQRTLInfluence: Float
-
-    /// Maximum magnetic photon influence encountered.
-    let maximumMagneticPhotonInfluence: Float
-
-
-    // ---------------------------------------------------------
-    // TARGET STATUS
-    // ---------------------------------------------------------
-
-    let reachedTarget: Bool
-}
 
 
 struct LensingProjectionResult {

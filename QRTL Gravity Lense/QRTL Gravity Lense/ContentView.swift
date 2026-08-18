@@ -380,141 +380,567 @@ struct ContentView:
     }
 
     private func runFullPipeline() {
-        guard !isRunning else { return }
-        isRunning = true
-        result = nil
-        statusMessage = "Starting QRTL lensing pipeline…"
 
-        let mass = massSolar * PhysicalConstants.solarMass
-        let showPaths = showPhotonPaths
-        let sourceGalaxyRadius: Float = 0.75
-        let photonCount = 1200
-        let clusterSceneRadius: Double = 3.0
-        let frontX = scene.frontPlaneX
+        // =========================================================
+        // PREVENT SIMULTANEOUS PIPELINES
+        // =========================================================
 
-        var params = QRTLParameters()
-        params.alphaQ = max(alphaQ, 1e-2)
-        params.etaQ = etaQ
-        params.gammaQ = gammaQ
-        params.chiQ = chiQ
-        params.interactionRate = interactionRate
-        params.electromagneticCoupling = max(electromagneticCoupling, 1e-2)
-        params.photonEMCoupling = max(photonEMCoupling, 1e-2)
+        guard !isRunning else {
+            return
+        }
+
+        isRunning =
+            true
+
+        result =
+            nil
+
+        statusMessage =
+            "Starting QRTL lensing pipeline…"
+
+
+        // =========================================================
+        // CAPTURE ALL SWIFTUI VALUES BEFORE BACKGROUND THREAD
+        // =========================================================
+
+        let mass =
+            massSolar *
+            PhysicalConstants.solarMass
+
+        let showPaths =
+            showPhotonPaths
+
+        let sourceGalaxyRadius:
+            Float = 0.75
+
+        let photonCount =
+            1200
+
+        let clusterSceneRadius:
+            Double = 3.0
+
+        // ---------------------------------------------------------
+        // Capture the projection plane position once.
+        // ---------------------------------------------------------
+
+        let frontX =
+            scene.frontPlaneX
+
+
+        // =========================================================
+        // BUILD QRTL PARAMETERS
+        // =========================================================
+
+        var params =
+            QRTLParameters()
+
+        params.alphaQ =
+            max(
+                alphaQ,
+                1e-2
+            )
+
+        params.etaQ =
+            etaQ
+
+        params.gammaQ =
+            gammaQ
+
+        params.chiQ =
+            chiQ
+
+        params.interactionRate =
+            interactionRate
+
+        params.electromagneticCoupling =
+            max(
+                electromagneticCoupling,
+                1e-2
+            )
+
+        params.photonEMCoupling =
+            max(
+                photonEMCoupling,
+                1e-2
+            )
+
+
+        // =========================================================
+        // CLEAR OLD DYNAMIC SCENE CONTENT
+        // =========================================================
 
         scene.clearDynamic()
 
-        DispatchQueue.global(qos: .userInitiated).async {
+
+        // =========================================================
+        // BACKGROUND COMPUTATION
+        // =========================================================
+
+        DispatchQueue.global(
+            qos: .userInitiated
+        ).async {
+
             autoreleasepool {
 
-                DispatchQueue.main.async {
-                    self.statusMessage = "Stage 1/4 — QRTL field (scene units)…"
-                }
-
-                let massModel = GaussianMassModel(
-                    totalMass: mass,
-                    characteristicRadius: clusterSceneRadius
-                )
-                let field = QRTLField(massModel: massModel, parameters: params)
-
-                let experiment = QRTLExperiment(
-                    mass: mass,
-                    radius: clusterSceneRadius,
-                    parameters: params
-                )
-                let outcome = experiment.run(
-                    impactParameter: 0.5,
-                    startDistance: 8,
-                    endDistance: 8,
-                    stepSize: 0.05
-                )
+                // =================================================
+                // STAGE 1
+                // =================================================
 
                 DispatchQueue.main.async {
-                    self.statusMessage = "Stage 2/4 — tracing photons…"
+
+                    self.statusMessage =
+                        "Stage 1/4 — QRTL field (scene units)…"
                 }
 
-                var lensingParameters = LensingParameters()
-                lensingParameters.stepSize = 0.04
-                lensingParameters.maxSteps = 1500
-                lensingParameters.deflectionStrength = 0.2
-                lensingParameters.qrtlFieldCoupling = 5
-                lensingParameters.electromagneticCoupling = 5
-                lensingParameters.magneticPhotonCoupling = 1
-                lensingParameters.magneticBendingStrength = 1
-                lensingParameters.projectionDistance = frontX
-                lensingParameters.projectionPlaneHalfExtent = 6
 
-                var hits: [LensingProjectionHit] = []
-                hits.reserveCapacity(photonCount)
-                var traces: [PhotonTraceResult] = []
-                if showPaths { traces.reserveCapacity(photonCount) }
+                // =================================================
+                // MASS MODEL
+                // =================================================
+
+                let massModel =
+                    GaussianMassModel(
+                        totalMass:
+                            mass,
+
+                        characteristicRadius:
+                            clusterSceneRadius
+                    )
+
+
+                // =================================================
+                // QRTL FIELD
+                // =================================================
+
+                let field =
+                    QRTLField(
+                        massModel:
+                            massModel,
+
+                        parameters:
+                            params
+                    )
+
+
+                // =================================================
+                // QRTL EXPERIMENT / BASELINE
+                // =================================================
+
+                let experiment =
+                    QRTLExperiment(
+                        mass:
+                            mass,
+
+                        radius:
+                            clusterSceneRadius,
+
+                        parameters:
+                            params
+                    )
+
+
+                let outcome =
+                    experiment.run(
+                        impactParameter:
+                            0.5,
+
+                        startDistance:
+                            8.0,
+
+                        endDistance:
+                            8.0,
+
+                        stepSize:
+                            0.05
+                    )
+
+
+                // =================================================
+                // STAGE 2
+                // =================================================
+
+                DispatchQueue.main.async {
+
+                    self.statusMessage =
+                        "Stage 2/4 — tracing photons…"
+                }
+
+
+                // =================================================
+                // LENSING PARAMETERS
+                // =================================================
+
+                var lensingParameters =
+                    LensingParameters()
+
+
+                // -------------------------------------------------
+                // Photon integration
+                // -------------------------------------------------
+
+                lensingParameters.stepSize =
+                    0.04
+
+                lensingParameters.maxSteps =
+                    1500
+
+                lensingParameters.deflectionStrength =
+                    0.2
+
+
+                // -------------------------------------------------
+                // QRTL FIELD COUPLING
+                // -------------------------------------------------
+
+                lensingParameters.qrtlFieldCoupling =
+                    5.0
+
+                lensingParameters.electromagneticCoupling =
+                    5.0
+
+
+                // -------------------------------------------------
+                // Magnetic diagnostics
+                // -------------------------------------------------
+
+                lensingParameters.magneticPhotonCoupling =
+                    1.0
+
+                lensingParameters.magneticBendingStrength =
+                    1.0
+
+
+                // -------------------------------------------------
+                // PROJECTION PLANE
+                // -------------------------------------------------
+
+                lensingParameters.projectionDistance =
+                    frontX
+
+                lensingParameters.projectionPlaneHalfExtent =
+                    6.0
+
+
+                // =================================================
+                // PROJECTION STORAGE
+                // =================================================
+
+                var hits:
+                    [LensingProjectionHit] = []
+
+                hits.reserveCapacity(
+                    photonCount
+                )
+
+
+                // =================================================
+                // PHOTON TRACE STORAGE
+                // =================================================
+
+                var traces:
+                    [PhotonTraceResult] = []
+
+                if showPaths {
+
+                    traces.reserveCapacity(
+                        photonCount
+                    )
+                }
+
+
+                // =================================================
+                // TRACE PHOTONS
+                // =================================================
 
                 for _ in 0..<photonCount {
-                    let theta = Float.random(in: 0...(2 * .pi))
-                    let rf = sqrt(Float.random(in: 0...1))
-                    let r = sourceGalaxyRadius * rf
-                    let sy = r * cos(theta)
-                    let sz = r * sin(theta)
 
-                    let origin = SIMD3<Float>(-6.5, sy, sz)
-                    let trace = self.tracePhoton(
-                        origin: origin,
-                        direction: SIMD3(1, 0, 0),
-                        field: field,
-                        parameters: lensingParameters
-                    )
-                    if showPaths { traces.append(trace) }
-                    if let hit = self.makeHit(
-                        from: trace,
-                        sourceID: 0,
-                        sourceCoordinates: SIMD2(sy, sz)
-                    ) {
-                        hits.append(hit)
+                    // -------------------------------------------------
+                    // SOURCE GALAXY DISTRIBUTION
+                    // -------------------------------------------------
+
+                    let theta =
+                        Float.random(
+                            in:
+                                0...(2 * .pi)
+                        )
+
+                    let rf =
+                        sqrt(
+                            Float.random(
+                                in:
+                                    0...1
+                            )
+                        )
+
+                    let r =
+                        sourceGalaxyRadius *
+                        rf
+
+                    let sy =
+                        r *
+                        cos(theta)
+
+                    let sz =
+                        r *
+                        sin(theta)
+
+
+                    // -------------------------------------------------
+                    // SOURCE POSITION
+                    //
+                    // X = photon propagation axis
+                    // Y = vertical source coordinate
+                    // Z = depth/source coordinate
+                    // -------------------------------------------------
+
+                    let origin =
+                        SIMD3<Float>(
+                            -6.5,
+                            sy,
+                            sz
+                        )
+
+
+                    // -------------------------------------------------
+                    // INITIAL PHOTON DIRECTION
+                    // -------------------------------------------------
+
+                    let direction =
+                        SIMD3<Float>(
+                            1.0,
+                            0.0,
+                            0.0
+                        )
+
+
+                    // -------------------------------------------------
+                    // TRACE
+                    // -------------------------------------------------
+
+                    let trace =
+                        self.tracePhoton(
+                            origin:
+                                origin,
+
+                            direction:
+                                direction,
+
+                            field:
+                                field,
+
+                            parameters:
+                                lensingParameters
+                        )
+
+
+                    // -------------------------------------------------
+                    // STORE TRACE ONLY WHEN REQUESTED
+                    // -------------------------------------------------
+
+                    if showPaths {
+
+                        traces.append(
+                            trace
+                        )
+                    }
+
+
+                    // -------------------------------------------------
+                    // IMPORTANT:
+                    //
+                    // ONLY photons that actually hit the projection
+                    // plane may create projection hits.
+                    // -------------------------------------------------
+
+                    guard trace.hitProjection else {
+                        continue
+                    }
+
+
+                    // -------------------------------------------------
+                    // CREATE EXACTLY ONE HIT
+                    // -------------------------------------------------
+
+                    if let hit =
+                        self.makeHit(
+                            from:
+                                trace,
+
+                            sourceID:
+                                0,
+
+                            sourceCoordinates:
+                                SIMD2(
+                                    sy,
+                                    sz
+                                )
+                        ) {
+
+                        hits.append(
+                            hit
+                        )
                     }
                 }
 
-                let projection = LensingProjectionResult.calculate(from: hits)
+
+                // =================================================
+                // STAGE 3
+                // =================================================
 
                 DispatchQueue.main.async {
-                    self.statusMessage = "Stage 4/4 — rendering…"
 
-                    self.scene.addSourceGalaxy(radius: Double(sourceGalaxyRadius), nStars: 220)
-                    self.scene.addGlobularCluster(radius: clusterSceneRadius, nStars: 2500)
-                    self.scene.updateBottomHeatmap(field: field)
-                    self.scene.applyProjection(projection)
+                    self.statusMessage =
+                        "Stage 3/4 — calculating projection…"
+                }
+
+
+                // =================================================
+                // CALCULATE PROJECTION
+                // =================================================
+
+                let projection =
+                    LensingProjectionResult.calculate(
+                        from:
+                            hits
+                    )
+
+
+                // =================================================
+                // STAGE 4
+                // =================================================
+
+                DispatchQueue.main.async {
+
+                    self.statusMessage =
+                        "Stage 4/4 — rendering…"
+
+
+                    // =================================================
+                    // SOURCE GALAXY
+                    // =================================================
+
+                    self.scene.addSourceGalaxy(
+                        radius:
+                            Double(
+                                sourceGalaxyRadius
+                            ),
+
+                        nStars:
+                            220
+                    )
+
+
+                    // =================================================
+                    // GLOBULAR CLUSTER
+                    // =================================================
+
+                    self.scene.addGlobularCluster(
+                        radius:
+                            clusterSceneRadius,
+
+                        nStars:
+                            2500
+                    )
+
+
+                    // =================================================
+                    // FIELD HEATMAP
+                    // =================================================
+
+                    self.scene.updateBottomHeatmap(
+                        field:
+                            field
+                    )
+
+
+                    // =================================================
+                    // APPLY PROJECTION
+                    // =================================================
+
+                    self.scene.applyProjection(
+                        projection
+                    )
+
+
+                    // =================================================
+                    // RENDER PHOTON PATHS
+                    // =================================================
 
                     if showPaths {
-                        for t in traces {
-                            self.scene.renderPhotonPath(t.path)
+
+                        for trace in traces {
+
+                            guard trace.hitProjection else {
+                                continue
+                            }
+
+                            self.scene.renderPhotonPath(
+                                trace.path
+                            )
                         }
                     }
 
-                    self.result = outcome
-                    self.statusMessage = "Done — \(projection.validHits.count) hits"
-                    self.isRunning = false
+
+                    // =================================================
+                    // FINAL RESULT
+                    // =================================================
+
+                    self.result =
+                        outcome
+
+                    self.statusMessage =
+                        "Done — \(projection.validHits.count) hits"
+
+                    self.isRunning =
+                        false
                 }
             }
         }
     }
     
-    // =====================================================
-    // CONVERT TRACE TO PROJECTION HIT
-    // =====================================================
-
-    func makeHit(
+    private func makeHit(
         from trace: PhotonTraceResult,
         sourceID: Int,
         sourceCoordinates: SIMD2<Float>
     ) -> LensingProjectionHit? {
 
-        guard
-            let point =
-                trace.projectionPoint,
-
-            let coordinates =
-                trace.projectionCoordinates
+        guard trace.hitProjection,
+              let point = trace.projectionPosition
         else {
             return nil
         }
+
+        guard point.x.isFinite,
+              point.y.isFinite,
+              point.z.isFinite
+        else {
+            return nil
+        }
+
+
+        // =========================================================
+        // PROJECTION PLANE IS X CONSTANT
+        //
+        // Photon travels along X.
+        //
+        // Therefore the image coordinates are:
+        //
+        // horizontal = Y
+        // vertical   = Z
+        // =========================================================
+
+        let coordinates =
+            SIMD2<Float>(
+                point.y,
+                point.z
+            )
+
+
+        guard coordinates.x.isFinite,
+              coordinates.y.isFinite
+        else {
+            return nil
+        }
+
 
         return LensingProjectionHit(
 
@@ -549,6 +975,114 @@ struct ContentView:
                 sourceID
         )
     }
+ 
+    
+    private func projectionPlaneIntersection(
+        from: SIMD3<Float>,
+        to: SIMD3<Float>,
+        parameters: LensingParameters
+    ) -> SIMD3<Float>? {
+
+        // =========================================================
+        // PROJECTION PLANE
+        //
+        // Plane is perpendicular to the X axis:
+        //
+        //     x = projectionDistance
+        //
+        // The photon segment is tested from `from` -> `to`.
+        // =========================================================
+
+        let projectionDistance =
+            parameters.projectionDistance
+
+        let halfExtent =
+            parameters.projectionPlaneHalfExtent
+
+        guard projectionDistance.isFinite,
+              halfExtent.isFinite,
+              halfExtent > 0.0
+        else {
+            return nil
+        }
+
+        // =========================================================
+        // SEGMENT X VALUES
+        // =========================================================
+
+        let x0 = from.x
+        let x1 = to.x
+
+        guard x0.isFinite,
+              x1.isFinite
+        else {
+            return nil
+        }
+
+        // =========================================================
+        // DETERMINE WHETHER SEGMENT CROSSES X PLANE
+        // =========================================================
+
+        let dx =
+            x1 - x0
+
+        guard dx.isFinite,
+              abs(dx) > 0.000001
+        else {
+            return nil
+        }
+
+        // =========================================================
+        // INTERSECTION PARAMETER
+        //
+        // from + t(to - from)
+        //
+        // Solve:
+        //
+        // x = projectionDistance
+        // =========================================================
+
+        let t =
+            (projectionDistance - x0) / dx
+
+        guard t.isFinite,
+              t >= 0.0,
+              t <= 1.0
+        else {
+            return nil
+        }
+
+        // =========================================================
+        // CALCULATE INTERSECTION
+        // =========================================================
+
+        let intersection =
+            from +
+            (to - from) * t
+
+        guard intersection.x.isFinite,
+              intersection.y.isFinite,
+              intersection.z.isFinite
+        else {
+            return nil
+        }
+
+        // =========================================================
+        // PROJECTION PLANE BOUNDS
+        //
+        // The plane is an X-oriented plane, so the visible
+        // coordinates are Y and Z.
+        // =========================================================
+
+        guard abs(intersection.y) <= halfExtent,
+              abs(intersection.z) <= halfExtent
+        else {
+            return nil
+        }
+
+        return intersection
+    }
+    
     func tracePhoton(
         origin: SIMD3<Float>,
         direction: SIMD3<Float>,
@@ -557,397 +1091,471 @@ struct ContentView:
     ) -> PhotonTraceResult {
 
         // =========================================================
-        // INITIALIZE POSITION
+        // INITIALIZE PHOTON
         // =========================================================
 
-        var position =
-            origin
+        var position = origin
 
-
-        // =========================================================
-        // INITIALIZE DIRECTION
-        // =========================================================
-
-        var rayDirection =
+        var photonDirection =
             simd_normalize(direction)
 
+        guard photonDirection.x.isFinite,
+              photonDirection.y.isFinite,
+              photonDirection.z.isFinite
+        else {
+            return PhotonTraceResult(
+                origin: origin,
+                direction: direction,
+                positions: [origin],
+                finalPosition: origin,
+                finalDirection: .zero,
+                hitProjection: false,
+                projectionPosition: nil,
+                totalDeflection: 0.0,
+                maximumQRTLInfluence: 0.0,
+                maximumMagneticField: 0.0,
+                maximumMagneticPhotonInfluence: 0.0,
+                traveledDistance: 0.0,
+                stepCount: 0,
+                terminated: true
+            )
+        }
 
         // =========================================================
-        // PHOTON PATH
+        // PATH STORAGE
         // =========================================================
 
-        var path:
-            [SIMD3<Float>] = []
+        var positions: [SIMD3<Float>] = []
 
-        path.reserveCapacity(
-            parameters.maxSteps + 1
+        positions.reserveCapacity(
+            parameters.maximumPhotonSteps + 1
         )
 
-        path.append(
-            position
-        )
-
+        positions.append(position)
 
         // =========================================================
         // DIAGNOSTICS
         // =========================================================
 
-        var traveledDistance:
-            Float = 0.0
+        var totalDeflection: Float = 0.0
 
-        var stepCount:
-            Int = 0
+        var maximumQRTLInfluence: Float = 0.0
 
-        var maximumMagneticField:
-            Float = 0.0
+        var maximumMagneticField: Float = 0.0
 
-        var maximumQRTLInfluence:
-            Float = 0.0
+        var maximumMagneticPhotonInfluence: Float = 0.0
 
-        var maximumMagneticPhotonInfluence:
-            Float = 0.0
-
+        var traveledDistance: Float = 0.0
 
         // =========================================================
-        // TARGET PROJECTION PLANE
-        //
-        // Photon travels primarily along +X.
-        //
-        // Projection plane:
-        //
-        //     X = projectionDistance
+        // PROJECTION STATE
         // =========================================================
 
-        let targetX =
-            parameters.projectionDistance
+        var hitProjection = false
 
+        var projectionPosition:
+            SIMD3<Float>? = nil
+
+        var terminated = false
 
         // =========================================================
-        // INTEGRATE PHOTON PATH
+        // PHOTON PROPAGATION
         // =========================================================
 
-        for _ in 0..<parameters.maxSteps {
+        for _ in 0..<parameters.maximumPhotonSteps {
 
-            stepCount += 1
+            // -----------------------------------------------------
+            // CURRENT STATE
+            // -----------------------------------------------------
 
+            let previousPosition =
+                position
+
+            let previousDirection =
+                photonDirection
 
             // =====================================================
-            // CURRENT DISTANCE FROM LENS
+            // SAMPLE COMPLETE QRTL FIELD
             // =====================================================
 
-            let radius =
-                simd_length(
-                    position
+            let sample =
+                field.sample(
+                    at: position
                 )
 
+            let totalIndex =
+                sample.totalIndex
 
-            if radius >
-                parameters.maxRadius {
-
+            guard totalIndex.isFinite,
+                  totalIndex > 0.000001
+            else {
+                terminated = true
                 break
             }
 
+            // =====================================================
+            // QRTL INFLUENCE
+            // =====================================================
 
-            // =====================================================
-            // SAMPLE QRTL FIELD
-            //
-            // This vector represents the local QRTL/gravity
-            // influence on the photon.
-            //
-            // It should point toward the lens.
-            // =====================================================
+            let qrtlInfluenceVector =
+                field.influence(
+                    at: position
+                )
 
             let qrtlInfluence =
-                field.influence(
-                    at:
-                        position
-                )
-
-
-            let qrtlMagnitude =
                 simd_length(
-                    qrtlInfluence
+                    qrtlInfluenceVector
                 )
 
+            if qrtlInfluence.isFinite {
 
-            maximumQRTLInfluence =
-                max(
-                    maximumQRTLInfluence,
-                    qrtlMagnitude
-                )
-
-
-            // =====================================================
-            // QRTL / GRAVITY DEFLECTION
-            //
-            // Gravity pull now directly uses QRTL field strength;
-            // strongest in dense star regions.
-            // =====================================================
-
-            let gravityStrength = qrtlMagnitude * parameters.qrtlFieldCoupling * parameters.deflectionStrength
-            let inwardDirection = -position / max(simd_length(position), 0.0000001)
-            let gravityDeflection = inwardDirection * gravityStrength
-
+                maximumQRTLInfluence =
+                    max(
+                        maximumQRTLInfluence,
+                        qrtlInfluence
+                    )
+            }
 
             // =====================================================
-            // SAMPLE ELECTROMAGNETIC FIELD
-            //
-            // IMPORTANT:
-            //
-            // This must be the LOCAL EM field at the photon
-            // position. It is therefore different at different
-            // locations inside the globular cluster.
+            // ELECTROMAGNETIC INFLUENCE
             // =====================================================
 
-            let electromagneticInfluence =
+            let magneticInfluence =
                 field.electromagneticInfluence(
-                    at:
-                        position
+                    at: position
                 )
 
-
-            let electromagneticMagnitude =
+            let magneticMagnitude =
                 simd_length(
-                    electromagneticInfluence
+                    magneticInfluence
                 )
 
+            if magneticMagnitude.isFinite {
 
-            maximumMagneticPhotonInfluence =
+                maximumMagneticField =
+                    max(
+                        maximumMagneticField,
+                        magneticMagnitude
+                    )
+
+                maximumMagneticPhotonInfluence =
+                    max(
+                        maximumMagneticPhotonInfluence,
+                        magneticMagnitude
+                    )
+            }
+
+            // =====================================================
+            // TOTAL INDEX GRADIENT
+            // =====================================================
+
+            let gradient =
+                field.indexGradient(
+                    at: position
+                )
+
+            guard gradient.x.isFinite,
+                  gradient.y.isFinite,
+                  gradient.z.isFinite
+            else {
+                terminated = true
+                break
+            }
+
+            // =====================================================
+            // TRANSVERSE GRADIENT
+            //
+            // Only the component perpendicular to the photon
+            // direction changes the trajectory.
+            // =====================================================
+
+            let longitudinal =
+                simd_dot(
+                    gradient,
+                    photonDirection
+                )
+
+            let transverseGradient =
+                gradient -
+                photonDirection *
+                longitudinal
+
+            // =====================================================
+            // OPTICAL INDEX BENDING
+            // =====================================================
+
+            let indexBending =
+                transverseGradient /
                 max(
-                    maximumMagneticPhotonInfluence,
-                    electromagneticMagnitude
+                    totalIndex,
+                    0.000001
                 )
 
+            guard indexBending.x.isFinite,
+                  indexBending.y.isFinite,
+                  indexBending.z.isFinite
+            else {
+                terminated = true
+                break
+            }
 
             // =====================================================
-            // ELECTROMAGNETIC PHOTON DEFLECTION
+            // DEFLECTION STRENGTH
             // =====================================================
 
-            let electromagneticDeflection =
-                electromagneticInfluence *
-                parameters.electromagneticCoupling *
-                parameters.magneticPhotonCoupling *
-                parameters.magneticBendingStrength
-
+            let directionChange =
+                indexBending *
+                parameters.deflectionStrength
 
             // =====================================================
-            // MAGNETIC FIELD DIAGNOSTIC
-            //
-            // If electromagneticInfluence represents the magnetic
-            // field used for photon bending, use its magnitude here.
+            // PHOTON STEP SIZE
             // =====================================================
 
-            maximumMagneticField =
-                max(
-                    maximumMagneticField,
-                    electromagneticMagnitude
-                )
+            let step =
+                parameters.photonStepSize
 
-
-            // =====================================================
-            // NET LOCAL DEFLECTION
-            //
-            //                 QRTL
-            //                  ↓
-            //
-            //       EM →  PHOTON  ← EM
-            //
-            // The actual vector directions come from the two fields.
-            // =====================================================
-
-            let totalDeflection =
-                gravityDeflection +
-                electromagneticDeflection
-
+            guard step.isFinite,
+                  step > 0.0
+            else {
+                terminated = true
+                break
+            }
 
             // =====================================================
             // UPDATE PHOTON DIRECTION
             // =====================================================
 
-            let newDirection =
-                rayDirection +
-                totalDeflection
+            var nextDirection =
+                photonDirection +
+                directionChange *
+                step
 
-
-            if simd_length_squared(
-                newDirection
-            ) >
-                0.000000001 {
-
-                rayDirection =
-                    simd_normalize(
-                        newDirection
-                    )
+            guard nextDirection.x.isFinite,
+                  nextDirection.y.isFinite,
+                  nextDirection.z.isFinite
+            else {
+                terminated = true
+                break
             }
 
+            let directionLength =
+                simd_length(
+                    nextDirection
+                )
+
+            guard directionLength.isFinite,
+                  directionLength > 0.000001
+            else {
+                terminated = true
+                break
+            }
+
+            nextDirection =
+                nextDirection /
+                directionLength
 
             // =====================================================
-            // SAVE PREVIOUS POSITION
+            // CALCULATE NEXT POSITION
             // =====================================================
 
-            let previousPosition =
-                position
+            let nextPosition =
+                position +
+                nextDirection *
+                step
 
+            guard nextPosition.x.isFinite,
+                  nextPosition.y.isFinite,
+                  nextPosition.z.isFinite
+            else {
+                terminated = true
+                break
+            }
 
             // =====================================================
-            // ADVANCE PHOTON
+            // PROJECTION PLANE INTERSECTION
+            //
+            // The photon may cross the projection plane between
+            // previousPosition and nextPosition.
             // =====================================================
 
-            position +=
-                rayDirection *
-                parameters.stepSize
+            if let intersection =
+                projectionPlaneIntersection(
+                    from: previousPosition,
+                    to: nextPosition,
+                    parameters: parameters
+                ) {
 
+                // -------------------------------------------------
+                // ADD ONLY THE ACTUAL DISTANCE TO THE PLANE
+                // -------------------------------------------------
+
+                let segment =
+                    intersection -
+                    previousPosition
+
+                let intersectionDistance =
+                    simd_length(
+                        segment
+                    )
+
+                if intersectionDistance.isFinite {
+
+                    traveledDistance +=
+                        intersectionDistance
+                }
+
+                // -------------------------------------------------
+                // FINAL PHOTON STATE
+                // -------------------------------------------------
+
+                position =
+                    intersection
+
+                photonDirection =
+                    nextDirection
+
+                // -------------------------------------------------
+                // RECORD FINAL INTERSECTION
+                // -------------------------------------------------
+
+                positions.append(
+                    intersection
+                )
+
+                projectionPosition =
+                    intersection
+
+                hitProjection =
+                    true
+
+                terminated =
+                    true
+
+                break
+            }
+
+            // =====================================================
+            // UPDATE PHOTON STATE
+            // =====================================================
+
+            photonDirection =
+                nextDirection
+
+            position =
+                nextPosition
 
             traveledDistance +=
-                parameters.stepSize
-
+                step
 
             // =====================================================
             // RECORD PHOTON PATH
             // =====================================================
 
-            path.append(
+            positions.append(
                 position
             )
 
-
             // =====================================================
-            // TARGET PLANE INTERSECTION
+            // ACCUMULATE DEFLECTION ANGLE
             // =====================================================
 
-            let previousX =
-                previousPosition.x
-
-            let currentX =
-                position.x
-
-
-            if previousX < targetX &&
-                currentX >= targetX {
-
-                let dx =
-                    currentX -
-                    previousX
-
-
-                guard
-                    abs(dx) >
-                        0.000001
-                else {
-                    continue
-                }
-
-
-                // =================================================
-                // EXACT INTERSECTION WITH X = TARGET
-                // =================================================
-
-                let t =
-                    (
-                        targetX -
-                        previousX
-                    ) / dx
-
-
-                let hitPoint =
-                    previousPosition +
-                    (
-                        position -
-                        previousPosition
-                    ) * t
-
-
-                // =================================================
-                // 2D PROJECTION COORDINATES
-                //
-                // X = depth
-                // Y = horizontal image coordinate
-                // Z = vertical image coordinate
-                // =================================================
-
-                let projectionCoordinates =
-                    SIMD2<Float>(
-                        hitPoint.y,
-                        hitPoint.z
-                    )
-
-
-                // =================================================
-                // SUCCESSFUL PHOTON TRACE
-                // =================================================
-
-                return PhotonTraceResult(
-
-                    path:
-                        path,
-
-                    projectionPoint:
-                        hitPoint,
-
-                    projectionCoordinates:
-                        projectionCoordinates,
-
-                    finalDirection:
-                        rayDirection,
-
-                    traveledDistance:
-                        traveledDistance,
-
-                    stepCount:
-                        stepCount,
-
-                    maximumMagneticField:
-                        maximumMagneticField,
-
-                    maximumQRTLInfluence:
-                        maximumQRTLInfluence,
-
-                    maximumMagneticPhotonInfluence:
-                        maximumMagneticPhotonInfluence,
-
-                    reachedTarget:
-                        true
+            let dotProduct =
+                simd_dot(
+                    previousDirection,
+                    photonDirection
                 )
+
+            let clampedDot =
+                max(
+                    -1.0,
+                    min(
+                        1.0,
+                        dotProduct
+                    )
+                )
+
+            let angle =
+                acos(
+                    clampedDot
+                )
+
+            if angle.isFinite {
+
+                totalDeflection +=
+                    angle
+            }
+
+            // =====================================================
+            // STOP OUTSIDE LENSING VOLUME
+            // =====================================================
+
+            let distanceFromOrigin =
+                simd_length(
+                    position
+                )
+
+            if distanceFromOrigin.isFinite,
+               distanceFromOrigin >
+                    parameters.maximumPropagationRadius {
+
+                terminated =
+                    true
+
+                break
             }
         }
 
-
         // =========================================================
-        // PHOTON DID NOT REACH TARGET
+        // RETURN THE ACTUAL CALCULATED PHOTON TRACE
         // =========================================================
 
         return PhotonTraceResult(
+            origin:
+                origin,
 
-            path:
-                path,
+            direction:
+                direction,
 
-            projectionPoint:
-                nil,
+            positions:
+                positions,
 
-            projectionCoordinates:
-                nil,
+            finalPosition:
+                position,
 
             finalDirection:
-                rayDirection,
+                photonDirection,
+
+            hitProjection:
+                hitProjection,
+
+            projectionPosition:
+                projectionPosition,
+
+            totalDeflection:
+                totalDeflection,
+
+            maximumQRTLInfluence:
+                maximumQRTLInfluence,
+
+            maximumMagneticField:
+                maximumMagneticField,
+
+            maximumMagneticPhotonInfluence:
+                maximumMagneticPhotonInfluence,
 
             traveledDistance:
                 traveledDistance,
 
             stepCount:
-                stepCount,
+                max(
+                    positions.count - 1,
+                    0
+                ),
 
-            maximumMagneticField:
-                maximumMagneticField,
-
-            maximumQRTLInfluence:
-                maximumQRTLInfluence,
-
-            maximumMagneticPhotonInfluence:
-                maximumMagneticPhotonInfluence,
-
-            reachedTarget:
-                false
+            terminated:
+                terminated
         )
     }
+    
 }
 
