@@ -7,82 +7,216 @@
 
 import Foundation
 import simd
-
-// =============================================================
+// ============================================================
 // PHOTON TRACE RESULT
-// =============================================================
 //
-// Stores the complete result of one stepwise photon trace.
+// Complete diagnostic/result state for one photon.
 //
-// The photon carries:
-//   • its complete path
-//   • final position
-//   • final direction
-//   • projection-plane hit state
-//   • total accumulated deflection
-//
-// Diagnostics record the strongest field influence encountered
-// anywhere along the photon path.
-//
-// =============================================================
-
-// =============================================================
-// PHOTON TRACE RESULT
-// =============================================================
+// This structure is shared by:
+//     tracePhoton()
+//     ContentView
+//     makeHit()
+//     projection rendering
+// ============================================================
 
 struct PhotonTraceResult {
 
     // =========================================================
-    // PHOTON INITIAL STATE
+    // COMPLETE PHOTON PATH
     // =========================================================
 
-    let origin: SIMD3<Float>
-    let direction: SIMD3<Float>
+    let positions:
+        [SIMD3<Float>]
+
 
     // =========================================================
-    // PHOTON PATH
+    // STARTING STATE
     // =========================================================
 
-    let positions: [SIMD3<Float>]
+    let origin:
+        SIMD3<Float>
 
-    // Compatibility alias used by rendering code.
-    var path: [SIMD3<Float>] {
-        positions
-    }
 
     // =========================================================
-    // FINAL PHOTON STATE
+    // FINAL STATE
     // =========================================================
 
-    let finalPosition: SIMD3<Float>
-    let finalDirection: SIMD3<Float>
+    let finalPosition:
+        SIMD3<Float>
+
+    let finalDirection:
+        SIMD3<Float>
+
 
     // =========================================================
     // PROJECTION
     // =========================================================
 
-    let hitProjection: Bool
-    let projectionPosition: SIMD3<Float>?
+    let hitProjection:
+        Bool
+
+    let projectionPosition:
+        SIMD3<Float>?
+
+    let projectionCoordinates:
+        SIMD2<Float>?
+
 
     // =========================================================
-    // DIAGNOSTICS
+    // INTEGRATION
     // =========================================================
 
-    let totalDeflection: Float
+    let stepCount:
+        Int
 
-    let maximumQRTLInfluence: Float
+    let traveledDistance:
+        Float
 
-    let maximumMagneticField: Float
-
-    let maximumMagneticPhotonInfluence: Float
 
     // =========================================================
-    // PROPAGATION
+    // QRTL DIAGNOSTICS
     // =========================================================
 
-    let traveledDistance: Float
+    let maximumQRTLInfluence:
+        Float
 
-    let stepCount: Int
 
-    let terminated: Bool
+    // =========================================================
+    // MAGNETIC DIAGNOSTICS
+    // =========================================================
+
+    let maximumMagneticField:
+        Float
+
+    let maximumMagneticPhotonInfluence:
+        Float
+
+
+    // =========================================================
+    // BACKWARD-COMPATIBLE ALIAS
+    //
+    // Existing code can continue using:
+    //
+    // trace.projectionPoint
+    //
+    // while the stored property remains:
+    //
+    // projectionPosition
+    // =========================================================
+
+    var projectionPoint:
+        SIMD3<Float>? {
+
+        return projectionPosition
+    }
+
+
+    // =========================================================
+    // BACKWARD-COMPATIBLE ALIAS
+    //
+    // Existing code can continue using:
+    //
+    // trace.path
+    // =========================================================
+
+    var path:
+        [SIMD3<Float>] {
+
+        return positions
+    }
+
+
+    // =========================================================
+    // BACKWARD-COMPATIBLE ALIAS
+    //
+    // Existing code can continue using:
+    //
+    // trace.reachedTarget
+    // =========================================================
+
+    var reachedTarget:
+        Bool {
+
+        return hitProjection
+    }
+
+
+    // =========================================================
+    // INITIALIZER
+    // =========================================================
+
+    init(
+        positions:
+            [SIMD3<Float>],
+
+        origin:
+            SIMD3<Float>,
+
+        finalPosition:
+            SIMD3<Float>,
+
+        finalDirection:
+            SIMD3<Float>,
+
+        hitProjection:
+            Bool,
+
+        projectionPosition:
+            SIMD3<Float>?,
+
+        projectionCoordinates:
+            SIMD2<Float>? = nil,
+
+        stepCount:
+            Int,
+
+        traveledDistance:
+            Float,
+
+        maximumQRTLInfluence:
+            Float,
+
+        maximumMagneticField:
+            Float,
+
+        maximumMagneticPhotonInfluence:
+            Float
+    ) {
+
+        self.positions =
+            positions
+
+        self.origin =
+            origin
+
+        self.finalPosition =
+            finalPosition
+
+        self.finalDirection =
+            finalDirection
+
+        self.hitProjection =
+            hitProjection
+
+        self.projectionPosition =
+            projectionPosition
+
+        self.projectionCoordinates =
+            projectionCoordinates
+
+        self.stepCount =
+            stepCount
+
+        self.traveledDistance =
+            traveledDistance
+
+        self.maximumQRTLInfluence =
+            maximumQRTLInfluence
+
+        self.maximumMagneticField =
+            maximumMagneticField
+
+        self.maximumMagneticPhotonInfluence =
+            maximumMagneticPhotonInfluence
+    }
 }

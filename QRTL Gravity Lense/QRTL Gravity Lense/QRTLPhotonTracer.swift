@@ -17,17 +17,6 @@ final class QRTLPhotonTracer {
         self.field = field
     }
 
-    // n_G = 1 + γ · |influence| · (boosted by density)
-    func gravitationalIndex(at position: SIMD3<Double>) -> Double {
-        let p = SIMD3<Float>(Float(position.x), Float(position.y), Float(position.z))
-        let density = Double(field.normalizedDensity(at: p))
-        let mag = Double(simd_length(field.influence(at: p)))
-        guard mag.isFinite else { return 1.0 }
-        let index = 1.0 + field.parameters.gammaQ * mag * (0.25 + 0.75 * density)
-        return max(index, 1e-12)
-    }
-
-    // n_EM = 1 + κ_EM · |EM| · density weight  → core bends more
     func electromagneticIndex(at position: SIMD3<Double>) -> Double {
         let p = SIMD3<Float>(Float(position.x), Float(position.y), Float(position.z))
         let density = Double(field.normalizedDensity(at: p))
@@ -39,7 +28,7 @@ final class QRTLPhotonTracer {
     }
 
     func totalIndex(at position: SIMD3<Double>) -> Double {
-        let n = gravitationalIndex(at: position) * electromagneticIndex(at: position)
+        let n = electromagneticIndex(at: position)
         return n.isFinite ? max(n, 1e-12) : 1.0
     }
 

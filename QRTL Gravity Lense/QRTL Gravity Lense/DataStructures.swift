@@ -10,6 +10,15 @@ import simd
 import SceneKit
 import SwiftUI
 
+struct SourceGalaxyStar {
+
+    let id: Int
+
+    let position: SIMD3<Float>
+
+    let brightness: Float
+}
+
 struct ControlsSheet:
     View {
 
@@ -347,112 +356,6 @@ struct ControlsSheet:
     }
 }
 
-struct LensingParameters {
-
-    // =========================================================
-    // PHOTON PROPAGATION
-    // =========================================================
-
-    let maximumPhotonSteps: Int
-
-    var stepSize: Float
-
-    var maxSteps: Int
-
-    var maxRadius: Float
-
-    var maximumPropagationRadius: Float {
-        maxRadius
-    }
-
-    var deflectionStrength: Float
-
-    var photonStepSize: Float {
-        stepSize
-    }
-
-    // =========================================================
-    // QRTL / ELECTROMAGNETIC COUPLING
-    // =========================================================
-
-    var magneticPhotonCoupling: Float
-
-    var photonMagneticCoupling: Float {
-        magneticPhotonCoupling
-    }
-
-    var magneticBendingStrength: Float
-
-    var qrtlFieldCoupling: Float
-
-    var currentCoupling: Float
-
-    var electromagneticCoupling: Float
-
-    // =========================================================
-    // PROJECTION
-    // =========================================================
-
-    var projectionDistance: Float
-
-    var projectionPlaneHalfExtent: Float
-
-    // =========================================================
-    // INITIALIZER
-    // =========================================================
-
-    init(
-        maximumPhotonSteps: Int = 20_000,
-        stepSize: Float = 0.05,
-        maxSteps: Int = 20_000,
-        maxRadius: Float = 500.0,
-        deflectionStrength: Float = 0.01,
-        magneticPhotonCoupling: Float = 1.0,
-        magneticBendingStrength: Float = 1.0,
-        qrtlFieldCoupling: Float = 1.0,
-        currentCoupling: Float = 1.0,
-        electromagneticCoupling: Float = 1.0,
-        projectionDistance: Float = 6.0,
-        projectionPlaneHalfExtent: Float = 3.0
-    ) {
-
-        self.maximumPhotonSteps =
-            maximumPhotonSteps
-
-        self.stepSize =
-            stepSize
-
-        self.maxSteps =
-            maxSteps
-
-        self.maxRadius =
-            maxRadius
-
-        self.deflectionStrength =
-            deflectionStrength
-
-        self.magneticPhotonCoupling =
-            magneticPhotonCoupling
-
-        self.magneticBendingStrength =
-            magneticBendingStrength
-
-        self.qrtlFieldCoupling =
-            qrtlFieldCoupling
-
-        self.currentCoupling =
-            currentCoupling
-
-        self.electromagneticCoupling =
-            electromagneticCoupling
-
-        self.projectionDistance =
-            projectionDistance
-
-        self.projectionPlaneHalfExtent =
-            projectionPlaneHalfExtent
-    }
-}
 
 
 
