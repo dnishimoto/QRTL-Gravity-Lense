@@ -704,56 +704,63 @@ final class LensingSceneController:
     // FRONT PROJECTION PLANE
     // ========================================================
 
+    // Constants on LensingSceneController:
+    // let frontPlaneX: Float = 8
+    // let bottomY: Float = -4
+    // let planeHalfExtent: Float = 6
+    // let heatmapHalfExtent: Float = 7
+
     func addFrontProjectionPlane(empty: Bool) {
-
-        // Remove any previous plane
         frontPlaneNode?.removeFromParentNode()
-        frontPlaneNode = nil
 
-        let size = CGFloat(planeHalfExtent * 2.0)   // planeHalfExtent = 8 → size 16
+        let size = CGFloat(planeHalfExtent * 2)
         let plane = SCNPlane(width: size, height: size)
-
         let mat = SCNMaterial()
         mat.isDoubleSided = true
         mat.lightingModel = .constant
-        mat.writesToDepthBuffer = true
 
         if empty {
-            mat.diffuse.contents  = UIColor.cyan.withAlphaComponent(0.45)
-            mat.emission.contents = UIColor.cyan.withAlphaComponent(0.30)
+            mat.diffuse.contents = UIColor.cyan.withAlphaComponent(0.4)
+            mat.emission.contents = UIColor.cyan.withAlphaComponent(0.25)
         } else {
             let img = accumulator.makeImage()
-            mat.diffuse.contents  = img
+            mat.diffuse.contents = img
             mat.emission.contents = img
         }
-
         plane.materials = [mat]
 
         let node = SCNNode(geometry: plane)
-
-        // -------------------------------------------------------
-        // CRITICAL: force the plane into the correct position
-        // -------------------------------------------------------
-        node.position = SCNVector3(frontPlaneX, 0, 0)   // frontPlaneX = 10.0
-        node.eulerAngles.y = Float.pi / 2               // face the incoming rays (-X)
+        node.position = SCNVector3(frontPlaneX, 0, 0)
+        node.eulerAngles.y = .pi / 2
         node.name = "FrontProjectionPlane"
-        node.renderingOrder = 20
-
         scene.rootNode.addChildNode(node)
         frontPlaneNode = node
+    }
 
-        // Optional debug – bright marker so you can see the plane location
-        #if DEBUG
-        let marker = SCNSphere(radius: 0.15)
-        marker.firstMaterial?.diffuse.contents = UIColor.magenta
-        marker.firstMaterial?.emission.contents = UIColor.magenta
-        let markerNode = SCNNode(geometry: marker)
-        markerNode.position = SCNVector3(frontPlaneX, 0, 0)
-        markerNode.name = "FrontPlaneMarker"
-        scene.rootNode.addChildNode(markerNode)
-        #endif
+    func updateBottomHeatmap(field: QRTLField) {
+        bottomPlaneNode?.removeFromParentNode()
 
-        print("Front plane placed at x = \(frontPlaneX)")
+        let image = QRTLHeatmapGenerator.makeHeatmapImage(
+            field: field,
+            size: 128,
+            halfExtent: Double(heatmapHalfExtent)   // scene units only
+        )
+
+        let size = CGFloat(heatmapHalfExtent * 2)
+        let plane = SCNPlane(width: size, height: size)
+        let mat = SCNMaterial()
+        mat.isDoubleSided = true
+        mat.lightingModel = .constant
+        mat.diffuse.contents = image
+        mat.emission.contents = image
+        plane.materials = [mat]
+
+        let node = SCNNode(geometry: plane)
+        node.position = SCNVector3(frontPlaneX * 0.5, bottomY, 0)
+        node.eulerAngles.x = -.pi / 2
+        node.name = "HeatmapPlane"
+        scene.rootNode.addChildNode(node)
+        bottomPlaneNode = node
     }
     private func makeSolidImage(color: UIColor) -> UIImage {
         let res = resolution
@@ -838,42 +845,7 @@ final class LensingSceneController:
             node
     }
 
-    // ========================================================
-    // HEATMAP
-    // ========================================================
-
-    func updateBottomHeatmap(field: QRTLField) {
-        bottomPlaneNode?.removeFromParentNode()
-
-        // halfExtent must be in the SAME units the field / photons use (scene units)
-        let image = QRTLHeatmapGenerator.makeHeatmapImage(
-            field: field,
-            size: 128,
-            halfExtent: Double(heatmapHalfExtent)   // e.g. 5…7  — NO solarRadius multiplier
-        )
-
-        let size = CGFloat(heatmapHalfExtent * 2.0)
-        let plane = SCNPlane(width: size, height: size)
-
-        let mat = SCNMaterial()
-        mat.isDoubleSided = true
-        mat.lightingModel = .constant
-        mat.diffuse.contents  = image
-        mat.emission.contents = image          // important – makes weak signals visible
-
-        plane.materials = [mat]
-
-        let node = SCNNode(geometry: plane)
-        let floorCenterX = frontPlaneX * 0.5
-        node.position = SCNVector3(floorCenterX, bottomY, 0)
-        node.eulerAngles.x = -.pi / 2
-        node.name = "HeatmapPlane"
-
-        scene.rootNode.addChildNode(node)
-        bottomPlaneNode = node
-
-        print("Heatmap texture applied (scene units, halfExtent = \(heatmapHalfExtent))")
-    }
+  
     // ========================================================
     // LENS MASS
     // ========================================================

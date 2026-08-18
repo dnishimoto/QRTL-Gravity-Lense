@@ -10,363 +10,64 @@ import SwiftUI
 import simd
 
 
+import UIKit
+import simd
+
 final class QRTLHeatmapGenerator {
 
-    // =========================================================
-    // MAKE HEATMAP
-    // =========================================================
-
     static func makeHeatmapImage(
-        field:
-            QRTLField,
-
-        size:
-            Int = 128,
-
-        halfExtent:
-            Double
+        field: QRTLField,
+        size: Int = 128,
+        halfExtent: Double
     ) -> UIImage {
 
-        // -----------------------------------------------------
-        // CREATE IMAGE CONTEXT
-        // -----------------------------------------------------
+        let res = max(size, 32)
+        var samples = Array(repeating: Array(repeating: 0.0, count: res), count: res)
+        var maxValue = 1e-30
 
-        UIGraphicsBeginImageContextWithOptions(
-            CGSize(
-                width:
-                    size,
+        for j in 0..<res {
+            for i in 0..<res {
+                let x = -halfExtent + (Double(i) + 0.5) * (2 * halfExtent / Double(res))
+                let z = -halfExtent + (Double(j) + 0.5) * (2 * halfExtent / Double(res))
+                let pos = SIMD3<Float>(Float(x), 0, Float(z))
 
-                height:
-                    size
-            ),
+                let density = Double(field.normalizedDensity(at: pos))
+                let qrtl = Double(simd_length(field.influence(at: pos)))
+                let em = Double(simd_length(field.electromagneticInfluence(at: pos)))
 
-            true,
-
-            1.0
-        )
-
-
-        guard let context =
-            UIGraphicsGetCurrentContext()
-        else {
-
-            return UIImage()
-        }
-
-
-        // =====================================================
-        // SAMPLE FIELD
-        // =====================================================
-
-        var maxValue:
-            Double = 1.0e-30
-
-
-        var samples =
-            [[Double]](
-                repeating:
-                    [Double](
-                        repeating:
-                            0.0,
-
-                        count:
-                            size
-                    ),
-
-                count:
-                    size
-            )
-
-
-        // =====================================================
-        // SAMPLE X-Z PLANE
-        //
-        // Y = 0
-        //
-        // This produces a top-down slice through the center
-        // of the globular cluster.
-        // =====================================================
-
-        for j in 0..<size {
-
-            for i in 0..<size {
-
-                let x =
-                    -halfExtent +
-                    (
-                        Double(i) +
-                        0.5
-                    ) *
-                    (
-                        2.0 *
-                        halfExtent /
-                        Double(size)
-                    )
-
-
-                let z =
-                    -halfExtent +
-                    (
-                        Double(j) +
-                        0.5
-                    ) *
-                    (
-                        2.0 *
-                        halfExtent /
-                        Double(size)
-                    )
-
-
-                let position =
-                    SIMD3<Float>(
-                        Float(x),
-                        0.0,
-                        Float(z)
-                    )
-
-
-                // =================================================
-                // LOCAL DENSITY
-                // =================================================
-
-                let density =
-                    Double(
-                        field.normalizedDensity(
-                            at:
-                                position
-                        )
-                    )
-
-
-                // =================================================
-                // LOCAL QRTL INFLUENCE
-                // =================================================
-
-                let qrtlVector =
-                    field.influence(
-                        at:
-                            position
-                    )
-
-
-                let qrtlMagnitude =
-                    Double(
-                        simd_length(
-                            qrtlVector
-                        )
-                    )
-
-
-                // =================================================
-                // LOCAL EM INFLUENCE
-                // =================================================
-
-                let electromagneticVector =
-                    field.electromagneticInfluence(
-                        at:
-                            position
-                    )
-
-
-                let electromagneticMagnitude =
-                    Double(
-                        simd_length(
-                            electromagneticVector
-                        )
-                    )
-
-
-                // =================================================
-                // COMBINED HEATMAP VALUE
-                //
-                // Density is included so that the heatmap
-                // directly follows the same cluster density
-                // experienced by the photon.
-                // =================================================
-
-                let value =
-                    density *
-                    (
-                        1.0 +
-                        qrtlMagnitude +
-                        electromagneticMagnitude
-                    )
-
-
-                samples[j][i] =
-                    value
-
-
-                maxValue =
-                    max(
-                        maxValue,
-                        value
-                    )
+                let value = density * (1.0 + qrtl + em)
+                samples[j][i] = value
+                maxValue = max(maxValue, value)
             }
         }
+        if maxValue < 1e-20 { maxValue = 1.0 }
 
+        UIGraphicsBeginImageContextWithOptions(CGSize(width: res, height: res), true, 1)
+        guard let ctx = UIGraphicsGetCurrentContext() else { return UIImage() }
 
-        // =====================================================
-        // RENDER HEATMAP
-        // =====================================================
+        for j in 0..<res {
+            for i in 0..<res {
+                var t = CGFloat(samples[j][i] / maxValue)
+                t = min(max(t, 0), 1)
+                t = max(t, 0.06)   // never pure black
 
-        for j in 0..<size {
-
-            for i in 0..<size {
-
-                let normalized =
-                    samples[j][i] /
-                    maxValue
-
-
-                let t =
-                    CGFloat(
-                        min(
-                            max(
-                                normalized,
-                                0.0
-                            ),
-                            1.0
-                        )
-                    )
-
-
-                // =================================================
-                // HEATMAP COLOR
-                //
-                // 0.00 → blue
-                // 0.25 → cyan
-                // 0.50 → green
-                // 0.75 → yellow
-                // 1.00 → white
-                // =================================================
-
-                let color:
-                    UIColor
-
-
+                let color: UIColor
                 if t < 0.25 {
-
-                    color =
-                        UIColor(
-                            red:
-                                0.0,
-
-                            green:
-                                0.0,
-
-                            blue:
-                                t * 4.0,
-
-                            alpha:
-                                1.0
-                        )
-
-
+                    color = UIColor(red: 0, green: 0, blue: t * 4, alpha: 1)
                 } else if t < 0.5 {
-
-                    color =
-                        UIColor(
-                            red:
-                                0.0,
-
-                            green:
-                                (t - 0.25) * 4.0,
-
-                            blue:
-                                1.0,
-
-                            alpha:
-                                1.0
-                        )
-
-
+                    color = UIColor(red: 0, green: (t - 0.25) * 4, blue: 1, alpha: 1)
                 } else if t < 0.75 {
-
-                    color =
-                        UIColor(
-                            red:
-                                (t - 0.5) * 4.0,
-
-                            green:
-                                1.0,
-
-                            blue:
-                                1.0 -
-                                (t - 0.5) * 4.0,
-
-                            alpha:
-                                1.0
-                        )
-
-
+                    color = UIColor(red: (t - 0.5) * 4, green: 1, blue: 1 - (t - 0.5) * 4, alpha: 1)
                 } else {
-
-                    color =
-                        UIColor(
-                            red:
-                                1.0,
-
-                            green:
-                                1.0,
-
-                            blue:
-                                max(
-                                    0.0,
-
-                                    1.0 -
-                                    (t - 0.75) * 4.0
-                                ),
-
-                            alpha:
-                                1.0
-                        )
+                    color = UIColor(red: 1, green: 1, blue: max(0, 1 - (t - 0.75) * 4), alpha: 1)
                 }
-
-
-                // =================================================
-                // DRAW PIXEL
-                // =================================================
-
-                context.setFillColor(
-                    color.cgColor
-                )
-
-
-                context.fill(
-                    CGRect(
-                        x:
-                            i,
-
-                        y:
-                            size -
-                            1 -
-                            j,
-
-                        width:
-                            1,
-
-                        height:
-                            1
-                    )
-                )
+                ctx.setFillColor(color.cgColor)
+                ctx.fill(CGRect(x: i, y: res - 1 - j, width: 1, height: 1))
             }
         }
 
-
-        // =====================================================
-        // CREATE IMAGE
-        // =====================================================
-
-        let image =
-            UIGraphicsGetImageFromCurrentImageContext()
-            ?? UIImage()
-
-
+        let image = UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
         UIGraphicsEndImageContext()
-
-
         return image
     }
 }
-

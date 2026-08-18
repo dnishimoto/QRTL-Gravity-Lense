@@ -334,643 +334,6 @@ enum CatmullRomSpline {
     }
 }
 
-// ============================================================
-// QRTL PARAMETERS
-// ============================================================
-
-struct QRTLParameters {
-
-    // QRTL source strength.
-    var alphaQ: Double = 0.0
-
-    // Bolgarino / QRTL propagation velocity.
-    var qrtlVelocity:
-        Double =
-        PhysicalConstants.c
-
-    // Radial attenuation rate.
-    var interactionRate: Double = 0.0
-
-    // Converts QRTL current into QRTL energy density.
-    var chiQ: Double = 1.0
-
-    // Converts QRTL energy density into effective gravitating density.
-    var etaQ: Double = 0.0
-
-    // Post-Newtonian PPN-style gamma parameter.
-    //
-    // gammaQ = 1 gives:
-    //
-    // n_G = 1 - 2 Phi / c²
-    //
-    // for the weak-field GR limit.
-    var gammaQ: Double = 1.0
-
-    // QRTL current -> effective EM current coupling.
-    var electromagneticCoupling:
-        Double = 0.0
-
-    // Electric-field scaling.
-    var electricFieldCoupling:
-        Double = 1.0
-
-    // Magnetic-field scaling.
-    var magneticFieldCoupling:
-        Double = 1.0
-
-    // EM field -> photon-index coupling.
-    var photonEMCoupling:
-        Double = 0.0
-
-    var epsilon:
-        Double = 1.0e-12
-
-    // Numerical lower bound.
-    var minimumStepSolarRadii:
-        Double = 0.05
-
-    // Safety limit for rays.
-    var maximumRaySteps:
-        Int = 800
-}
-
-// ============================================================
-// MASS MODEL
-// ============================================================
-
-struct GaussianMassModel {
-
-    // =========================================================
-    // TOTAL MASS
-    // =========================================================
-
-    let totalMass:
-        Double
-
-
-    // =========================================================
-    // CHARACTERISTIC RADIUS
-    //
-    // Controls the spatial size of the Gaussian mass
-    // distribution.
-    // =========================================================
-
-    let characteristicRadius:
-        Double
-
-
-    // =========================================================
-    // INITIALIZER
-    // =========================================================
-
-    init(
-        totalMass:
-            Double,
-
-        characteristicRadius:
-            Double
-    ) {
-
-        self.totalMass =
-            totalMass
-
-        self.characteristicRadius =
-            max(
-                characteristicRadius,
-                0.000001
-            )
-    }
-
-
-    // =========================================================
-    // MASS DENSITY
-    //
-    // 3D Gaussian distribution:
-    //
-    //     rho(r) =
-    //     M / ((2π)^(3/2) σ³)
-    //     × exp(-r² / (2σ²))
-    //
-    // The integral over all space is approximately TOTAL MASS.
-    // =========================================================
-
-    func density(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
-
-        let sigma =
-            characteristicRadius
-
-
-        // -----------------------------------------------------
-        // Distance from lens center.
-        // -----------------------------------------------------
-
-        let radiusSquared =
-            position.x * position.x +
-            position.y * position.y +
-            position.z * position.z
-
-
-        // -----------------------------------------------------
-        // Gaussian normalization.
-        // -----------------------------------------------------
-
-        let normalization =
-            totalMass /
-            (
-                pow(
-                    2.0 * Double.pi,
-                    1.5
-                ) *
-                pow(
-                    sigma,
-                    3.0
-                )
-            )
-
-
-        // -----------------------------------------------------
-        // Gaussian falloff.
-        // -----------------------------------------------------
-
-        let exponent =
-            -radiusSquared /
-            (
-                2.0 *
-                sigma *
-                sigma
-            )
-
-
-        return
-            normalization *
-            exp(exponent)
-    }
-
-
-    // =========================================================
-    // NORMALIZED DENSITY
-    //
-    // Returns density relative to the center.
-    //
-    // Center = 1
-    // Far away → 0
-    // =========================================================
-
-    func normalizedDensity(
-        at position:
-            SIMD3<Double>
-    ) -> Double {
-
-        let sigma =
-            characteristicRadius
-
-
-        let radiusSquared =
-            position.x * position.x +
-            position.y * position.y +
-            position.z * position.z
-
-
-        let exponent =
-            -radiusSquared /
-            (
-                2.0 *
-                sigma *
-                sigma
-            )
-
-
-        return
-            exp(exponent)
-    }
-}
-
-final class QRTLField {
-
-    // =========================================================
-    // MASS MODEL
-    // =========================================================
-
-    let massModel:
-        GaussianMassModel
-
-
-    // =========================================================
-    // QRTL PARAMETERS
-    // =========================================================
-
-    let parameters:
-        QRTLParameters
-
-
-    // =========================================================
-    // REFERENCE DENSITY
-    //
-    // Density at the center of the lens.
-    // Used to normalize the local cluster density.
-    // =========================================================
-
-    let referenceDensity:
-        Float
-
-
-    // =========================================================
-    // INITIALIZER
-    // =========================================================
-
-    init(
-        massModel:
-            GaussianMassModel,
-
-        parameters:
-            QRTLParameters
-    ) {
-
-        self.massModel =
-            massModel
-
-        self.parameters =
-            parameters
-
-
-        // -----------------------------------------------------
-        // Calculate central reference density.
-        // -----------------------------------------------------
-
-        let centerDensity =
-            massModel.density(
-                at:
-                    SIMD3<Double>(
-                        0.0,
-                        0.0,
-                        0.0
-                    )
-            )
-
-
-        self.referenceDensity =
-            max(
-                Float(centerDensity),
-                0.000001
-            )
-    }
-
-
-    // =========================================================
-    // MASS DENSITY
-    //
-    // Returns the local mass density at the photon position.
-    //
-    // This is sampled at EVERY photon integration step.
-    // =========================================================
-
-    func massDensity(
-        at position:
-            SIMD3<Float>
-    ) -> Float {
-
-        let p =
-            SIMD3<Double>(
-                Double(position.x),
-                Double(position.y),
-                Double(position.z)
-            )
-
-        return Float(
-            massModel.density(
-                at:
-                    p
-            )
-        )
-    }
-
-
-    // =========================================================
-    // NORMALIZED DENSITY
-    //
-    // 0.0 = negligible density
-    // 1.0 = maximum/reference density
-    // =========================================================
-
-    func normalizedDensity(
-        at position:
-            SIMD3<Float>
-    ) -> Float {
-
-        let density =
-            massDensity(
-                at:
-                    position
-            )
-
-        return min(
-            max(
-                density /
-                referenceDensity,
-                0.0
-            ),
-            1.0
-        )
-    }
-
-
-    // =========================================================
-    // QRTL / GRAVITY INFLUENCE
-    //
-    // The photon is pulled toward the lens center.
-    //
-    // Density controls how strongly the local mass
-    // distribution contributes.
-    // =========================================================
-
-    func influence(
-        at position:
-            SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radius =
-            simd_length(
-                position
-            )
-
-
-        guard radius >
-            0.000001
-        else {
-
-            return
-                SIMD3<Float>.zero
-        }
-
-
-        // -----------------------------------------------------
-        // Direction toward lens center.
-        // -----------------------------------------------------
-
-        let inwardDirection =
-            -position /
-            radius
-
-
-        // -----------------------------------------------------
-        // Local cluster density.
-        // -----------------------------------------------------
-
-        let density =
-            normalizedDensity(
-                at:
-                    position
-            )
-
-
-        // -----------------------------------------------------
-        // Distance falloff.
-        // -----------------------------------------------------
-
-        let distanceFalloff =
-            1.0 /
-            max(
-                radius * radius,
-                0.01
-            )
-
-
-        // -----------------------------------------------------
-        // QRTL field strength.
-        // -----------------------------------------------------
-
-        let strength =
-            Float(
-                parameters.alphaQ
-            ) *
-            density *
-            distanceFalloff
-
-
-        return
-            inwardDirection *
-            strength
-    }
-
-
-    // =========================================================
-    // ELECTROMAGNETIC INFLUENCE
-    //
-    // The electromagnetic field changes continuously with
-    // the density of the globular cluster.
-    //
-    // The photon therefore experiences:
-    //
-    //     low density  -> weak distortion
-    //     high density -> strong distortion
-    //     low density  -> weak distortion
-    //
-    // as it passes through the cluster.
-    // =========================================================
-
-    // =============================================================
-    // ELECTROMAGNETIC PHOTON INFLUENCE
-    //
-    // The EM field is centered on the globular cluster.
-    //
-    // Its magnitude follows the local QRTL / mass density.
-    // Its direction is radial from the cluster center.
-    //
-    // Therefore:
-    //
-    //        upper photon → bends upward
-    //
-    //              ↑
-    //              │
-    //              ●  cluster
-    //              │
-    //              ↓
-    //
-    //        lower photon → bends downward
-    //
-    // This produces the two-sided lensing geometry.
-    // =============================================================
-
-    func electromagneticInfluence(
-        at position:
-            SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        // =========================================================
-        // DISTANCE FROM CLUSTER CENTER
-        // =========================================================
-
-        let radius =
-            simd_length(position)
-
-        guard radius.isFinite,
-              radius > 0.000001
-        else {
-            return .zero
-        }
-
-
-        // =========================================================
-        // RADIAL DIRECTION
-        // =========================================================
-
-        let radialDirection =
-            position / radius
-
-
-        // =========================================================
-        // LOCAL DENSITY
-        // =========================================================
-
-        let density =
-            normalizedDensity(
-                at: position
-            )
-
-        guard density.isFinite,
-              density > 0.0
-        else {
-            return .zero
-        }
-
-
-        // =========================================================
-        // SAMPLE DENSITY A LITTLE CLOSER TO THE CENTER
-        //
-        // This gives us the local density gradient.
-        // =========================================================
-
-        let sampleDistance =
-            max(
-                radius * 0.01,
-                0.001
-            )
-
-
-        let inwardPosition =
-            position -
-            radialDirection *
-            sampleDistance
-
-
-        let inwardDensity =
-            normalizedDensity(
-                at:
-                    inwardPosition
-            )
-
-
-        // =========================================================
-        // DENSITY GRADIENT
-        //
-        // Positive value means density increases toward the center.
-        // =========================================================
-
-        let densityGradient =
-            (
-                density -
-                inwardDensity
-            ) /
-            Float(sampleDistance)
-
-
-        // =========================================================
-        // LOCAL QRTL FIELD
-        // =========================================================
-
-        let qrtlVector =
-            influence(
-                at:
-                    position
-            )
-
-        let qrtlMagnitude =
-            simd_length(
-                qrtlVector
-            )
-
-
-        // =========================================================
-        // COUPLINGS
-        // =========================================================
-
-        let electromagneticCoupling =
-            Float(
-                parameters.electromagneticCoupling
-            )
-
-        let photonEMCoupling =
-            Float(
-                parameters.photonEMCoupling
-            )
-
-
-        // =========================================================
-        // DENSITY-DEPENDENT FIELD STRENGTH
-        //
-        // The first term makes the field stronger in dense regions.
-        //
-        // The second term makes the bending respond to the CHANGE
-        // in density as the photon moves through the cluster.
-        // =========================================================
-
-        let densityTerm =
-            density
-
-
-        let gradientTerm =
-            max(
-                densityGradient,
-                0.0
-            )
-
-
-        let fieldStrength =
-            (
-                densityTerm +
-                gradientTerm
-            )
-            *
-            (
-                1.0 +
-                qrtlMagnitude
-            )
-            *
-            electromagneticCoupling
-            *
-            photonEMCoupling
-
-
-        guard fieldStrength.isFinite,
-              fieldStrength > 0.0
-        else {
-            return .zero
-        }
-
-
-        // =========================================================
-        // RADIAL FIELD
-        // =========================================================
-
-        let field =
-            radialDirection *
-            fieldStrength
-
-
-        guard field.x.isFinite,
-              field.y.isFinite,
-              field.z.isFinite
-        else {
-            return .zero
-        }
-
-
-        return field
-    }
-}
 
 // ============================================================
 // EXPERIMENT RESULT
@@ -2340,123 +1703,93 @@ struct ContentView:
     }
 
     private func runFullPipeline() {
-
         guard !isRunning else { return }
-
         isRunning = true
         result = nil
         statusMessage = "Starting QRTL lensing pipeline…"
 
-        // --------------------------------------------------------
-        // Capture UI values on the main thread
-        // --------------------------------------------------------
         let mass = massSolar * PhysicalConstants.solarMass
         let showPaths = showPhotonPaths
-
-        // Scene-scale geometry (must match heatmap + photon tracer)
         let sourceGalaxyRadius: Float = 0.75
         let photonCount = 1200
-        let clusterSceneRadius: Double = 3.0          // scene units
-        let frontPlaneX = scene.frontPlaneX           // e.g. 8 or 10
+        let clusterSceneRadius: Double = 3.0
+        let frontX = scene.frontPlaneX
 
         var params = QRTLParameters()
-        params.alphaQ = alphaQ
+        params.alphaQ = max(alphaQ, 1e-2)
         params.etaQ = etaQ
         params.gammaQ = gammaQ
         params.chiQ = chiQ
         params.interactionRate = interactionRate
-        params.electromagneticCoupling = electromagneticCoupling
-        params.photonEMCoupling = photonEMCoupling
+        params.electromagneticCoupling = max(electromagneticCoupling, 1e-2)
+        params.photonEMCoupling = max(photonEMCoupling, 1e-2)
 
         scene.clearDynamic()
 
         DispatchQueue.global(qos: .userInitiated).async {
-
             autoreleasepool {
 
-                // =================================================
-                // STAGE 1 — Field (scene units)
-                // =================================================
                 DispatchQueue.main.async {
-                    self.statusMessage = "Stage 1/4 — building QRTL field…"
+                    self.statusMessage = "Stage 1/4 — QRTL field (scene units)…"
                 }
 
                 let massModel = GaussianMassModel(
                     totalMass: mass,
-                    characteristicRadius: clusterSceneRadius   // ← scene units, not metres
+                    characteristicRadius: clusterSceneRadius
                 )
-
-                let field = QRTLField(
-                    massModel: massModel,
-                    parameters: params
-                )
+                let field = QRTLField(massModel: massModel, parameters: params)
 
                 let experiment = QRTLExperiment(
                     mass: mass,
-                    radius: clusterSceneRadius * PhysicalConstants.solarRadius, // diagnostic only
+                    radius: clusterSceneRadius,
                     parameters: params
                 )
-
                 let outcome = experiment.run(
-                    impactParameter: 0.15 * PhysicalConstants.solarRadius,
-                    startDistance: 6.0 * PhysicalConstants.solarRadius,
-                    endDistance: 6.0 * PhysicalConstants.solarRadius,
-                    stepSize: 0.15 * PhysicalConstants.solarRadius
+                    impactParameter: 0.5,
+                    startDistance: 8,
+                    endDistance: 8,
+                    stepSize: 0.05
                 )
 
-                // =================================================
-                // STAGE 2 — Trace photons
-                // =================================================
                 DispatchQueue.main.async {
-                    self.statusMessage = "Stage 2/4 — tracing photon population…"
+                    self.statusMessage = "Stage 2/4 — tracing photons…"
                 }
 
                 var lensingParameters = LensingParameters()
                 lensingParameters.stepSize = 0.04
-                lensingParameters.maxSteps = 1200
-                lensingParameters.deflectionStrength = 0.15      // stronger for visible bend
-                lensingParameters.qrtlFieldCoupling = 5.0
-                lensingParameters.electromagneticCoupling = 5.0
-                lensingParameters.magneticPhotonCoupling = 1.0
-                lensingParameters.magneticBendingStrength = 1.0
-                lensingParameters.projectionDistance = frontPlaneX
-                lensingParameters.projectionPlaneHalfExtent = 6.0
+                lensingParameters.maxSteps = 1500
+                lensingParameters.deflectionStrength = 0.2
+                lensingParameters.qrtlFieldCoupling = 5
+                lensingParameters.electromagneticCoupling = 5
+                lensingParameters.magneticPhotonCoupling = 1
+                lensingParameters.magneticBendingStrength = 1
+                lensingParameters.projectionDistance = frontX
+                lensingParameters.projectionPlaneHalfExtent = 6
 
                 var hits: [LensingProjectionHit] = []
                 hits.reserveCapacity(photonCount)
-
-                var photonTraces: [PhotonTraceResult] = []
-                if showPaths {
-                    photonTraces.reserveCapacity(photonCount)
-                }
+                var traces: [PhotonTraceResult] = []
+                if showPaths { traces.reserveCapacity(photonCount) }
 
                 for _ in 0..<photonCount {
-
                     let theta = Float.random(in: 0...(2 * .pi))
-                    let radialFraction = sqrt(Float.random(in: 0...1))
-                    let r = sourceGalaxyRadius * radialFraction
+                    let rf = sqrt(Float.random(in: 0...1))
+                    let r = sourceGalaxyRadius * rf
+                    let sy = r * cos(theta)
+                    let sz = r * sin(theta)
 
-                    let sourceY = r * cos(theta)
-                    let sourceZ = r * sin(theta)
-
-                    let origin = SIMD3<Float>(-6.5, sourceY, sourceZ)
-                    let direction = SIMD3<Float>(1, 0, 0)
-
+                    let origin = SIMD3<Float>(-6.5, sy, sz)
                     let trace = self.tracePhoton(
                         origin: origin,
-                        direction: direction,
-                        field: field,                    // same scene-unit field
+                        direction: SIMD3(1, 0, 0),
+                        field: field,
                         parameters: lensingParameters
                     )
-
-                    if showPaths {
-                        photonTraces.append(trace)
-                    }
-
+                    if showPaths { traces.append(trace) }
                     if let hit = self.makeHit(
                         from: trace,
                         sourceID: 0,
-                        sourceCoordinates: SIMD2(sourceY, sourceZ)
+                        sourceCoordinates: SIMD2(sy, sz)
                     ) {
                         hits.append(hit)
                     }
@@ -2464,54 +1797,27 @@ struct ContentView:
 
                 let projection = LensingProjectionResult.calculate(from: hits)
 
-                // =================================================
-                // STAGE 3 — Prepare scene
-                // =================================================
                 DispatchQueue.main.async {
-                    self.statusMessage = "Stage 3/4 — preparing scene…"
-                }
+                    self.statusMessage = "Stage 4/4 — rendering…"
 
-                // =================================================
-                // STAGE 4 — Render
-                // =================================================
-                DispatchQueue.main.async {
-
-                    self.statusMessage = "Stage 4/4 — rendering projection…"
-
-                    // 1. Source galaxy
-                    self.scene.addSourceGalaxy(
-                        radius: Double(sourceGalaxyRadius),
-                        nStars: 220
-                    )
-
-                    // 2. Globular cluster (lens)
-                    self.scene.addGlobularCluster(
-                        radius: clusterSceneRadius,
-                        nStars: 3000
-                    )
-
-                    // 3. Bottom plane = QRTL heatmap (same field, scene units)
+                    self.scene.addSourceGalaxy(radius: Double(sourceGalaxyRadius), nStars: 220)
+                    self.scene.addGlobularCluster(radius: clusterSceneRadius, nStars: 2500)
                     self.scene.updateBottomHeatmap(field: field)
-
-                    // 4. Front plane = yellow projected galaxies
                     self.scene.applyProjection(projection)
 
-                    // 5. Optional photon paths
                     if showPaths {
-                        for trace in photonTraces {
-                            self.scene.renderPhotonPath(trace.path)
+                        for t in traces {
+                            self.scene.renderPhotonPath(t.path)
                         }
                     }
 
                     self.result = outcome
-                    self.statusMessage =
-                        "Done — \(projection.validHits.count) hits on front plane"
+                    self.statusMessage = "Done — \(projection.validHits.count) hits"
                     self.isRunning = false
                 }
             }
         }
     }
-
     
     // =====================================================
     // CONVERT TRACE TO PROJECTION HIT
