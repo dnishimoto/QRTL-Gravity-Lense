@@ -1370,10 +1370,10 @@ final class LensingSceneController:
             SCNMaterial()
 
         material.diffuse.contents =
-            UIColor.white.withAlphaComponent(0.9)
+            UIColor.white.withAlphaComponent(0.1)
 
         material.emission.contents =
-            UIColor.white.withAlphaComponent(0.9)
+            UIColor.white.withAlphaComponent(0.1)
 
         material.lightingModel =
             .constant
