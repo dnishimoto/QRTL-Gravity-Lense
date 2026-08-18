@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import simd
 
+
 final class QRTLHeatmapGenerator {
 
     // =========================================================
@@ -368,3 +369,4 @@ final class QRTLHeatmapGenerator {
         return image
     }
 }
+
