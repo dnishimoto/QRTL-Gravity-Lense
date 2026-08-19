@@ -82,13 +82,15 @@ struct ContentView:
     // UI STATE
     // ========================================================
 
-    @State private var showControls:
-        Bool =
-        false
 
-    @State private var showPhotonPaths:
-        Bool =
-        true
+    @State private var showControls:
+            Bool =
+            false
+
+        @State private var showPhotonPaths:
+            Bool =
+            true
+
 
 
     // ========================================================

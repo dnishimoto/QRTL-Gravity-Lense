@@ -19,7 +19,8 @@ import simd
 // ============================================================
 
 struct QRTLParameters {
-
+    // Gravitational QRTL → photon coupling
+    var qrtlFieldCoupling: Double = 1.0
     /// QRTL source strength (scene-unit visualization needs O(0.01–0.1))
     var alphaQ: Double = 0.05
 
@@ -59,48 +60,6 @@ struct QRTLParameters {
     var minimumStepSolarRadii: Double {
         get { minimumStep }
         set { minimumStep = newValue }
-    }
-}
-
-// ============================================================
-// MASS MODEL
-// ============================================================
-
-struct GaussianMassModel {
-
-    let totalMass: Double
-    let characteristicRadius: Double
-
-    init(totalMass: Double, characteristicRadius: Double) {
-        self.totalMass = totalMass
-        self.characteristicRadius = max(characteristicRadius, 0.000001)
-    }
-
-    /// ρ(r) = M / ((2π)^{3/2} σ³) × exp(-r² / (2σ²))
-    func density(at position: SIMD3<Double>) -> Double {
-        let sigma = characteristicRadius
-        let radiusSquared =
-            position.x * position.x +
-            position.y * position.y +
-            position.z * position.z
-
-        let normalization =
-            totalMass /
-            (pow(2.0 * Double.pi, 1.5) * pow(sigma, 3.0))
-
-        let exponent = -radiusSquared / (2.0 * sigma * sigma)
-        return normalization * exp(exponent)
-    }
-
-    /// Center = 1, far away → 0
-    func normalizedDensity(at position: SIMD3<Double>) -> Double {
-        let sigma = characteristicRadius
-        let radiusSquared =
-            position.x * position.x +
-            position.y * position.y +
-            position.z * position.z
-        let exponent = -radiusSquared / (2.0 * sigma * sigma)
-        return exp(exponent)
     }
 }
 
