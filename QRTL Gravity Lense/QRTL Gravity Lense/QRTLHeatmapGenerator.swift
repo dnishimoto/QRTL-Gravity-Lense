@@ -5,6 +5,7 @@
 //  Created by David Nishimoto on 8/17/26.
 //
 
+
 import Foundation
 import SwiftUI
 import simd
@@ -49,24 +50,23 @@ final class QRTLHeatmapGenerator {
 
         // --------------------------------------------------------
         // HEATMAP SAMPLING
+        //
+        // FIXED: `y` previously reused `i` (the same loop variable
+        // driving `x`), so every sampled position had y == x, and
+        // the field was only ever varied along one true screen
+        // axis (crossed with z from `j`) instead of a real (y, z)
+        // grid. `y` now correctly uses `j`, matching `z`.
         // --------------------------------------------------------
 
         for j in 0..<resolution {
 
             for i in 0..<resolution {
 
-                let x =
-                    -halfExtent +
-                    (Double(i) + 0.5) *
-                    (2.0 * halfExtent /
-                     Double(resolution))
-                
                 let y =
                     -halfExtent +
                     (Double(i) + 0.5) *
                     (2.0 * halfExtent /
                      Double(resolution))
-
 
                 let z =
                     -halfExtent +
@@ -74,7 +74,6 @@ final class QRTLHeatmapGenerator {
                     (2.0 * halfExtent /
                      Double(resolution))
 
-                
                 let position =
                     SIMD3<Float>(
                         0.0,
@@ -96,7 +95,7 @@ final class QRTLHeatmapGenerator {
                             direction: photonDirection
                         )
                     )
-                
+
                 let safeValue =
                     lensingStrength.isFinite
                     ? max(lensingStrength, 0.0)
@@ -179,16 +178,6 @@ final class QRTLHeatmapGenerator {
                         1.0
                     )
 
-                // ------------------------------------------------
-                // LOGARITHMIC CONTRAST
-                //
-                // QRTL lensing strength can have a very large
-                // dynamic range. Linear normalization tends to
-                // make almost the entire plane look black.
-                //
-                // Log compression reveals the surrounding field.
-                // ------------------------------------------------
-
                 let contrast =
                     log10(
                         1.0 +
@@ -261,10 +250,6 @@ final class QRTLHeatmapGenerator {
                 1.0
             )
 
-        // --------------------------------------------------------
-        // VERY WEAK FIELD
-        // --------------------------------------------------------
-
         if t < 0.20 {
 
             let local =
@@ -284,10 +269,6 @@ final class QRTLHeatmapGenerator {
                     1.0
             )
         }
-
-        // --------------------------------------------------------
-        // WEAK → MODERATE
-        // --------------------------------------------------------
 
         if t < 0.40 {
 
@@ -312,10 +293,6 @@ final class QRTLHeatmapGenerator {
                     1.0
             )
         }
-
-        // --------------------------------------------------------
-        // MODERATE → STRONG
-        // --------------------------------------------------------
 
         if t < 0.60 {
 
@@ -344,10 +321,6 @@ final class QRTLHeatmapGenerator {
             )
         }
 
-        // --------------------------------------------------------
-        // STRONG → VERY STRONG
-        // --------------------------------------------------------
-
         if t < 0.80 {
 
             let local =
@@ -368,10 +341,6 @@ final class QRTLHeatmapGenerator {
                     1.0
             )
         }
-
-        // --------------------------------------------------------
-        // EXTREME LENSING
-        // --------------------------------------------------------
 
         let local =
             (t - 0.80) /

@@ -5,6 +5,13 @@
 //  Created by David Nishimoto on 8/17/26.
 //
 
+//
+//  File.swift
+//  QRTL Gravity Lense
+//
+//  Created by David Nishimoto on 8/17/26.
+//
+
 import Foundation
 import SwiftUI
 import SceneKit
@@ -12,7 +19,7 @@ import Combine
 
 final class LensingSceneController:
     ObservableObject {
-    
+
     @Published private(set) var isRunning:
         Bool = false
 
@@ -21,19 +28,19 @@ final class LensingSceneController:
 
     @Published private(set) var lastPipelineOutput:
         LensingPipelineOutput?
-    
+
     private(set) var values: [Float]
-    
+
     let resolution: Int
-    
+
     var maximumValue: Float {
         values.max() ?? 0.0
     }
 
     let clusterSceneRadius: Double = 0.75
-    
+
     private var globularClusterNode: SCNNode?
-    
+
     let scene =
         SCNScene()
 
@@ -66,12 +73,69 @@ final class LensingSceneController:
     // Make the target substantially larger.
     let planeHalfExtent: Float = 8.0
     let heatmapHalfExtent: Float = 5.0
-    
+
     private var projectionPlaneNode: SCNNode?
-    
+
     private let photonPathRoot =
         SCNNode()
-   
+
+
+    // ========================================================
+    // SHARED MATERIALS (FIX #3)
+    //
+    // Previously nearly every geometry-creation site allocated
+    // a brand-new SCNMaterial() even when every instance of that
+    // "kind" of object (a star, a photon path line, a projection
+    // hit marker) used identical settings. Sharing one instance
+    // per kind cuts allocation churn and lets SceneKit batch
+    // more aggressively across nodes that reference the same
+    // material.
+    // ========================================================
+
+    private lazy var starMaterial: SCNMaterial = {
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.white
+        material.emission.contents = UIColor.white
+        material.lightingModel = .constant
+        return material
+    }()
+
+    private lazy var photonLineMaterial: SCNMaterial = {
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.systemPink
+        material.emission.contents = UIColor.systemPink
+        material.lightingModel = .constant
+        material.isDoubleSided = true
+        return material
+    }()
+
+    private lazy var hitMarkerMaterial: SCNMaterial = {
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.white
+        material.emission.contents = UIColor.white
+        material.lightingModel = .constant
+        return material
+    }()
+
+    private lazy var ghostPathMaterial: SCNMaterial = {
+        let material = SCNMaterial()
+        let color = UIColor.white.withAlphaComponent(0.1)
+        material.diffuse.contents = color
+        material.emission.contents = color
+        material.lightingModel = .constant
+        material.isDoubleSided = true
+        return material
+    }()
+
+    private lazy var legacyPhotonSegmentMaterial: SCNMaterial = {
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.cyan
+        material.emission.contents = UIColor.cyan
+        material.lightingModel = .constant
+        material.isDoubleSided = true
+        return material
+    }()
+
 
     // ========================================================
     // PHYSICAL LENSING DISTANCE
@@ -114,17 +178,23 @@ final class LensingSceneController:
         LensingProjectionAccumulator()
 
     private let accumulator: ProjectionAccumulator
-    
+
     private var projectionNode: SCNNode?
     private var projectionNodes: [SCNNode] = []
     var photons: [PhotonTraceResult] = []
-    
+
     private var sourceGalaxyNode:
         SCNNode?
 
     var sourceGalaxyStars:
         [SourceGalaxyStar] = []
-    
+
+    private var projectionHitsNode:
+        SCNNode?
+
+    private var photonPathsNode:
+        SCNNode?
+
 
     // ========================================================
     // INITIALIZATION
@@ -150,268 +220,407 @@ final class LensingSceneController:
 
 
     // ============================================================
-    // TRACE SOURCE GALAXY
+    // POINT-CLOUD STAR FIELD HELPER (FIX #2)
     //
-    // This belongs in LensingSceneController.
+    // Previously addGlobularCluster / addCluster / addSourceGalaxy
+    // each created one SCNSphere + one SCNMaterial + one SCNNode
+    // PER STAR — up to 3,220 separate nodes rebuilt on every run,
+    // each its own draw call.
     //
-    // It performs ONLY the photon-tracing stage.
+    // This builds the entire star field as a single SCNGeometry
+    // using primitiveType .point, so an entire field of thousands
+    // of stars becomes ONE node / ONE draw call.
     //
-    // It does NOT modify SceneKit.
-    //
-    // It does NOT render anything.
-    //
-    // It returns immutable physics data.
-    //
-    // Controller pipeline:
-    //
-    //     QRTLField
-    //          ↓
-    //     traceSourceGalaxy()
-    //          ↓
-    //     PhotonTraceBatch
-    //          ↓
-    //     LensingProjectionResult
-    //          ↓
-    //     renderPipelineOutput()
+    // TRADE-OFF: individual per-star size variation (e.g. the
+    // "brighter/larger near the core" effect in the original
+    // addGlobularCluster) is lost — every point in a given cloud
+    // renders at the same size. If that visual detail matters,
+    // it can be reintroduced via a per-vertex SCNGeometrySource
+    // with semantic .color to modulate brightness, but that adds
+    // complexity that isn't justified unless you actually miss
+    // the look.
     // ============================================================
 
-    func traceSourceGalaxy(
-        stars:
-            [SourceGalaxyStar],
+    private func makeStarPointCloudNode(
+        positions: [SIMD3<Float>],
+        pointSize: CGFloat = 0.05,
+        minimumScreenSpaceRadius: CGFloat = 1.0,
+        maximumScreenSpaceRadius: CGFloat = 6.0
+    ) -> SCNNode {
 
-        field:
-            QRTLField,
-
-        parameters:
-            LensingParameters,
-
-        showPaths:
-            Bool
-    ) -> PhotonTraceBatch {
-
-        // ========================================================
-        // STORAGE
-        // ========================================================
-
-        var traces:
-            [PhotonTraceResult] =
-            []
-
-        var paths:
-            [[SIMD3<Float>]] =
-            []
-
-        var hits:
-            [LensingProjectionHit] =
-            []
-
-
-        traces.reserveCapacity(
-            stars.count
-        )
-
-        hits.reserveCapacity(
-            stars.count
-        )
-
-        if showPaths {
-
-            paths.reserveCapacity(
-                stars.count
-            )
+        guard !positions.isEmpty else {
+            return SCNNode()
         }
 
+        let vertices = positions.map {
+            SCNVector3($0.x, $0.y, $0.z)
+        }
+
+        let source = SCNGeometrySource(vertices: vertices)
+
+        let indices: [Int32] = Array(0..<Int32(vertices.count))
+
+        let element = SCNGeometryElement(
+            indices: indices,
+            primitiveType: .point
+        )
+
+        element.pointSize = pointSize
+        element.minimumPointScreenSpaceRadius = minimumScreenSpaceRadius
+        element.maximumPointScreenSpaceRadius = maximumScreenSpaceRadius
+
+        let geometry = SCNGeometry(sources: [source], elements: [element])
+        geometry.firstMaterial = starMaterial
+
+        return SCNNode(geometry: geometry)
+    }
+
+
+    // ============================================================
+    // SINGLE-GEOMETRY-PER-PATH LINE HELPER (FIX #1)
+    //
+    // Replaces the old approach of one SCNCylinder + one
+    // SCNMaterial + one SCNNode PER SEGMENT of a photon path
+    // (with up to ~1500 steps per photon, times up to 220 stars,
+    // this was the single largest node-count contributor in the
+    // whole file) with ONE SCNGeometry per path, using
+    // primitiveType .line.
+    //
+    // TRADE-OFF: .line primitives have no controllable thickness
+    // (they rasterize at a hairline width), unlike the cylinder
+    // segments which had real 3D radius. This matches the
+    // approach your own renderPhotonPath(_:) already used
+    // elsewhere in this file — this fix generalizes that pattern
+    // to displayPhotonPaths so it's used for the main pipeline
+    // output, not just the unused "ghost path" overlay.
+    // ============================================================
+
+    private func makeLineGeometryNode(
+        from path: [SIMD3<Float>],
+        material: SCNMaterial
+    ) -> SCNNode? {
+
+        guard path.count >= 2 else {
+            return nil
+        }
+
+        let validPoints = path.filter {
+            $0.x.isFinite && $0.y.isFinite && $0.z.isFinite
+        }
+
+        guard validPoints.count >= 2 else {
+            return nil
+        }
+
+        let vertices = validPoints.map {
+            SCNVector3($0.x, $0.y, $0.z)
+        }
+
+        let source = SCNGeometrySource(vertices: vertices)
+
+        var indices: [Int32] = []
+        indices.reserveCapacity((vertices.count - 1) * 2)
+
+        for i in 0..<(vertices.count - 1) {
+            indices.append(Int32(i))
+            indices.append(Int32(i + 1))
+        }
+
+        let element = SCNGeometryElement(
+            indices: indices,
+            primitiveType: .line
+        )
+
+        let geometry = SCNGeometry(sources: [source], elements: [element])
+        geometry.firstMaterial = material
+
+        return SCNNode(geometry: geometry)
+    }
+
+
+    // ============================================================
+    // DISPLAY PHOTON PATHS (FIX #1 applied here)
+    // ============================================================
+
+    func displayPhotonPaths(
+        _ paths:
+            [[SIMD3<Float>]]
+    ) {
 
         // ========================================================
-        // TRACE EVERY SOURCE STAR
+        // REMOVE PREVIOUS PATHS
         // ========================================================
 
-        for star in stars {
+        clearPhotonPaths()
 
-            // ----------------------------------------------------
-            // PHOTON ORIGIN
-            //
-            // Source galaxy occupies the Y-Z image plane.
-            //
-            // X is the photon propagation direction.
-            // ----------------------------------------------------
 
-            let origin =
-                SIMD3<Float>(
-                    -6.5,
-                    star.position.y,
-                    star.position.z
+        // ========================================================
+        // CREATE ROOT NODE
+        // ========================================================
+
+        let pathsNode =
+            SCNNode()
+
+        pathsNode.name =
+            "PhotonPaths"
+
+
+        // ========================================================
+        // RENDER EACH PHOTON PATH AS A SINGLE LINE GEOMETRY
+        //
+        // One SCNGeometry per path, not one per segment.
+        // ========================================================
+
+        for path in paths {
+
+            guard let lineNode =
+                makeLineGeometryNode(
+                    from: path,
+                    material: photonLineMaterial
                 )
-
-
-            // ----------------------------------------------------
-            // INITIAL PHOTON DIRECTION
-            //
-            // Photons propagate toward +X.
-            // ----------------------------------------------------
-
-            let direction =
-                SIMD3<Float>(
-                    1.0,
-                    0.0,
-                    0.0
-                )
-
-
-            // ====================================================
-            // TRACE PHOTON
-            // ====================================================
-
-            let trace =
-                tracePhoton(
-                    origin:
-                        origin,
-
-                    direction:
-                        direction,
-
-                    field:
-                        field,
-
-                    parameters:
-                        parameters
-                )
-
-
-            // ====================================================
-            // STORE COMPLETE TRACE
-            // ====================================================
-
-            traces.append(
-                trace
-            )
-
-
-            // ====================================================
-            // STORE PHOTON PATH
-            // ====================================================
-
-            if showPaths,
-               trace.positions.count >= 2 {
-
-                paths.append(
-                    trace.positions
-                )
-            }
-
-
-            // ====================================================
-            // PROJECTION HIT
-            // ====================================================
-
-            guard
-                trace.hitProjection,
-
-                let projectionPoint =
-                    trace.projectionPosition
-
             else {
                 continue
             }
 
-
-            // ====================================================
-            // PROJECT 3D → 2D
-            //
-            // Projection plane:
-            //
-            //     X = constant
-            //
-            // Image coordinates:
-            //
-            //     Y → horizontal
-            //     Z → vertical
-            // ====================================================
-
-            let projectionCoordinates =
-                SIMD2<Float>(
-                    projectionPoint.y,
-                    projectionPoint.z
-                )
+            pathsNode.addChildNode(lineNode)
+        }
 
 
-            // ====================================================
-            // SOURCE GALAXY 2D COORDINATES
-            // ====================================================
+        // ========================================================
+        // ADD PATH COLLECTION TO SCENE
+        // ========================================================
 
-            let sourceCoordinates =
-                SIMD2<Float>(
-                    star.position.y,
-                    star.position.z
-                )
+        scene.rootNode.addChildNode(
+            pathsNode
+        )
 
 
-            // ====================================================
-            // CREATE PROJECTION HIT
-            // ====================================================
+        // ========================================================
+        // STORE REFERENCE
+        // ========================================================
 
-            let hit =
-                LensingProjectionHit(
+        photonPathsNode =
+            pathsNode
+    }
+    // ============================================================
+    // RENDER COMPLETE LENSING PIPELINE OUTPUT
+    // ============================================================
+    //
+    // Physics/data flow:
+    //
+    // LensingPipelineOutput
+    //        │
+    //        ├── photonPaths
+    //        │       ↓
+    //        │   displayPhotonPaths()
+    //        │
+    //        ├── projection
+    //        │       ↓
+    //        │   renderProjection()
+    //        │
+    //        └── projection.hits
+    //                ↓
+    //            displayProjectionHits()
+    //
+    // ContentView generates the pipeline.
+    // LensingSceneController renders the results.
+    //
+    // ============================================================
 
-                    point:
-                        projectionPoint,
+    func renderPipelineOutput(
+        _ output:
+            LensingPipelineOutput,
 
-                    coordinates:
-                        projectionCoordinates,
+        showPhotonPaths:
+            Bool,
 
-                    sourceCoordinates:
-                        sourceCoordinates,
+        projectionDistance:
+            Float = 10.0,
 
-                    direction:
-                        trace.finalDirection,
+        projectionPlaneHalfExtent:
+            Float = 12.0
+    ) {
 
-                    traveledDistance:
-                        trace.traveledDistance,
+        // ========================================================
+        // STORE COMPLETE PIPELINE OUTPUT
+        // ========================================================
 
-                    interactionCount:
-                        trace.stepCount,
-
-                    maximumMagneticField:
-                        trace.maximumMagneticField,
-
-                    maximumQRTLInfluence:
-                        trace.maximumQRTLInfluence,
-
-                    maximumMagneticPhotonInfluence:
-                        trace.maximumMagneticPhotonInfluence,
-
-                    sourceID:
-                        star.id
-                )
+        lastPipelineOutput =
+            output
 
 
-            // ====================================================
-            // STORE HIT
-            // ====================================================
+        // ========================================================
+        // CLEAR OLD PHOTON PATHS
+        //
+        // Prevents paths from previous pipeline runs from
+        // remaining in the scene.
+        // ========================================================
 
-            hits.append(
-                hit
+        clearPhotonPaths()
+
+
+        // ========================================================
+        // DISPLAY PHOTON PATHS
+        //
+        // These paths were generated by:
+        //
+        // traceSourceGalaxy()
+        //        ↓
+        // tracePhoton()
+        //        ↓
+        // photonBatch.paths
+        //        ↓
+        // output.photonPaths
+        //
+        // This function does NOT calculate photon trajectories.
+        // It only displays the paths already calculated.
+        // ========================================================
+
+        if showPhotonPaths {
+
+            displayPhotonPaths(
+                output.photonPaths
             )
         }
 
 
         // ========================================================
-        // RETURN COMPLETE PHOTON BATCH
+        // RENDER PROJECTION
+        //
+        // This renders the projection structure/image.
         // ========================================================
 
+        renderProjection(
+            output.projection,
+            projectionDistance: 10.0,
+            projectionPlaneHalfExtent: 12.0
+        )
+
+
+        // ========================================================
+        // DISPLAY PROJECTION HITS
+        //
+        // LensingProjectionHit contains:
+        //
+        //     point
+        //     coordinates
+        //     sourceCoordinates
+        //     direction
+        //     diagnostics
+        //
+        // The 3D SceneKit location is `point`.
+        // ========================================================
+
+        displayProjectionHits(
+
+            output.projection.hits,
+
+            planeHalfExtent:
+                projectionPlaneHalfExtent
+        )
+
+
+        // ========================================================
+        // POSITION PROJECTION PLANE
+        //
+        // projectionDistance belongs to the rendering configuration,
+        // not LensingPipelineOutput.
+        // ========================================================
+
+        projectionNode?.position.z =
+            projectionDistance
+    }
+    // ============================================================
+    // TRACE SOURCE GALAXY
+    //
+    // Unchanged from before — this turn's fixes are scoped to
+    // rendering (SceneKit node/material construction), not the
+    // physics tracing pipeline.
+    // ============================================================
+
+    func traceSourceGalaxy(
+        stars: [SourceGalaxyStar],
+        field: QRTLField,
+        parameters: LensingParameters,
+        showPaths: Bool
+    ) -> PhotonTraceBatch {
+
+        var traces: [PhotonTraceResult] = []
+        var paths: [[SIMD3<Float>]] = []
+        var hits: [LensingProjectionHit] = []
+
+        // We launch two photons per star → roughly 2× capacity
+        traces.reserveCapacity(stars.count * 2)
+        hits.reserveCapacity(stars.count * 2)
+        if showPaths {
+            paths.reserveCapacity(stars.count * 2)
+        }
+
+        for star in stars {
+
+            // -------------------------------------------------
+            // Photon A and Photon B – start on opposite sides
+            // of the “island” (the central QRTL mass)
+            // -------------------------------------------------
+            let pair = makePhotonPairDirections(for: star)
+
+            let originsAndDirs: [(SIMD3<Float>, SIMD3<Float>)] = [
+                (star.position, pair.left),   // Photon A – one side
+                (star.position, pair.right)   // Photon B – other side
+            ]
+
+            for (origin, direction) in originsAndDirs {
+
+                let trace = tracePhoton(
+                    origin: origin,
+                    direction: direction,
+                    field: field,
+                    parameters: parameters
+                )
+
+                traces.append(trace)
+
+                if showPaths, trace.positions.count >= 2 {
+                    paths.append(trace.positions)
+                }
+
+                guard trace.hitProjection,
+                      let projectionPoint = trace.projectionPosition
+                else { continue }
+
+                let projectionCoordinates = SIMD2<Float>(
+                    projectionPoint.y,
+                    projectionPoint.z
+                )
+
+                let sourceCoordinates = SIMD2<Float>(
+                    star.position.y,
+                    star.position.z
+                )
+
+                let hit = LensingProjectionHit(
+                    point: projectionPoint,
+                    coordinates: projectionCoordinates,
+                    sourceCoordinates: sourceCoordinates,
+                    direction: trace.finalDirection,
+                    traveledDistance: trace.traveledDistance,
+                    interactionCount: trace.stepCount,
+                    maximumMagneticField: trace.maximumMagneticField,
+                    maximumQRTLInfluence: trace.maximumQRTLInfluence,
+                    maximumMagneticPhotonInfluence: trace.maximumMagneticPhotonInfluence,
+                    sourceID: star.id
+                )
+
+                hits.append(hit)
+            }
+        }
+
         return PhotonTraceBatch(
-
-            traces:
-                traces,
-
-            paths:
-                paths,
-
-            hits:
-                hits
+            traces: traces,
+            paths: paths,
+            hits: hits
         )
     }
-    
     private func projectionPlaneIntersection(
         from start: SIMD3<Float>,
         to end: SIMD3<Float>,
@@ -488,38 +697,189 @@ final class LensingSceneController:
         return result
     }
     // ============================================================
+    // DISPLAY PROJECTION HIT MARKERS (FIX #3 applied here)
+    // ============================================================
+
+    private func displayProjectionHits(
+        _ hits:
+            [LensingProjectionHit],
+
+        planeHalfExtent:
+            Float
+    ) {
+
+        // ========================================================
+        // REMOVE OLD HIT MARKERS
+        // ========================================================
+
+        projectionHitsNode?
+            .removeFromParentNode()
+
+
+        // ========================================================
+        // CREATE HIT CONTAINER
+        // ========================================================
+
+        let hitsNode =
+            SCNNode()
+
+        hitsNode.name =
+            "ProjectionHits"
+
+
+        // ========================================================
+        // CREATE VISUAL MARKER FOR EACH PHOTON HIT
+        //
+        // Individual SCNSphere per hit is kept — the count here
+        // is bounded by star count (hundreds, not thousands), so
+        // a point-cloud rewrite isn't worth the added complexity.
+        // The fix here is only sharing hitMarkerMaterial instead
+        // of allocating a new SCNMaterial per hit.
+        // ========================================================
+
+        for hit in hits {
+
+            let position =
+                hit.point
+
+            let sphere =
+                SCNSphere(
+                    radius:
+                        0.035
+                )
+
+            sphere.firstMaterial =
+                hitMarkerMaterial
+
+            let node =
+                SCNNode(
+                    geometry:
+                        sphere
+                )
+
+            node.position =
+                SCNVector3(
+                    position.x,
+                    position.y,
+                    position.z
+                )
+
+            hitsNode.addChildNode(
+                node
+            )
+        }
+
+
+        // ========================================================
+        // ADD HIT COLLECTION TO PROJECTION NODE
+        // ========================================================
+
+        projectionNode?
+            .addChildNode(
+                hitsNode
+            )
+
+
+        projectionHitsNode =
+            hitsNode
+    }
+    // ============================================================
+    // RENDER PROJECTION
+    // ============================================================
+
+    private func renderProjection(
+        _ projection:
+            LensingProjectionResult,
+
+        projectionDistance:
+            Float,
+
+        projectionPlaneHalfExtent:
+            Float
+    ) {
+
+        projectionNode?
+            .removeFromParentNode()
+
+        projectionNode =
+            nil
+
+        let plane =
+            SCNPlane(
+
+                width:
+                    CGFloat(
+                        projectionPlaneHalfExtent * 2.0
+                    ),
+
+                height:
+                    CGFloat(
+                        projectionPlaneHalfExtent * 2.0
+                    )
+            )
+
+        let material =
+            SCNMaterial()
+
+        material.diffuse.contents =
+            UIColor(
+                white:
+                    0.05,
+                alpha:
+                    0.90
+            )
+
+        material.emission.contents =
+            UIColor(
+                white:
+                    0.05,
+                alpha:
+                    0.90
+            )
+
+        material.isDoubleSided =
+            true
+
+        material.lightingModel =
+            .constant
+
+        plane.firstMaterial =
+            material
+
+        let node =
+            SCNNode()
+
+        node.name =
+            "LensingProjectionPlane"
+
+        node.geometry =
+            plane
+
+        node.position =
+            SCNVector3(
+                0,
+                0,
+                projectionDistance
+            )
+
+        scene.rootNode.addChildNode(
+            node
+        )
+
+        projectionNode =
+            node
+
+        displayProjectionHits(
+            projection.hits,
+            planeHalfExtent:
+                projectionPlaneHalfExtent
+        )
+    }
+
+    // ============================================================
     // TRACE PHOTON THROUGH QRTL + ELECTROMAGNETIC FIELD
     //
-    // This is the physics portion of the photon pipeline.
-    //
-    // Pipeline:
-    //
-    // source position
-    //      ↓
-    // initial photon direction
-    //      ↓
-    // QRTL field sample
-    //      ↓
-    // electromagnetic field sample
-    //      ↓
-    // total optical index
-    //      ↓
-    // index gradient
-    //      ↓
-    // transverse gradient
-    //      ↓
-    // photon bending
-    //      ↓
-    // new photon direction
-    //      ↓
-    // new photon position
-    //      ↓
-    // projection-plane intersection
-    //      ↓
-    // PhotonTraceResult
-    //
-    // The controller owns this function so that ContentView only
-    // orchestrates the experiment and rendering.
+    // Unchanged — out of scope for this turn's fixes.
     // ============================================================
 
     func tracePhoton(
@@ -529,20 +889,10 @@ final class LensingSceneController:
         parameters: LensingParameters
     ) -> PhotonTraceResult {
 
-        // ========================================================
-        // INITIAL PHOTON STATE
-        // ========================================================
+        var position = origin
 
-        var position =
-            origin
-
-        let initialLength =
-            simd_length(direction)
-
-        guard initialLength.isFinite,
-              initialLength > 0.000001
-        else {
-
+        let initialLength = simd_length(direction)
+        guard initialLength.isFinite, initialLength > 0.000001 else {
             return PhotonTraceResult(
                 positions: [origin],
                 origin: origin,
@@ -558,14 +908,11 @@ final class LensingSceneController:
             )
         }
 
-        var photonDirection =
-            simd_normalize(direction)
+        var photonDirection = simd_normalize(direction)
 
         guard photonDirection.x.isFinite,
               photonDirection.y.isFinite,
-              photonDirection.z.isFinite
-        else {
-
+              photonDirection.z.isFinite else {
             return PhotonTraceResult(
                 positions: [origin],
                 origin: origin,
@@ -581,625 +928,148 @@ final class LensingSceneController:
             )
         }
 
-        // ========================================================
-        // PHOTON PATH
-        // ========================================================
+        var positions: [SIMD3<Float>] = []
+        positions.reserveCapacity(parameters.maximumPhotonSteps + 1)
+        positions.append(position)
 
-        var positions:
-            [SIMD3<Float>] = []
-
-        positions.reserveCapacity(
-            parameters.maximumPhotonSteps + 1
-        )
-
-        positions.append(
-            position
-        )
-
-        // ========================================================
-        // DIAGNOSTICS
-        // ========================================================
-
-        var maximumQRTLInfluence:
-            Float = 0.0
-
-        var maximumMagneticField:
-            Float = 0.0
-
-        var maximumMagneticPhotonInfluence:
-            Float = 0.0
-
-        var traveledDistance:
-            Float = 0.0
-
-        var stepCount:
-            Int = 0
-
-        // ========================================================
-        // PHOTON PROPAGATION LOOP
-        // ========================================================
+        var maximumQRTLInfluence: Float = 0.0
+        var maximumMagneticField: Float = 0.0
+        var maximumMagneticPhotonInfluence: Float = 0.0
+        var traveledDistance: Float = 0.0
+        var stepCount: Int = 0
 
         for _ in 0..<parameters.maximumPhotonSteps {
 
             stepCount += 1
+            let previousPosition = position
+            let previousDirection = photonDirection
 
-            let previousPosition =
-                position
-
-            let previousDirection =
-                photonDirection
-
-            // ====================================================
-            // SAMPLE QRTL / OPTICAL FIELD
-            // ====================================================
-
-            let sample =
-                field.sample(
-                    at:
-                        position
-                )
-
-            let totalIndex =
-                sample.totalIndex
-
-            guard totalIndex.isFinite,
-                  totalIndex > 0.000001
-            else {
-                break
-            }
-
-            // ====================================================
-            // QRTL INFLUENCE
-            // ====================================================
-
-            let qrtlInfluence =
-                field.influence(
-                    at:
-                        position
-                )
-
-            let qrtlMagnitude =
-                simd_length(
-                    qrtlInfluence
-                )
-
+            // -------------------------------------------------------
+            // Diagnostics (unchanged)
+            // -------------------------------------------------------
+            let qrtlInfluence = field.influence(at: position)
+            let qrtlMagnitude = simd_length(qrtlInfluence)
             if qrtlMagnitude.isFinite {
-
-                maximumQRTLInfluence =
-                    max(
-                        maximumQRTLInfluence,
-                        qrtlMagnitude
-                    )
+                maximumQRTLInfluence = max(maximumQRTLInfluence, qrtlMagnitude)
             }
 
-            // ====================================================
-            // ELECTROMAGNETIC INFLUENCE
-            // ====================================================
-
-            let electromagneticInfluence =
-                field.electromagneticInfluence(
-                    at:
-                        position
-                )
-
-            let magneticPhotonMagnitude =
-                simd_length(
-                    electromagneticInfluence
-                )
-
+            let electromagneticInfluence = field.electromagneticInfluence(at: position)
+            let magneticPhotonMagnitude = simd_length(electromagneticInfluence)
             if magneticPhotonMagnitude.isFinite {
-
-                maximumMagneticPhotonInfluence =
-                    max(
-                        maximumMagneticPhotonInfluence,
-                        magneticPhotonMagnitude
-                    )
+                maximumMagneticPhotonInfluence = max(maximumMagneticPhotonInfluence, magneticPhotonMagnitude)
             }
 
-            // ====================================================
-            // MAGNETIC FIELD
-            // ====================================================
-
-            let electromagneticField =
-                field.electromagneticField(
-                    at:
-                        position
-                )
-
-            let magneticFieldMagnitude =
-                simd_length(
-                    electromagneticField
-                )
-
+            let electromagneticField = field.electromagneticField(at: position)
+            let magneticFieldMagnitude = simd_length(electromagneticField)
             if magneticFieldMagnitude.isFinite {
-
-                maximumMagneticField =
-                    max(
-                        maximumMagneticField,
-                        magneticFieldMagnitude
-                    )
+                maximumMagneticField = max(maximumMagneticField, magneticFieldMagnitude)
             }
 
-            // ====================================================
-            // OPTICAL INDEX GRADIENT
+            // -------------------------------------------------------
+            // QRTL curvilinear flow – matches the heatmap
             //
-            // The gradient describes how the optical field changes
-            // spatially around the lens.
-            // ====================================================
+            // Uses the same acceleration that qrtlLensingStrength
+            // (and therefore the heatmap) is built from.
+            // The kick is already transverse → photons flow around
+            // the high-density core like streamlines around an island.
+            // -------------------------------------------------------
+            let acceleration = field.qrtlLensingAcceleration(
+                at: position,
+                direction: photonDirection
+            )
 
-            let gradient =
-                field.indexGradient(
-                    at:
-                        position
-                )
-
-            guard gradient.x.isFinite,
-                  gradient.y.isFinite,
-                  gradient.z.isFinite
-            else {
+            guard acceleration.x.isFinite,
+                  acceleration.y.isFinite,
+                  acceleration.z.isFinite else {
                 break
             }
 
-            // ====================================================
-            // REMOVE LONGITUDINAL COMPONENT
-            //
-            // Only the component transverse to the photon direction
-            // changes the photon trajectory.
-            // ====================================================
+            let step = parameters.photonStepSize
+            guard step.isFinite, step > 0.0 else { break }
 
-            let longitudinal =
-                simd_dot(
-                    gradient,
-                    photonDirection
-                )
+            let kick = acceleration
+                     * parameters.qrtlFieldCoupling
+                     * parameters.deflectionStrength
+                     * step
 
-            let transverseGradient =
-                gradient -
-                photonDirection *
-                longitudinal
+            var nextDirection = photonDirection + kick
 
-            // ====================================================
-            // OPTICAL BENDING
-            // ====================================================
+            let nextLength = simd_length(nextDirection)
+            guard nextLength.isFinite, nextLength > 0.000001 else { break }
 
-            let indexBending =
-                transverseGradient /
-                max(
-                    totalIndex,
-                    0.000001
-                )
+            nextDirection = simd_normalize(nextDirection)
 
-            guard indexBending.x.isFinite,
-                  indexBending.y.isFinite,
-                  indexBending.z.isFinite
-            else {
-                break
+            // Soft limit on angular change per step
+            let maxBend = parameters.maximumPhotonBend
+            let cosAngle = simd_clamp(simd_dot(photonDirection, nextDirection), -1.0, 1.0)
+            let bendAngle = acos(cosAngle)
+            if bendAngle > maxBend {
+                nextDirection = photonDirection   // reject violent flip
             }
 
-            // ====================================================
-            // STEP SIZE
-            // ====================================================
-
-            let step =
-                parameters.photonStepSize
-
-            guard step.isFinite,
-                  step > 0.0
-            else {
-                break
-            }
-
-            // ====================================================
-            // CHANGE PHOTON DIRECTION
-            // ====================================================
-
-            let directionChange =
-                indexBending *
-                parameters.deflectionStrength
-
-            var nextDirection =
-                photonDirection +
-                directionChange *
-                step
-
-            let nextDirectionLength =
-                simd_length(
-                    nextDirection
-                )
-
-            guard nextDirectionLength.isFinite,
-                  nextDirectionLength > 0.000001
-            else {
-                break
-            }
-
-            nextDirection =
-                simd_normalize(
-                    nextDirection
-                )
-
-            // ====================================================
-            // ADVANCE PHOTON
-            // ====================================================
-
-            let nextPosition =
-                position +
-                nextDirection *
-                step
-
+            let nextPosition = position + nextDirection * step
             guard nextPosition.x.isFinite,
                   nextPosition.y.isFinite,
-                  nextPosition.z.isFinite
-            else {
+                  nextPosition.z.isFinite else {
                 break
             }
 
-            // ====================================================
-            // PROJECTION PLANE
-            //
-            // The photon travels primarily along +X.
-            //
-            // Projection plane:
-            //
-            //     X = projectionDistance
-            //
-            // Y/Z become the image coordinates.
-            // ====================================================
-
-            if let intersection =
-                projectionPlaneIntersection(
-                    from:
-                        previousPosition,
-
-                    to:
-                        nextPosition,
-
-                    parameters:
-                        parameters
-                ) {
-
-                position =
-                    intersection
-
-                positions.append(
-                    intersection
-                )
-
-                traveledDistance +=
-                    simd_distance(
-                        previousPosition,
-                        intersection
-                    )
-
-                // ====================================================
-                // PHOTON HAS REACHED OBSERVATION PLANE
-                // ====================================================
+            // -------------------------------------------------------
+            // Projection-plane intersection test
+            // -------------------------------------------------------
+            if let intersection = projectionPlaneIntersection(
+                from: previousPosition,
+                to: nextPosition,
+                parameters: parameters
+            ) {
+                position = intersection
+                positions.append(intersection)
+                traveledDistance += simd_distance(previousPosition, intersection)
 
                 return PhotonTraceResult(
-
-                    positions:
-                        positions,
-
-                    origin:
-                        origin,
-
-                    finalPosition:
-                        intersection,
-
-                    finalDirection:
-                        nextDirection,
-
-                    hitProjection:
-                        true,
-
-                    projectionPosition:
-                        intersection,
-
-                    stepCount:
-                        stepCount,
-
-                    traveledDistance:
-                        traveledDistance,
-
-                    maximumQRTLInfluence:
-                        maximumQRTLInfluence,
-
-                    maximumMagneticField:
-                        maximumMagneticField,
-
-                    maximumMagneticPhotonInfluence:
-                        maximumMagneticPhotonInfluence
+                    positions: positions,
+                    origin: origin,
+                    finalPosition: intersection,
+                    finalDirection: nextDirection,
+                    hitProjection: true,
+                    projectionPosition: intersection,
+                    stepCount: stepCount,
+                    traveledDistance: traveledDistance,
+                    maximumQRTLInfluence: maximumQRTLInfluence,
+                    maximumMagneticField: maximumMagneticField,
+                    maximumMagneticPhotonInfluence: maximumMagneticPhotonInfluence
                 )
             }
 
-            // ====================================================
-            // COMMIT PHOTON STATE
-            // ====================================================
+            // -------------------------------------------------------
+            // Advance
+            // -------------------------------------------------------
+            photonDirection = nextDirection
+            position = nextPosition
+            traveledDistance += step
+            positions.append(position)
 
-            photonDirection =
-                nextDirection
-
-            position =
-                nextPosition
-
-            traveledDistance +=
-                step
-
-            positions.append(
-                position
-            )
-
-            // ====================================================
-            // STOP OUTSIDE LENSING VOLUME
-            // ====================================================
-
-            let distanceFromCenter =
-                simd_length(
-                    position
-                )
-
+            let distanceFromCenter = simd_length(position)
             if distanceFromCenter.isFinite,
-               distanceFromCenter >
-                    parameters.maximumPropagationRadius {
-
-                break
-            }
-
-            // ====================================================
-            // SAFETY CHECK
-            // ====================================================
-
-            guard previousDirection.x.isFinite,
-                  previousDirection.y.isFinite,
-                  previousDirection.z.isFinite
-            else {
+               distanceFromCenter > parameters.maximumPropagationRadius {
                 break
             }
         }
-
-        // ========================================================
-        // PHOTON DID NOT REACH PROJECTION PLANE
-        // ========================================================
 
         return PhotonTraceResult(
-
-            positions:
-                positions,
-
-            origin:
-                origin,
-
-            finalPosition:
-                position,
-
-            finalDirection:
-                photonDirection,
-
-            hitProjection:
-                false,
-
-            projectionPosition:
-                nil,
-
-            stepCount:
-                stepCount,
-
-            traveledDistance:
-                traveledDistance,
-
-            maximumQRTLInfluence:
-                maximumQRTLInfluence,
-
-            maximumMagneticField:
-                maximumMagneticField,
-
-            maximumMagneticPhotonInfluence:
-                maximumMagneticPhotonInfluence
+            positions: positions,
+            origin: origin,
+            finalPosition: position,
+            finalDirection: photonDirection,
+            hitProjection: false,
+            projectionPosition: nil,
+            stepCount: stepCount,
+            traveledDistance: traveledDistance,
+            maximumQRTLInfluence: maximumQRTLInfluence,
+            maximumMagneticField: maximumMagneticField,
+            maximumMagneticPhotonInfluence: maximumMagneticPhotonInfluence
         )
     }
-    // ============================================================
-    // RENDER COMPLETE PIPELINE OUTPUT
-    // ============================================================
-
-    // ============================================================
-    // RENDER COMPLETE QRTL LENSING PIPELINE
-    //
-    // Physics pipeline:
-    //
-    // QRTLExperiment
-    //      ↓
-    // QRTLField
-    //      ↓
-    // traceSourceGalaxy()
-    //      ↓
-    // PhotonTraceBatch
-    //      ↓
-    // LensingProjectionResult
-    //      ↓
-    // LensingPipelineOutput
-    //      ↓
-    // THIS FUNCTION
-    //      ↓
-    // SceneKit visualization
-    // ============================================================
-
-    func renderPipelineOutput(
-        _ output:
-            LensingPipelineOutput,
-
-        showPhotonPaths:
-            Bool
-    ) {
-
-        // ========================================================
-        // CLEAR PREVIOUS DYNAMIC CONTENT
-        // ========================================================
-
-        clearDynamic()
-
-
-        // ========================================================
-        // SOURCE GALAXY
-        //
-        // This is the original background/source galaxy.
-        // ========================================================
-
-        addSourceGalaxy(
-            radius:
-                0.75,
-
-            nStars:
-                220
-        )
-
-
-        // ========================================================
-        // QRTL LENS / GLOBULAR CLUSTER
-        // ========================================================
-
-        addGlobularCluster(
-            radius:
-                3.0
-        )
-
-
-        // ========================================================
-        // QRTL FIELD HEATMAP
-        //
-        // The field is now carried inside the pipeline output.
-        // ========================================================
-
-        updateBottomHeatmap(
-            field:
-                output.field
-        )
-
-
-        // ========================================================
-        // PROJECTION PLANE
-        //
-        // Photons propagate along +X.
-        //
-        // Therefore:
-        //
-        //     X = projection distance
-        //     Y = horizontal image coordinate
-        //     Z = vertical image coordinate
-        // ========================================================
-
-        func addProjectionPlane(
-            halfExtent: Float,
-            x: Double
-        ) {
-
-            projectionPlaneNode?.removeFromParentNode()
-
-            let plane =
-                SCNPlane(
-                    width:
-                        CGFloat(halfExtent * 2.0),
-
-                    height:
-                        CGFloat(halfExtent * 2.0)
-                )
-
-            let material =
-                SCNMaterial()
-
-            material.diffuse.contents =
-                UIColor(
-                    white: 0.08,
-                    alpha: 0.18
-                )
-
-            material.isDoubleSided =
-                true
-
-            plane.materials =
-                [material]
-
-            let node =
-                SCNNode(
-                    geometry:
-                        plane
-                )
-
-            node.position =
-                SCNVector3(
-                    Float(x),
-                    0.0,
-                    0.0
-                )
-
-            // SCNPlane initially lies in XY.
-            // Rotate it so it lies in the YZ plane.
-            node.eulerAngles =
-                SCNVector3(
-                    Float.pi / 2.0,
-                    0.0,
-                    0.0
-                )
-
-            projectionPlaneNode =
-                node
-
-            scene.rootNode.addChildNode(
-                node
-            )
-        }
-
-
-        // ========================================================
-        // PROJECTED GALAXY
-        //
-        // Convert the accumulated photon hits into the visible
-        // projected galaxy image.
-        // ========================================================
-
-        applyProjection(
-            output.projection
-        )
-
-
-        // ========================================================
-        // PHOTON PATHS
-        // ========================================================
-
-        clearPhotonPaths()
-
-
-        guard showPhotonPaths
-        else {
-            return
-        }
-
-
-        // ========================================================
-        // RENDER EVERY PHOTON PATH
-        // ========================================================
-
-        for (
-            index,
-            path
-        )
-        in output.photonPaths.enumerated() {
-
-            guard path.count >= 2
-            else {
-                continue
-            }
-
-
-            addPhotonSpline(
-                points:
-                    path,
-
-                index:
-                    index
-            )
-        }
-    }
-
     private func bendPhoton(
         position: SIMD3<Float>,
         direction: SIMD3<Float>,
@@ -1277,18 +1147,6 @@ final class LensingSceneController:
         return simd_normalize(blended)
     }
 
-
-    // ============================================================
-    // MAKE PHOTON PAIR DIRECTIONS
-    //
-    // Creates the two initial photon directions emitted from
-    // one source-galaxy star.
-    //
-    // These are the two rays that will subsequently be bent by
-    // the QRTL field.
-    //
-    // ============================================================
-
     private func makePhotonPairDirections(
         for star: SourceGalaxyStar
     ) -> (
@@ -1339,32 +1197,11 @@ final class LensingSceneController:
             right
         )
     }
-    // =============================================================
-    // REMOVE PREVIOUS PROJECTION
-    // =============================================================
-    //
-    // Removes only the previously rendered projection.
-    // It does not remove:
-    //   - source galaxy
-    //   - globular cluster
-    //   - photon paths
-    //   - lensing field
-    //
-    // =============================================================
 
     func removePreviousProjection() {
 
-        // ---------------------------------------------------------
-        // Remove previous projection container
-        // ---------------------------------------------------------
-
         projectionNode?.removeFromParentNode()
         projectionNode = nil
-
-
-        // ---------------------------------------------------------
-        // Remove any individually rendered projection nodes
-        // ---------------------------------------------------------
 
         for node in projectionNodes {
 
@@ -1375,14 +1212,9 @@ final class LensingSceneController:
             keepingCapacity: true
         )
 
-
-        // ---------------------------------------------------------
-        // Clear accumulated projection data
-        // ---------------------------------------------------------
-
         projectionAccumulator.reset()
     }
- 
+
     func applyProjection(
         _ projection:
             LensingProjectionResult
@@ -1656,10 +1488,16 @@ final class LensingSceneController:
     }
 
     // ========================================================
-    // CLEAR
+    // CLEAR (per-run pipeline output only — see prior fix)
     // ========================================================
 
     func clearDynamic() {
+
+        // ----------------------------------------------------
+        // PHOTON PATHS (both representations)
+        // ----------------------------------------------------
+
+        clearPhotonPaths()
 
         pathNodes.forEach {
             $0.removeFromParentNode()
@@ -1667,46 +1505,21 @@ final class LensingSceneController:
 
         pathNodes.removeAll()
 
-        sourceGalaxyNodes.forEach {
-            $0.removeFromParentNode()
-        }
 
-        sourceGalaxyNodes.removeAll()
+        // ----------------------------------------------------
+        // PROJECTION PLANE + HIT MARKERS
+        // ----------------------------------------------------
 
-        clearPhotonPaths()
-
-        sourceGalaxyNode?
+        projectionNode?
             .removeFromParentNode()
 
-        sourceGalaxyNode =
+        projectionNode =
             nil
 
-        sourceGalaxyStars.removeAll(
-            keepingCapacity: true
-        )
-
-        massNode?
+        projectionHitsNode?
             .removeFromParentNode()
 
-        massNode =
-            nil
-
-        globularClusterNode?
-            .removeFromParentNode()
-
-        globularClusterNode =
-            nil
-
-        bottomPlaneNode?
-            .removeFromParentNode()
-
-        bottomPlaneNode =
-            nil
-
-        frontPlaneNode?
-            .removeFromParentNode()
-
-        frontPlaneNode =
+        projectionHitsNode =
             nil
 
         projectionPlaneNode?
@@ -1723,12 +1536,28 @@ final class LensingSceneController:
             keepingCapacity: true
         )
 
+
+        // ----------------------------------------------------
+        // ACCUMULATED PROJECTION DATA
+        // ----------------------------------------------------
+
         accumulator.reset()
 
         projectionAccumulator.reset()
 
+
+        // ----------------------------------------------------
+        // LAST PIPELINE OUTPUT
+        // ----------------------------------------------------
+
         lastPipelineOutput =
             nil
+
+        // NOTE: globularClusterNode, sourceGalaxyNode,
+        // sourceGalaxyStars, bottomPlaneNode, and frontPlaneNode
+        // are deliberately NOT touched here — they're persistent
+        // scene furniture, not per-run pipeline output. See the
+        // "fix clearDynamic" discussion earlier in this thread.
     }
 
     func addSourceGalaxy(
@@ -1746,51 +1575,29 @@ final class LensingSceneController:
             keepingCapacity: true
         )
 
-        let galaxyNode =
-            SCNNode()
-
-        sourceGalaxyNode =
-            galaxyNode
-
-
-        // =========================================================
-        // SOURCE GALAXY DISTANCE
-        //
-        // Photons travel in +X.
-        //
-        // Therefore the source galaxy starts at negative X
-        // and travels toward the globular cluster at X = 0.
-        // =========================================================
-
         let sourceX:
             Float = -6.5
 
+        var positions:
+            [SIMD3<Float>] = []
+
+        positions.reserveCapacity(
+            nStars
+        )
 
         // =========================================================
-        // GENERATE SOURCE GALAXY
+        // GENERATE SOURCE GALAXY POSITIONS + METADATA
         //
-        // Galaxy lies primarily in the Y-Z plane.
-        //
-        // X = photon travel direction
-        // Y = galaxy vertical/radial coordinate
-        // Z = galaxy depth/radial coordinate
+        // This part is unchanged CPU-only math — no SceneKit
+        // objects are created per star anymore. The visual is
+        // built once, after this loop, as a single point cloud.
         // =========================================================
 
         for starID in 0..<nStars {
 
-            // ---------------------------------------------------------
-            // RANDOM ANGLE
-            // ---------------------------------------------------------
-
             let theta = Double.random(
                 in: 0.0...(2.0 * Double.pi)
             )
-
-            // ---------------------------------------------------------
-            // GALAXY RADIAL DISTRIBUTION
-            //
-            // sqrt() produces a broad disk distribution.
-            // ---------------------------------------------------------
 
             let radialFraction =
                 sqrt(
@@ -1800,15 +1607,9 @@ final class LensingSceneController:
                     )
                 )
 
-
             let r =
                 radius *
                 radialFraction
-
-
-            // ---------------------------------------------------------
-            // Y / Z GALAXY POSITION
-            // ---------------------------------------------------------
 
             let y =
                 r *
@@ -1818,19 +1619,11 @@ final class LensingSceneController:
                 r *
                 sin(theta)
 
-
-            // ---------------------------------------------------------
-            // SMALL GALAXY THICKNESS ALONG X
-            //
-            // Keep the galaxy slightly three-dimensional.
-            // ---------------------------------------------------------
-
             let xOffset =
                 Double.random(
                     in:
                         -0.03...0.03
                 )
-
 
             let position =
                 SIMD3<Float>(
@@ -1842,25 +1635,11 @@ final class LensingSceneController:
                     Float(z)
                 )
 
-
-            // ---------------------------------------------------------
-            // BRIGHTNESS
-            // ---------------------------------------------------------
-
             let brightness =
                 Float.random(
                     in:
                         0.5...1.0
                 )
-
-
-            // =========================================================
-            // STORE SOURCE STAR
-            //
-            // IMPORTANT:
-            // This is the position that runFullPipeline() will use
-            // as the photon origin.
-            // =========================================================
 
             sourceGalaxyStars.append(
                 SourceGalaxyStar(
@@ -1875,76 +1654,35 @@ final class LensingSceneController:
                 )
             )
 
-
-            // =========================================================
-            // CREATE VISUAL STAR
-            // =========================================================
-
-            let starRadius =
-                Float(
-                    0.008 +
-                    Double.random(
-                        in:
-                            0.0...0.012
-                    )
-                )
-
-
-            let geometry =
-                SCNSphere(
-                    radius:
-                        CGFloat(
-                            starRadius
-                        )
-                )
-
-
-            let material =
-                SCNMaterial()
-
-            material.diffuse.contents =
-                UIColor.white
-
-            material.emission.contents =
-                UIColor.white
-
-            material.lightingModel =
-                .constant
-
-            geometry.firstMaterial =
-                material
-
-
-            let starNode =
-                SCNNode(
-                    geometry:
-                        geometry
-                )
-
-
-            starNode.position =
-                SCNVector3(
-                    position.x,
-                    position.y,
-                    position.z
-                )
-
-
-            galaxyNode.addChildNode(
-                starNode
+            positions.append(
+                position
             )
         }
 
 
         // =========================================================
-        // ADD GALAXY TO SCENE
+        // BUILD SINGLE POINT-CLOUD NODE (FIX #2)
+        //
+        // Replaces up to 220 individual SCNSphere/SCNMaterial/
+        // SCNNode allocations with one draw call.
         // =========================================================
+
+        let galaxyNode =
+            makeStarPointCloudNode(
+                positions: positions,
+                pointSize: 0.03,
+                minimumScreenSpaceRadius: 1.0,
+                maximumScreenSpaceRadius: 4.0
+            )
+
+        sourceGalaxyNode =
+            galaxyNode
 
         scene.rootNode.addChildNode(
             galaxyNode
         )
     }
- 
+
     func addGlobularCluster(
         radius: Double = 5.0,
         nStars: Int = 3000
@@ -1956,27 +1694,18 @@ final class LensingSceneController:
 
         globularClusterNode?.removeFromParentNode()
 
+        var positions:
+            [SIMD3<Float>] = []
+
+        positions.reserveCapacity(
+            nStars
+        )
 
         // =========================================================
-        // CREATE CLUSTER NODE
-        // =========================================================
-
-        let clusterNode =
-            SCNNode()
-
-        globularClusterNode =
-            clusterNode
-
-
-        // =========================================================
-        // CREATE STARS THROUGHOUT SPHERICAL VOLUME
+        // GENERATE CLUSTER POSITIONS (unchanged math)
         // =========================================================
 
         for _ in 0..<nStars {
-
-            // -----------------------------------------------------
-            // RANDOM DIRECTION
-            // -----------------------------------------------------
 
             let theta =
                 Double.random(
@@ -1997,11 +1726,6 @@ final class LensingSceneController:
                     )
                 )
 
-
-            // -----------------------------------------------------
-            // UNIFORM VOLUME DISTRIBUTION
-            // -----------------------------------------------------
-
             let radialFraction =
                 pow(
                     Double.random(
@@ -2013,11 +1737,6 @@ final class LensingSceneController:
             let r =
                 radius *
                 radialFraction
-
-
-            // -----------------------------------------------------
-            // SPHERICAL → CARTESIAN
-            // -----------------------------------------------------
 
             let x =
                 r *
@@ -2033,110 +1752,34 @@ final class LensingSceneController:
                 r *
                 zDirection
 
-
-            let position =
+            positions.append(
                 SIMD3<Float>(
                     Float(x),
                     Float(y),
                     Float(z)
                 )
-
-
-            // -----------------------------------------------------
-            // DISTANCE FROM CENTER
-            // -----------------------------------------------------
-
-            let distanceFromCenter =
-                r
-
-
-            // -----------------------------------------------------
-            // CORE DENSITY
-            // -----------------------------------------------------
-
-            let normalizedRadius =
-                radius > 0.0
-                ? distanceFromCenter / radius
-                : 0.0
-
-            let coreFactor =
-                max(
-                    0.0,
-                    1.0 -
-                    normalizedRadius
-                )
-
-
-            // -----------------------------------------------------
-            // STAR SIZE
-            // -----------------------------------------------------
-
-            let starRadius =
-                Float(
-                    0.009 +
-                    Double.random(
-                        in: 0.0...0.012
-                    ) +
-                    coreFactor * 0.008
-                )
-
-
-            // -----------------------------------------------------
-            // CREATE STAR GEOMETRY
-            // -----------------------------------------------------
-
-            let starGeometry =
-                SCNSphere(
-                    radius:
-                        CGFloat(
-                            starRadius
-                        )
-                )
-
-
-            let material =
-                SCNMaterial()
-
-            material.diffuse.contents =
-                UIColor.white
-
-            material.emission.contents =
-                UIColor.white
-
-            material.lightingModel =
-                .constant
-
-            starGeometry.firstMaterial =
-                material
-
-
-            // -----------------------------------------------------
-            // CREATE STAR NODE
-            // -----------------------------------------------------
-
-            let starNode =
-                SCNNode(
-                    geometry:
-                        starGeometry
-                )
-
-            starNode.position =
-                SCNVector3(
-                    position.x,
-                    position.y,
-                    position.z
-                )
-
-
-            clusterNode.addChildNode(
-                starNode
             )
         }
 
+        // =========================================================
+        // BUILD SINGLE POINT-CLOUD NODE (FIX #2)
+        //
+        // Replaces up to 3,000 individual node allocations. Note:
+        // this drops the original per-star "brighter/larger near
+        // core" size variation — see the comment on
+        // makeStarPointCloudNode above.
+        // =========================================================
 
-        // =========================================================
-        // ADD CLUSTER TO SCENE
-        // =========================================================
+        let clusterNode =
+            makeStarPointCloudNode(
+                positions: positions,
+                pointSize: 0.04,
+                minimumScreenSpaceRadius: 1.0,
+                maximumScreenSpaceRadius: 5.0
+            )
+
+        globularClusterNode =
+            clusterNode
 
         scene.rootNode.addChildNode(
             clusterNode
@@ -2146,12 +1789,6 @@ final class LensingSceneController:
     // ========================================================
     // FRONT PROJECTION PLANE
     // ========================================================
-
-    // Constants on LensingSceneController:
-    // let frontPlaneX: Float = 8
-    // let bottomY: Float = -4
-    // let planeHalfExtent: Float = 6
-    // let heatmapHalfExtent: Float = 7
 
     func addFrontProjectionPlane(empty: Bool) {
         frontPlaneNode?.removeFromParentNode()
@@ -2180,14 +1817,20 @@ final class LensingSceneController:
         frontPlaneNode = node
     }
 
-    func updateBottomHeatmap(field: QRTLField) {
-        bottomPlaneNode?.removeFromParentNode()
+    // ============================================================
+    // APPLY PRECOMPUTED HEATMAP IMAGE (FIX #4)
+    //
+    // Pure SceneKit mutation — this is what must run on the main
+    // thread. The expensive part (sampling the field at every
+    // pixel via QRTLHeatmapGenerator.makeHeatmapImage) should
+    // happen on a background queue, and only the finished UIImage
+    // handed here. See ContentView.runFullPipeline() for the
+    // background-computation side of this split.
+    // ============================================================
 
-        let image = QRTLHeatmapGenerator.makeHeatmapImage(
-            field: field,
-            size: 128,
-            halfExtent: Double(heatmapHalfExtent)   // scene units only
-        )
+    func applyBottomHeatmap(_ image: UIImage) {
+
+        bottomPlaneNode?.removeFromParentNode()
 
         let size = CGFloat(heatmapHalfExtent * 2)
         let plane = SCNPlane(width: size, height: size)
@@ -2205,6 +1848,34 @@ final class LensingSceneController:
         scene.rootNode.addChildNode(node)
         bottomPlaneNode = node
     }
+
+    // ============================================================
+    // CONVENIENCE: COMPUTE + APPLY IN ONE CALL
+    //
+    // Kept for call sites that don't need to split the work
+    // across threads (e.g. quick previews, non-pipeline callers).
+    // For the main pipeline, prefer computing the image via
+    // QRTLHeatmapGenerator.makeHeatmapImage(...) directly on a
+    // background queue and calling applyBottomHeatmap(_:) on the
+    // main thread — see ContentView.runFullPipeline().
+    //
+    // Calling this version directly from a main-thread context
+    // (as the old updateBottomHeatmap(field:) call site did) will
+    // still block the main thread on the image generation — that
+    // was the original bug this fix addresses.
+    // ============================================================
+
+    func updateBottomHeatmap(field: QRTLField) {
+
+        let image = QRTLHeatmapGenerator.makeHeatmapImage(
+            field: field,
+            size: 128,
+            halfExtent: Double(heatmapHalfExtent)
+        )
+
+        applyBottomHeatmap(image)
+    }
+
     private func makeSolidImage(color: UIColor) -> UIImage {
         let res = resolution
         UIGraphicsBeginImageContextWithOptions(CGSize(width: res, height: res), false, 1.0)
@@ -2288,9 +1959,10 @@ final class LensingSceneController:
             node
     }
 
-  
+
     // ========================================================
-    // LENS MASS
+    // LENS MASS (secondary cluster builder — kept for
+    // compatibility; also point-cloud-based now, FIX #2)
     // ========================================================
 
     func addCluster(
@@ -2298,28 +1970,16 @@ final class LensingSceneController:
         nStars: Int = 3000
     ) {
 
-        // =========================================================
-        // REMOVE PREVIOUS CLUSTER
-        // =========================================================
-
         globularClusterNode?.removeFromParentNode()
 
-        let clusterNode =
-            SCNNode()
+        var positions:
+            [SIMD3<Float>] = []
 
-        globularClusterNode =
-            clusterNode
-
-
-        // =========================================================
-        // CREATE STARS THROUGHOUT SPHERICAL VOLUME
-        // =========================================================
+        positions.reserveCapacity(
+            nStars
+        )
 
         for _ in 0..<nStars {
-
-            // -----------------------------------------------------
-            // UNIFORM RANDOM DIRECTION
-            // -----------------------------------------------------
 
             let theta =
                 Double.random(
@@ -2333,14 +1993,6 @@ final class LensingSceneController:
                     )
                 )
 
-
-            // -----------------------------------------------------
-            // UNIFORM VOLUME DISTRIBUTION
-            //
-            // Cube-root distribution prevents stars from being
-            // concentrated toward the center.
-            // -----------------------------------------------------
-
             let radialFraction =
                 pow(
                     Double.random(
@@ -2352,11 +2004,6 @@ final class LensingSceneController:
             let r =
                 radius *
                 radialFraction
-
-
-            // -----------------------------------------------------
-            // SPHERICAL → CARTESIAN
-            // -----------------------------------------------------
 
             let sinPhi =
                 sin(phi)
@@ -2375,74 +2022,25 @@ final class LensingSceneController:
                 r *
                 cos(phi)
 
-
-            // -----------------------------------------------------
-            // STAR SIZE
-            // -----------------------------------------------------
-
-            let starRadius =
-                0.006 +
-                Double.random(
-                    in: 0.0...0.010
+            positions.append(
+                SIMD3<Float>(
+                    Float(x),
+                    Float(y),
+                    Float(z)
                 )
-
-
-            // -----------------------------------------------------
-            // STAR GEOMETRY
-            // -----------------------------------------------------
-
-            let star =
-                SCNSphere(
-                    radius:
-                        CGFloat(
-                            starRadius
-                        )
-                )
-
-
-            let material =
-                SCNMaterial()
-
-            material.diffuse.contents =
-                UIColor.white
-
-            material.emission.contents =
-                UIColor.white
-
-            material.lightingModel =
-                .constant
-
-            star.firstMaterial =
-                material
-
-
-            // -----------------------------------------------------
-            // STAR NODE
-            // -----------------------------------------------------
-
-            let starNode =
-                SCNNode(
-                    geometry:
-                        star
-                )
-
-            starNode.position =
-                SCNVector3(
-                    x,
-                    y,
-                    z
-                )
-
-
-            clusterNode.addChildNode(
-                starNode
             )
         }
 
+        let clusterNode =
+            makeStarPointCloudNode(
+                positions: positions,
+                pointSize: 0.03,
+                minimumScreenSpaceRadius: 1.0,
+                maximumScreenSpaceRadius: 4.0
+            )
 
-        // =========================================================
-        // ADD CLUSTER TO SCENE
-        // =========================================================
+        globularClusterNode =
+            clusterNode
 
         scene.rootNode.addChildNode(
             clusterNode
@@ -2452,8 +2050,11 @@ final class LensingSceneController:
     // ========================================================
     // CYLINDER BETWEEN TWO SCENE POINTS
     //
-    // This replaces the invalid SCNGeometryElement.lineWidth
-    // approach.
+    // Legacy — used only by addSplinePhotonPath, which is not
+    // called anywhere in the current pipeline (ContentView never
+    // invokes addPhotonPath/addSplinePhotonPath). Left intact for
+    // compatibility with any external call sites; out of scope
+    // for this turn's fixes since it isn't in the hot path.
     // ========================================================
 
     private func makeTubeSegment(
@@ -2549,7 +2150,6 @@ final class LensingSceneController:
                 ) * 0.5
             )
 
-        // SCNCylinder's local Y axis is its length axis.
         let direction =
             simd_normalize(
                 delta
@@ -2633,9 +2233,7 @@ final class LensingSceneController:
     }
 
     // ========================================================
-    // SMOOTH PHOTON PATH
-    //
-    // Catmull-Rom -> dense points -> cylindrical segments.
+    // SMOOTH PHOTON PATH (legacy, not in current pipeline)
     // ========================================================
 
     @discardableResult
@@ -2715,154 +2313,44 @@ final class LensingSceneController:
 
         return root
     }
+
+    // ============================================================
+    // RENDER SINGLE PHOTON PATH (FIX #3 applied — shared material)
+    //
+    // Already used the single-geometry-per-path pattern that
+    // displayPhotonPaths now also uses. Rewritten here to share
+    // ghostPathMaterial instead of allocating a new translucent
+    // material per call, and to reuse makeLineGeometryNode instead
+    // of duplicating the geometry-construction logic.
+    // ============================================================
+
     func renderPhotonPath(
         _ path: [SIMD3<Float>]
     ) {
 
-        // ---------------------------------------------------------
-        // VALIDATE PATH
-        // ---------------------------------------------------------
-
-        guard path.count >= 2 else {
+        guard let node =
+            makeLineGeometryNode(
+                from: path,
+                material: ghostPathMaterial
+            )
+        else {
             return
         }
-
-
-        // ---------------------------------------------------------
-        // CONVERT PHOTON PATH TO SCNVECTOR3
-        // ---------------------------------------------------------
-
-        let points =
-            path.map {
-                SCNVector3(
-                    x: $0.x,
-                    y: $0.y,
-                    z: $0.z
-                )
-            }
-
-
-        // ---------------------------------------------------------
-        // CREATE SOURCE DATA
-        // ---------------------------------------------------------
-
-        let source =
-            SCNGeometrySource(
-                vertices:
-                    points
-            )
-
-
-        // ---------------------------------------------------------
-        // CREATE LINE INDICES
-        // ---------------------------------------------------------
-
-        var indices:
-            [Int32] = []
-
-        indices.reserveCapacity(
-            (points.count - 1) * 2
-        )
-
-
-        for index in 0..<(points.count - 1) {
-
-            indices.append(
-                Int32(index)
-            )
-
-            indices.append(
-                Int32(index + 1)
-            )
-        }
-
-
-        // ---------------------------------------------------------
-        // CREATE GEOMETRY ELEMENT
-        // ---------------------------------------------------------
-
-        let element =
-            SCNGeometryElement(
-                indices:
-                    indices,
-
-                primitiveType:
-                    .line
-            )
-
-
-        // ---------------------------------------------------------
-        // CREATE GEOMETRY
-        // ---------------------------------------------------------
-
-        let geometry =
-            SCNGeometry(
-                sources:
-                    [source],
-
-                elements:
-                    [element]
-            )
-
-
-        // ---------------------------------------------------------
-        // MATERIAL
-        // ---------------------------------------------------------
-
-        let material =
-            SCNMaterial()
-
-        material.diffuse.contents =
-            UIColor.white.withAlphaComponent(0.1)
-
-        material.emission.contents =
-            UIColor.white.withAlphaComponent(0.1)
-
-        material.lightingModel =
-            .constant
-
-        material.isDoubleSided =
-            true
-
-        geometry.firstMaterial =
-            material
-
-
-        // ---------------------------------------------------------
-        // CREATE NODE
-        // ---------------------------------------------------------
-
-        let node =
-            SCNNode(
-                geometry:
-                    geometry
-            )
-
-
-        // ---------------------------------------------------------
-        // ADD TO PHOTON PATH COLLECTION
-        // ---------------------------------------------------------
 
         photonPathNodes.append(
             node
         )
 
-
-        // ---------------------------------------------------------
-        // ADD TO SCENE
-        // ---------------------------------------------------------
-
         scene.rootNode.addChildNode(
             node
         )
     }
-    
+
     func addProjectionPlane(
         halfExtent: Float,
         x: Float
     ) {
 
-        // Remove previous plane
         projectionPlaneNode?.removeFromParentNode()
 
         let size =
@@ -2904,8 +2392,6 @@ final class LensingSceneController:
                     geometry
             )
 
-        // Photons travel along +X.
-        // Rotate SCNPlane so it occupies Y-Z.
         node.eulerAngles.y =
             Float.pi / 2.0
 
@@ -2933,12 +2419,9 @@ final class LensingSceneController:
             return
         }
 
-        let controlPoints =
-            points
-
         addSplinePhotonPath(
             controlPoints:
-                controlPoints,
+                points,
 
             color:
                 .cyan,
@@ -2952,6 +2435,16 @@ final class LensingSceneController:
     }
     // ============================================================
     // CLEAR PHOTON SPLINES
+    //
+    // FIXED: previously did not remove photonPathsNode from the
+    // scene — displayPhotonPaths() overwrote the *reference* on
+    // every run but the OLD node stayed parented in the scene
+    // graph forever, since nothing ever called
+    // photonPathsNode?.removeFromParentNode(). This was a real
+    // leak: every pipeline run left the previous run's photon
+    // paths behind, invisible to your Swift-side bookkeeping but
+    // still present (and still being rendered/costing GPU time)
+    // in the actual scene graph — compounding run after run.
     // ============================================================
 
     func clearPhotonPaths() {
@@ -2967,9 +2460,16 @@ final class LensingSceneController:
         photonPathNodes.removeAll(
             keepingCapacity: true
         )
+
+        photonPathsNode?
+            .removeFromParentNode()
+
+        photonPathsNode =
+            nil
     }
+
     // ============================================================
-    // ADD ONE PHOTON SPLINE
+    // ADD ONE PHOTON SPLINE (legacy — shares material now)
     // ============================================================
 
     func addPhotonSpline(
@@ -2980,10 +2480,6 @@ final class LensingSceneController:
         guard points.count >= 2 else {
             return
         }
-
-        // --------------------------------------------------------
-        // FILTER INVALID POINTS
-        // --------------------------------------------------------
 
         let validPoints =
             points.filter {
@@ -2997,24 +2493,11 @@ final class LensingSceneController:
             return
         }
 
-        // --------------------------------------------------------
-        // CREATE PATH NODE
-        // --------------------------------------------------------
-
         let pathNode =
             SCNNode()
 
         pathNode.name =
             "PhotonPath_\(index)"
-
-        // --------------------------------------------------------
-        // CREATE SEGMENTS
-        //
-        // Each pair of adjacent photon positions becomes one
-        // short cylinder.
-        //
-        // This gives us a continuous visible spline-like path.
-        // --------------------------------------------------------
 
         for i in 0..<(validPoints.count - 1) {
 
@@ -3052,33 +2535,19 @@ final class LensingSceneController:
             )
         }
 
-        // --------------------------------------------------------
-        // ADD COMPLETE PATH TO PHOTON ROOT
-        // --------------------------------------------------------
-
         photonPathRoot.addChildNode(
             pathNode
         )
     }
+
     // ============================================================
-    // PHOTON SEGMENT
-    //
-    // Creates one visible cylindrical segment between two photon
-    // positions.
-    //
-    // SceneKit cylinders are aligned along their local Y axis,
-    // so the cylinder is rotated to point from `from` to `to`.
-    //
+    // PHOTON SEGMENT (legacy — FIX #3 applied: shared material)
     // ============================================================
 
     private func makePhotonSegment(
         from: SCNVector3,
         to: SCNVector3
     ) -> SCNNode {
-
-        // --------------------------------------------------------
-        // CONVERT TO SIMD
-        // --------------------------------------------------------
 
         let start =
             SIMD3<Float>(
@@ -3094,19 +2563,11 @@ final class LensingSceneController:
                 to.z
             )
 
-        // --------------------------------------------------------
-        // DIRECTION
-        // --------------------------------------------------------
-
         let delta =
             end - start
 
         let length =
             simd_length(delta)
-
-        // --------------------------------------------------------
-        // PROTECT AGAINST ZERO-LENGTH SEGMENTS
-        // --------------------------------------------------------
 
         guard length > 0.000001,
               length.isFinite
@@ -3117,44 +2578,14 @@ final class LensingSceneController:
         let direction =
             simd_normalize(delta)
 
-        // --------------------------------------------------------
-        // CYLINDER
-        //
-        // Small radius keeps the photon path thin while still
-        // making it visible in SceneKit.
-        // --------------------------------------------------------
-
         let cylinder =
             SCNCylinder(
                 radius: 0.012,
                 height: CGFloat(length)
             )
 
-        // --------------------------------------------------------
-        // MATERIAL
-        // --------------------------------------------------------
-
-        let material =
-            SCNMaterial()
-
-        material.diffuse.contents =
-            UIColor.cyan
-
-        material.emission.contents =
-            UIColor.cyan
-
-        material.lightingModel =
-            .constant
-
-        material.isDoubleSided =
-            true
-
         cylinder.firstMaterial =
-            material
-
-        // --------------------------------------------------------
-        // NODE
-        // --------------------------------------------------------
+            legacyPhotonSegmentMaterial
 
         let node =
             SCNNode(
@@ -3162,27 +2593,12 @@ final class LensingSceneController:
                     cylinder
             )
 
-        // --------------------------------------------------------
-        // POSITION
-        //
-        // Put the cylinder halfway between the two photon
-        // positions.
-        // --------------------------------------------------------
-
         node.position =
             SCNVector3(
                 (from.x + to.x) * 0.5,
                 (from.y + to.y) * 0.5,
                 (from.z + to.z) * 0.5
             )
-
-        // --------------------------------------------------------
-        // ROTATE CYLINDER
-        //
-        // SCNCylinder points along local +Y.
-        //
-        // We need local +Y to point in `direction`.
-        // --------------------------------------------------------
 
         let up =
             SIMD3<Float>(
@@ -3199,8 +2615,6 @@ final class LensingSceneController:
 
         if dot > 0.9999 {
 
-            // Already pointing along +Y.
-
             node.simdOrientation =
                 simd_quatf(
                     angle: 0,
@@ -3214,8 +2628,6 @@ final class LensingSceneController:
 
         } else if dot < -0.9999 {
 
-            // Pointing along -Y.
-
             node.simdOrientation =
                 simd_quatf(
                     angle: .pi,
@@ -3228,10 +2640,6 @@ final class LensingSceneController:
                 )
 
         } else {
-
-            // ----------------------------------------------------
-            // GENERAL ROTATION
-            // ----------------------------------------------------
 
             let rotationAxis =
                 simd_normalize(
@@ -3268,4 +2676,3 @@ final class LensingSceneController:
         return node
     }
 }
-

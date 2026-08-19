@@ -43,8 +43,6 @@ struct PhotonTraceBatch {
 }
 
 
-import Foundation
-import simd
 
 struct SourceGalaxyStar:
     Identifiable {
