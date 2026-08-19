@@ -296,7 +296,8 @@ struct ContentView:
             if visible {
 
                 scene.displayPhotonPaths(
-                    output.photonPaths
+                    output.photonPaths,
+                    field: output.field
                 )
 
             } else {

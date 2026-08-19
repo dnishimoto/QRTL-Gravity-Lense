@@ -423,7 +423,30 @@ final class QRTLField {
             0.0
         )
     }
+    // =========================================================
+    // SPACETIME CURVATURE HEIGHT (GR EMBEDDING-DIAGRAM ANALOG)
+    //
+    // Shared by the deformed floor mesh (addDeformedSpacetimeSurface)
+    // and photon path rendering (displayPhotonPaths), so photon
+    // splines visually ride the same curved sheet that represents
+    // local spacetime curvature — the classic "rubber sheet" GR
+    // analogy. Evaluated at a point's (x, z); y is ignored on input.
+    // =========================================================
 
+    func spacetimeCurvatureHeight(
+        atXZ position: SIMD3<Float>
+    ) -> Float {
+
+        let base = SIMD3<Float>(position.x, 0, position.z)
+
+        let density = normalizedDensity(at: base)
+        let flow = bolgarinoFlux(at: base)
+        let flowMag = simd_length(flow)
+        let flowNorm = flowMag.isFinite && flowMag > 0 ? min(flowMag / (flowMag + 1), 1.0) : 0.0
+
+        let curvature = 0.65 * density + 0.35 * Float(flowNorm)
+        return curvature.isFinite ? -curvature * 1.0 : 0
+    }
 
     // =========================================================
     // BOLGARINO / QRTL RADIAL FLOW

@@ -217,7 +217,117 @@ final class LensingSceneController:
         addBottomPlaceholder()
         addFrontProjectionPlane(empty: true)
     }
-    
+    // ============================================================
+    // PHOTON PATH → GR SURFACE-RIDING SPLINE
+    //
+    // Converts a raw, per-physics-step polyline (from tracePhoton)
+    // into a smooth spline whose height is pulled toward the same
+    // spacetime-curvature surface used by addDeformedSpacetimeSurface.
+    // The result: paths visibly dip along the curved sheet as they
+    // pass near the mass, rather than only bending via the separate
+    // qrtlLensingAcceleration force in isolation.
+    //
+    // Raw physics traces can be very dense (up to maximumPhotonSteps),
+    // so control points are downsampled before spline fitting —
+    // otherwise Catmull-Rom oversampling would multiply an already
+    // near-continuous path into tens of thousands of vertices.
+    // ============================================================
+
+    private func photonSplinePoints(
+        from rawPath: [SIMD3<Float>],
+        field: QRTLField,
+        maxControlPoints: Int = 60,
+        pointsPerSegment: Int = 6,
+        curvatureRideStrength: Float = 1.0
+    ) -> [SIMD3<Float>] {
+
+        guard rawPath.count >= 2 else {
+            return rawPath
+        }
+
+        // -------------------------------------------------------
+        // DOWNSAMPLE TO CONTROL POINTS
+        // -------------------------------------------------------
+
+        let stride = max(1, rawPath.count / maxControlPoints)
+
+        var controlPoints: [SIMD3<Float>] = rawPath.enumerated()
+            .compactMap { index, point in
+                index % stride == 0 ? point : nil
+            }
+
+        if controlPoints.last != rawPath.last {
+            controlPoints.append(rawPath[rawPath.count - 1])
+        }
+
+        guard controlPoints.count >= 2 else {
+            return rawPath
+        }
+
+        // -------------------------------------------------------
+        // RIDE THE SPACETIME CURVATURE SURFACE
+        //
+        // Superimpose the same curvature dip the floor mesh uses,
+        // on top of the photon's own physics-computed y. Near the
+        // mass, curvature is strongly negative, pulling the path
+        // down toward the sheet; far away, curvature → 0 and the
+        // path reverts to its original trajectory.
+        // -------------------------------------------------------
+
+        let riding: [SIMD3<Double>] = controlPoints.map { point in
+            let surfaceY = field.spacetimeCurvatureHeight(atXZ: point)
+            let blendedY = point.y + surfaceY * curvatureRideStrength
+            return SIMD3<Double>(Double(point.x), Double(blendedY), Double(point.z))
+        }
+
+        // -------------------------------------------------------
+        // SMOOTH WITH CATMULL-ROM SPLINE
+        // -------------------------------------------------------
+
+        let smoothed = CatmullRomSpline.interpolate(
+            points: riding,
+            pointsPerSegment: pointsPerSegment
+        )
+
+        return smoothed.map {
+            SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z))
+        }
+    }
+
+
+    func displayPhotonPaths(
+        _ paths: [[SIMD3<Float>]],
+        field: QRTLField
+    ) {
+
+        clearPhotonPaths()
+
+        let pathsNode = SCNNode()
+        pathsNode.name = "PhotonPaths"
+
+        for path in paths {
+
+            let splinePath = photonSplinePoints(
+                from: path,
+                field: field
+            )
+
+            guard let lineNode = makeLineGeometryNode(
+                from: splinePath,
+                material: photonLineMaterial
+            ) else {
+                continue
+            }
+
+            pathsNode.addChildNode(lineNode)
+        }
+
+        scene.rootNode.addChildNode(pathsNode)
+        photonPathsNode = pathsNode
+    }
+ 
+
+   
     // ========================================================
     // BOTTOM PLACEHOLDER
     //
@@ -336,9 +446,8 @@ final class LensingSceneController:
                 let flowMag = simd_length(flow)
                 let flowNorm = flowMag.isFinite && flowMag > 0 ? min(flowMag / (flowMag + 1), 1.0) : 0.0
                 let curvature = 0.65 * density + 0.35 * Float(flowNorm)
-                let y = curvature.isFinite ? -curvature * 1.0 : 0   // negative: sags "down" like a well
-                // ---
-
+                let y = field.spacetimeCurvatureHeight(atXZ: base)
+             
                 positions.append(SCNVector3(x, y, z))
                 texcoords.append(CGPoint(
                     x: CGFloat(Float(i) / Float(n - 1)),
@@ -639,13 +748,14 @@ final class LensingSceneController:
         // It only displays the paths already calculated.
         // ========================================================
 
+
         if showPhotonPaths {
 
             displayPhotonPaths(
-                output.photonPaths
+                output.photonPaths,
+                field: output.field
             )
         }
-
 
         // ========================================================
         // RENDER PROJECTION
