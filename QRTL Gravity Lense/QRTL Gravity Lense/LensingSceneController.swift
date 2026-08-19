@@ -71,7 +71,7 @@ final class LensingSceneController:
     let bottomY: Float = -5.0
 
     // Make the target substantially larger.
-    let planeHalfExtent: Float = 8.0
+    let planeHalfExtent: Float = 10.0
     let heatmapHalfExtent: Float = 5.0
 
     private var projectionPlaneNode: SCNNode?
