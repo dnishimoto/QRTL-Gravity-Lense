@@ -549,7 +549,6 @@ final class LensingSceneController:
         var paths: [[SIMD3<Float>]] = []
         var hits: [LensingProjectionHit] = []
 
-        // We launch two photons per star → roughly 2× capacity
         traces.reserveCapacity(stars.count * 2)
         hits.reserveCapacity(stars.count * 2)
         if showPaths {
@@ -559,17 +558,17 @@ final class LensingSceneController:
         for star in stars {
 
             // -------------------------------------------------
-            // Photon A and Photon B – start on opposite sides
-            // of the “island” (the central QRTL mass)
+            // Launch TWO photons (A & B) on opposite sides
+            // of the lens so we get two distinct images
             // -------------------------------------------------
             let pair = makePhotonPairDirections(for: star)
 
-            let originsAndDirs: [(SIMD3<Float>, SIMD3<Float>)] = [
-                (star.position, pair.left),   // Photon A – one side
-                (star.position, pair.right)   // Photon B – other side
+            let launches: [(SIMD3<Float>, SIMD3<Float>)] = [
+                (star.position, pair.left),   // Photon A
+                (star.position, pair.right)   // Photon B
             ]
 
-            for (origin, direction) in originsAndDirs {
+            for (origin, direction) in launches {
 
                 let trace = tracePhoton(
                     origin: origin,
@@ -588,20 +587,10 @@ final class LensingSceneController:
                       let projectionPoint = trace.projectionPosition
                 else { continue }
 
-                let projectionCoordinates = SIMD2<Float>(
-                    projectionPoint.y,
-                    projectionPoint.z
-                )
-
-                let sourceCoordinates = SIMD2<Float>(
-                    star.position.y,
-                    star.position.z
-                )
-
                 let hit = LensingProjectionHit(
                     point: projectionPoint,
-                    coordinates: projectionCoordinates,
-                    sourceCoordinates: sourceCoordinates,
+                    coordinates: SIMD2<Float>(projectionPoint.y, projectionPoint.z),
+                    sourceCoordinates: SIMD2<Float>(star.position.y, star.position.z),
                     direction: trace.finalDirection,
                     traveledDistance: trace.traveledDistance,
                     interactionCount: trace.stepCount,
@@ -615,11 +604,7 @@ final class LensingSceneController:
             }
         }
 
-        return PhotonTraceBatch(
-            traces: traces,
-            paths: paths,
-            hits: hits
-        )
+        return PhotonTraceBatch(traces: traces, paths: paths, hits: hits)
     }
     private func projectionPlaneIntersection(
         from start: SIMD3<Float>,
@@ -1149,55 +1134,22 @@ final class LensingSceneController:
 
     private func makePhotonPairDirections(
         for star: SourceGalaxyStar
-    ) -> (
-        left: SIMD3<Float>,
-        right: SIMD3<Float>
-    ) {
+    ) -> (left: SIMD3<Float>, right: SIMD3<Float>) {
 
-        let forward =
-            SIMD3<Float>(
-                1,
-                0,
-                0
-            )
+        let forward = SIMD3<Float>(1, 0, 0)
 
-        let angle =
-            Float.random(
-                in:
-                    -Float.pi...Float.pi
-            )
+        // Random but stable orientation for this star
+        let angle = Float.random(in: -Float.pi ... Float.pi)
+        let transverse = SIMD3<Float>(0, cos(angle), sin(angle))
 
-        let transverse =
-            SIMD3<Float>(
-                0,
-                cos(angle),
-                sin(angle)
-            )
+        // Larger offset → clearer separation of the two images
+        let offset = Float.random(in: 0.12 ... 0.28)
 
-        let offset =
-            Float.random(
-                in:
-                    0.05...0.30
-            )
+        let left  = simd_normalize(forward - transverse * offset)
+        let right = simd_normalize(forward + transverse * offset)
 
-        let left =
-            simd_normalize(
-                forward -
-                transverse * offset
-            )
-
-        let right =
-            simd_normalize(
-                forward +
-                transverse * offset
-            )
-
-        return (
-            left,
-            right
-        )
+        return (left, right)
     }
-
     func removePreviousProjection() {
 
         projectionNode?.removeFromParentNode()

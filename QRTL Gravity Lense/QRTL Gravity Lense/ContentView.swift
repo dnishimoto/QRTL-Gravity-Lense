@@ -378,9 +378,7 @@ struct ContentView:
 
     private func runFullPipeline() {
 
-        guard !isRunning else {
-            return
-        }
+        guard !isRunning else { return }
 
         // ========================================================
         // LOCK PIPELINE
@@ -389,8 +387,7 @@ struct ContentView:
         isRunning = true
         result = nil
 
-        statusMessage =
-            "Starting QRTL lensing pipeline…"
+        statusMessage = "Starting QRTL lensing pipeline…"
 
 
         // ========================================================
@@ -411,10 +408,6 @@ struct ContentView:
 
         // ========================================================
         // CLEAR PER-RUN PIPELINE OUTPUTS
-        //
-        // Safe now — clearDynamic() no longer removes the
-        // cluster/galaxy/bottom plane, only photon paths,
-        // projection plane/hits, and accumulator state.
         // ========================================================
 
         scene.clearDynamic()
@@ -422,10 +415,6 @@ struct ContentView:
 
         // ========================================================
         // CAPTURE SOURCE GALAXY
-        //
-        // The cluster/galaxy were built once in onAppear() and
-        // persist across runs, so no rebuild-guard is needed here
-        // anymore.
         // ========================================================
 
         let sourceStars =
@@ -463,6 +452,7 @@ struct ContentView:
 
         // ========================================================
         // LENSING PARAMETERS
+        // (stronger deflection + wider plane for two clear images)
         // ========================================================
 
         var lensingParameters =
@@ -477,22 +467,30 @@ struct ContentView:
         lensingParameters.maximumPropagationRadius =
             60.0
 
+        // Stronger values so the two photon families separate
         lensingParameters.deflectionStrength =
-            0.01
+            0.35
 
+        lensingParameters.qrtlLensingStrength =
+            0.40
+
+        lensingParameters.qrtlFieldCoupling =
+            8.0
+
+        lensingParameters.maximumPhotonBend =
+            0.12
+
+        // Wider projection plane so fewer hits are clipped
         lensingParameters.projectionDistance =
             10.0
 
         lensingParameters.projectionPlaneHalfExtent =
-            12.0
+            18.0
 
         lensingParameters.magneticPhotonCoupling =
             1.0
 
         lensingParameters.magneticBendingStrength =
-            1.0
-
-        lensingParameters.qrtlFieldCoupling =
             1.0
 
         lensingParameters.currentCoupling =
@@ -512,102 +510,65 @@ struct ContentView:
                 autoreleasepool {
 
                     // =================================================
-                    // STAGE 1
-                    // QRTL EXPERIMENT
+                    // STAGE 1 — QRTL EXPERIMENT
                     // =================================================
 
                     DispatchQueue.main.async {
-
                         self.statusMessage =
                             "Stage 1/4 — calculating QRTL field…"
                     }
 
                     let experiment =
                         QRTLExperiment(
-
-                            mass:
-                                mass,
-
-                            radius:
-                                radius,
-
-                            parameters:
-                                params
+                            mass: mass,
+                            radius: radius,
+                            parameters: params
                         )
 
                     let outcome =
                         experiment.run(
-
                             impactParameter:
-                                0.15 *
-                                PhysicalConstants.solarRadius,
-
+                                0.15 * PhysicalConstants.solarRadius,
                             startDistance:
-                                6.0 *
-                                PhysicalConstants.solarRadius,
-
+                                6.0 * PhysicalConstants.solarRadius,
                             endDistance:
-                                6.0 *
-                                PhysicalConstants.solarRadius,
-
+                                6.0 * PhysicalConstants.solarRadius,
                             stepSize:
-                                0.15 *
-                                PhysicalConstants.solarRadius
+                                0.15 * PhysicalConstants.solarRadius
                         )
 
                     let field =
                         QRTLField(
-
                             massModel:
                                 GaussianMassModel(
-
-                                    totalMass:
-                                        mass,
-
+                                    totalMass: mass,
                                     characteristicRadius:
-                                        max(
-                                            radius,
-                                            0.0001
-                                        )
+                                        max(radius, 0.0001)
                                 ),
-
-                            parameters:
-                                params
+                            parameters: params
                         )
 
 
                     // =================================================
-                    // STAGE 2
-                    // SOURCE GALAXY PHOTONS
+                    // STAGE 2 — SOURCE GALAXY PHOTONS
                     // =================================================
 
                     DispatchQueue.main.async {
-
                         self.statusMessage =
                             "Stage 2/4 — tracing galaxy photons…"
                     }
 
                     let photonBatch =
                         self.scene.traceSourceGalaxy(
-
-                            stars:
-                                sourceStars,
-
-                            field:
-                                field,
-
-                            parameters:
-                                lensingParameters,
-
-                            showPaths:
-                                showPaths
+                            stars: sourceStars,
+                            field: field,
+                            parameters: lensingParameters,
+                            showPaths: showPaths
                         )
 
                     let projection =
                         LensingProjectionResult.calculate(
-
-                            from:
-                                photonBatch.hits
+                            from: photonBatch.hits
                         )
 
 
@@ -616,73 +577,38 @@ struct ContentView:
                     // =================================================
 
                     DispatchQueue.main.async {
-
                         self.statusMessage =
                             "Stage 3/4 — preparing projection scene…"
                     }
 
                     let output =
                         LensingPipelineOutput(
-
-                            experimentResult:
-                                outcome,
-
-                            field:
-                                field,
-
-                            photonTraces:
-                                photonBatch.traces,
-
-                            photonPaths:
-                                photonBatch.paths,
-
-                            photonHits:
-                                photonBatch.hits,
-
-                            projection:
-                                projection,
-
-                            tracedPhotonCount:
-                                photonBatch.traces.count,
-
-                            successfulProjectionHits:
-                                photonBatch.hits.count
+                            experimentResult: outcome,
+                            field: field,
+                            photonTraces: photonBatch.traces,
+                            photonPaths: photonBatch.paths,
+                            photonHits: photonBatch.hits,
+                            projection: projection,
+                            tracedPhotonCount: photonBatch.traces.count,
+                            successfulProjectionHits: photonBatch.hits.count
                         )
 
 
                     // =================================================
-                    // COMPUTE HEATMAP IMAGE (FIX #4)
-                    //
-                    // This is pure CPU/Core Graphics work — sampling
-                    // field.qrtlLensingStrength(at:direction:) at every
-                    // pixel and rasterizing into a UIImage. It touches
-                    // no SceneKit objects, so it's safe to run here on
-                    // the background queue, alongside the photon
-                    // tracing above, instead of blocking the main
-                    // thread the way the old updateBottomHeatmap(field:)
-                    // call (invoked from inside the Stage 4 main.async
-                    // block) used to.
+                    // COMPUTE HEATMAP IMAGE (background)
                     // =================================================
 
                     let heatmapImage =
                         QRTLHeatmapGenerator.makeHeatmapImage(
-
-                            field:
-                                field,
-
-                            size:
-                                128,
-
+                            field: field,
+                            size: 128,
                             halfExtent:
-                                Double(
-                                    self.scene.heatmapHalfExtent
-                                )
+                                Double(self.scene.heatmapHalfExtent)
                         )
 
 
                     // =================================================
-                    // STAGE 4
-                    // RENDER
+                    // STAGE 4 — RENDER (main thread)
                     // =================================================
 
                     DispatchQueue.main.async {
@@ -691,35 +617,22 @@ struct ContentView:
                             "Stage 4/4 — rendering projection…"
 
                         self.scene.renderPipelineOutput(
-
                             output,
-
-                            showPhotonPaths:
-                                showPaths
+                            showPhotonPaths: showPaths
                         )
-
-                        // =============================================
-                        // APPLY PRECOMPUTED HEATMAP (FIX #4)
-                        //
-                        // Only the SceneKit mutation happens here, on
-                        // main — the expensive sampling already
-                        // happened above, off the main thread.
-                        // =============================================
 
                         self.scene.applyBottomHeatmap(
                             heatmapImage
                         )
 
-                        self.result =
-                            outcome
+                        self.result = outcome
 
                         self.statusMessage =
                             "Projection complete — " +
                             "\(output.successfulProjectionHits) photon hits, " +
                             "\(output.photonPaths.count) photon paths"
 
-                        self.isRunning =
-                            false
+                        self.isRunning = false
                     }
                 }
             }
@@ -730,12 +643,9 @@ struct ContentView:
         // ========================================================
 
         DispatchQueue.global(
-            qos:
-                .userInitiated
-        )
-        .async(
-            execute:
-                physicsWorkItem
+            qos: .userInitiated
+        ).async(
+            execute: physicsWorkItem
         )
     }
 }
