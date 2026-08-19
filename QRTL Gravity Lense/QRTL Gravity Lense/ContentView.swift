@@ -621,8 +621,15 @@ struct ContentView:
                             showPhotonPaths: showPaths
                         )
 
-                        self.scene.applyBottomHeatmap(
-                            heatmapImage
+                        // CHANGED: replaces the old flat
+                        // applyBottomHeatmap(heatmapImage) call.
+                        // Uses the same `field` computed in Stage 1
+                        // to deform the surface mesh (mass density +
+                        // QRTL/Bolgarino flux), then textures it with
+                        // the same heatmap image as before.
+                        self.scene.addDeformedSpacetimeSurface(
+                            field: field,
+                            heatmap: heatmapImage
                         )
 
                         self.result = outcome

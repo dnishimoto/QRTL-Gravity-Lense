@@ -217,8 +217,171 @@ final class LensingSceneController:
         addBottomPlaceholder()
         addFrontProjectionPlane(empty: true)
     }
+    
+    // ========================================================
+    // BOTTOM PLACEHOLDER
+    //
+    // Flat, undeformed plane used before any QRTLField exists
+    // (initial .onAppear, and reset()). Once a pipeline run
+    // completes, addDeformedSpacetimeSurface(field:heatmap:)
+    // replaces this node with the real deformed mesh — see
+    // runFullPipeline() Stage 4.
+    // ========================================================
 
+    func addBottomPlaceholder() {
 
+        bottomPlaneNode?.removeFromParentNode()
+
+        let size =
+            heatmapHalfExtent *
+            2.0
+
+        let plane =
+            SCNPlane(
+                width:
+                    CGFloat(size),
+
+                height:
+                    CGFloat(size)
+            )
+
+        let material =
+            SCNMaterial()
+
+        material.diffuse.contents =
+            UIColor(
+                white:
+                    0.07,
+
+                alpha:
+                    0.9
+            )
+
+        material.emission.contents =
+            UIColor(
+                white:
+                    0.02,
+
+                alpha:
+                    0.4
+            )
+
+        material.isDoubleSided =
+            true
+
+        plane.materials =
+            [material]
+
+        let node =
+            SCNNode(
+                geometry:
+                    plane
+            )
+
+        node.position =
+            SCNVector3(
+                0,
+                bottomY,
+                0
+            )
+
+        node.eulerAngles.x =
+            -.pi / 2
+
+        scene.rootNode.addChildNode(
+            node
+        )
+
+        bottomPlaneNode =
+            node
+    }
+
+    // ========================================================
+    // DEFORMED SPACETIME SURFACE
+    //
+    // Replaces the flat SCNPlane bottom placeholder with an
+    // actual curved-sheet mesh, ported from
+    // QRTLGravitySurfaceView.makeSurfaceGeometry(). Vertex height
+    // (y) is driven by mass density + QRTL/Bolgarino flux, so the
+    // surface visibly deforms under the globular cluster mass and
+    // the QRTL field's own gravity-like force.
+    // ========================================================
+
+    func addDeformedSpacetimeSurface(
+        field: QRTLField,
+        heatmap: UIImage? = nil
+    ) {
+
+        bottomPlaneNode?.removeFromParentNode()
+
+        let n = resolution > 4 ? min(resolution, 96) : 48   // grid density; capped for perf
+        let extent = heatmapHalfExtent
+
+        var positions: [SCNVector3] = []
+        var texcoords: [CGPoint] = []
+        var indices: [Int32] = []
+
+        let start = -extent
+        let step = (2 * extent) / Float(n - 1)
+
+        for j in 0..<n {
+            for i in 0..<n {
+                let x = start + Float(i) * step
+                let z = start + Float(j) * step
+                let base = SIMD3<Float>(x, 0, z)
+
+                // --- CORE LOGIC FOR SPACETIME CURVATURE (from QRTLGravitySurfaceView) ---
+                let density = field.normalizedDensity(at: base)
+                let flow = field.bolgarinoFlux(at: base)
+                let flowMag = simd_length(flow)
+                let flowNorm = flowMag.isFinite && flowMag > 0 ? min(flowMag / (flowMag + 1), 1.0) : 0.0
+                let curvature = 0.65 * density + 0.35 * Float(flowNorm)
+                let y = curvature.isFinite ? -curvature * 1.0 : 0   // negative: sags "down" like a well
+                // ---
+
+                positions.append(SCNVector3(x, y, z))
+                texcoords.append(CGPoint(
+                    x: CGFloat(Float(i) / Float(n - 1)),
+                    y: CGFloat(Float(j) / Float(n - 1))
+                ))
+            }
+        }
+
+        for j in 0..<(n - 1) {
+            for i in 0..<(n - 1) {
+                let idx = Int32(j * n + i)
+                indices.append(contentsOf: [
+                    idx, idx + 1, idx + Int32(n),
+                    idx + 1, idx + 1 + Int32(n), idx + Int32(n)
+                ])
+            }
+        }
+
+        let posSource = SCNGeometrySource(vertices: positions)
+        let uvSource = SCNGeometrySource(textureCoordinates: texcoords)
+        let element = SCNGeometryElement(indices: indices, primitiveType: .triangles)
+        let geometry = SCNGeometry(sources: [posSource, uvSource], elements: [element])
+
+        let material = SCNMaterial()
+        material.isDoubleSided = true
+        if let heatmap {
+            material.diffuse.contents = heatmap
+            material.emission.contents = heatmap
+            material.lightingModel = .constant
+        } else {
+            material.diffuse.contents = UIColor(white: 0.07, alpha: 0.9)
+            material.emission.contents = UIColor(white: 0.02, alpha: 0.4)
+        }
+        geometry.materials = [material]
+
+        let node = SCNNode(geometry: geometry)
+        node.position = SCNVector3(frontPlaneX * 0.5, bottomY, 0)
+        node.name = "DeformedSpacetimeSurface"
+        scene.rootNode.addChildNode(node)
+        bottomPlaneNode = node
+    }
+
+  
     // ============================================================
     // POINT-CLOUD STAR FIELD HELPER (FIX #2)
     //
@@ -1839,77 +2002,7 @@ final class LensingSceneController:
         return image
     }
 
-    // ========================================================
-    // BOTTOM PLACEHOLDER
-    // ========================================================
-
-    func addBottomPlaceholder() {
-
-        bottomPlaneNode?.removeFromParentNode()
-
-        let size =
-            heatmapHalfExtent *
-            2.0
-
-        let plane =
-            SCNPlane(
-                width:
-                    CGFloat(size),
-
-                height:
-                    CGFloat(size)
-            )
-
-        let material =
-            SCNMaterial()
-
-        material.diffuse.contents =
-            UIColor(
-                white:
-                    0.07,
-
-                alpha:
-                    0.9
-            )
-
-        material.emission.contents =
-            UIColor(
-                white:
-                    0.02,
-
-                alpha:
-                    0.4
-            )
-
-        material.isDoubleSided =
-            true
-
-        plane.materials =
-            [material]
-
-        let node =
-            SCNNode(
-                geometry:
-                    plane
-            )
-
-        node.position =
-            SCNVector3(
-                0,
-                bottomY,
-                0
-            )
-
-        node.eulerAngles.x =
-            -.pi / 2
-
-        scene.rootNode.addChildNode(
-            node
-        )
-
-        bottomPlaneNode =
-            node
-    }
+ 
 
 
     // ========================================================
