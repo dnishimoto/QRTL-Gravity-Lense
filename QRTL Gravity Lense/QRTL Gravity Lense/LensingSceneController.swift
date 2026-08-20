@@ -267,7 +267,115 @@ final class LensingSceneController:
             entity
         )
     }
-   
+    func verifyPhotonPipeline(
+        photonResults: [PhotonTraceResult],
+        photonsCreated: Int
+    ) -> PhotonPipelineVerification {
+
+        var photonsTraced = 0
+        var photonsReachedProjectionPlane = 0
+        var photonsWithCurvedPaths = 0
+        var totalPathPoints = 0
+
+        var maximumDeflection: Float = 0.0
+        var maximumQRTLInfluence: Float = 0.0
+
+        for result in photonResults {
+
+            photonsTraced += 1
+
+            totalPathPoints += result.positions.count
+
+            maximumQRTLInfluence = max(
+                maximumQRTLInfluence,
+                result.maximumQRTLInfluence
+            )
+
+            // ----------------------------------------------------
+            // Determine total photon deflection from the path.
+            //
+            // Compare the initial direction of the photon with
+            // its final direction after QRTL/gravitational bending.
+            // ----------------------------------------------------
+
+            if result.positions.count >= 2 {
+
+                let start =
+                    result.positions[1] -
+                    result.positions[0]
+
+                let initialDirection =
+                    simd_normalize(start)
+
+                let finalDirection =
+                    simd_normalize(result.finalDirection)
+
+                if simd_length(initialDirection) > 0.0 &&
+                   simd_length(finalDirection) > 0.0 {
+
+                    let dotValue =
+                        simd_dot(
+                            initialDirection,
+                            finalDirection
+                        )
+
+                    let clampedDot =
+                        max(
+                            -1.0,
+                            min(1.0, dotValue)
+                        )
+
+                    let deflection =
+                        acos(clampedDot)
+
+                    maximumDeflection =
+                        max(
+                            maximumDeflection,
+                            deflection
+                        )
+
+                    if deflection > 0.000001 {
+                        photonsWithCurvedPaths += 1
+                    }
+                }
+            }
+
+            // ----------------------------------------------------
+            // Projection-plane verification.
+            //
+            // hitProjection is the authoritative result from
+            // the photon tracer that the photon reached the
+            // target projection plane.
+            // ----------------------------------------------------
+
+            if result.hitProjection {
+                photonsReachedProjectionPlane += 1
+            }
+        }
+
+        return PhotonPipelineVerification(
+            photonsCreated:
+                photonsCreated,
+
+            photonsTraced:
+                photonsTraced,
+
+            photonsReachedProjectionPlane:
+                photonsReachedProjectionPlane,
+
+            photonsWithCurvedPaths:
+                photonsWithCurvedPaths,
+
+            totalPathPoints:
+                totalPathPoints,
+
+            maximumDeflection:
+                maximumDeflection,
+
+            maximumQRTLInfluence:
+                maximumQRTLInfluence
+        )
+    }
     // ============================================================
     // EINSTEIN LENS MASS PROFILE
     // ============================================================
@@ -1492,16 +1600,23 @@ final class LensingSceneController:
 
     func traceSourceGalaxy(
         field: QRTLField,
-        parameters: LensingParameters
+        parameters: LensingParameters,
+        progress: ((PhotonTraceProgress) -> Void)? = nil
     ) -> PhotonTraceBatch {
 
-        let tracer = QRTLPhotonTracer(
-            field: field
-        )
+        let tracer =
+            QRTLPhotonTracer(
+                field: field
+            )
 
-        var traces: [PhotonTraceResult] = []
-        var paths: [[SIMD3<Float>]] = []
-        var hits: [LensingProjectionHit] = []
+        var traces:
+            [PhotonTraceResult] = []
+
+        var paths:
+            [[SIMD3<Float>]] = []
+
+        var hits:
+            [LensingProjectionHit] = []
 
         traces.reserveCapacity(
             sourceGalaxyStars.count
@@ -1515,46 +1630,140 @@ final class LensingSceneController:
             sourceGalaxyStars.count
         )
 
-        for (sourceID, star) in sourceGalaxyStars.enumerated() {
+        // ============================================================
+        // PROGRESS ACCUMULATION
+        // ============================================================
 
-            let origin = SIMD3<Float>(
-                star.position.x,
-                star.position.y,
-                star.position.z
+        var totalPathPoints = 0
+
+        var maximumQRTLInfluence:
+            Float = 0.0
+
+        let totalPhotons =
+            sourceGalaxyStars.count
+
+        // ============================================================
+        // TRACE EVERY SOURCE GALAXY STAR
+        // ============================================================
+
+        for (sourceID, star)
+            in sourceGalaxyStars.enumerated() {
+
+            // --------------------------------------------------------
+            // PHOTON ORIGIN
+            // --------------------------------------------------------
+
+            let origin =
+                SIMD3<Float>(
+                    star.position.x,
+                    star.position.y,
+                    star.position.z
+                )
+
+            // --------------------------------------------------------
+            // INITIAL PHOTON DIRECTION
+            //
+            // Photons travel from the source galaxy toward
+            // the QRTL lens along +X.
+            // --------------------------------------------------------
+
+            let direction =
+                SIMD3<Float>(
+                    1.0,
+                    0.0,
+                    0.0
+                )
+
+            // --------------------------------------------------------
+            // TRACE PHOTON THROUGH QRTL FIELD
+            // --------------------------------------------------------
+
+            let trace =
+                tracer.tracePhoton(
+                    origin: origin,
+                    direction: direction,
+                    parameters: parameters
+                )
+
+            // --------------------------------------------------------
+            // STORE TRACE
+            // --------------------------------------------------------
+
+            traces.append(
+                trace
             )
 
-            let direction = SIMD3<Float>(
-                1.0,
-                0.0,
-                0.0
-            )
-
-            // QRTLPhotonTracer already contains `field`.
-            let trace = tracer.tracePhoton(
-                origin: origin,
-                direction: direction,
-                parameters: parameters
-            )
-
-            traces.append(trace)
+            // --------------------------------------------------------
+            // STORE COMPLETE PHOTON PATH
+            // --------------------------------------------------------
 
             paths.append(
                 trace.positions
             )
 
-            if let hit = makeProjectionHit(
-                from: trace,
-                sourceID: sourceID,
-                parameters: parameters
-            ) {
-                hits.append(hit)
+            totalPathPoints +=
+                trace.positions.count
+
+            // --------------------------------------------------------
+            // TRACK MAXIMUM QRTL INFLUENCE
+            // --------------------------------------------------------
+
+            maximumQRTLInfluence =
+                max(
+                    maximumQRTLInfluence,
+                    trace.maximumQRTLInfluence
+                )
+
+            // --------------------------------------------------------
+            // CHECK PROJECTION PLANE
+            // --------------------------------------------------------
+
+            if let hit =
+                makeProjectionHit(
+                    from: trace,
+                    sourceID: sourceID,
+                    parameters: parameters
+                ) {
+
+                hits.append(
+                    hit
+                )
             }
+
+            // ========================================================
+            // REPORT LIVE PROGRESS
+            // ========================================================
+
+            progress?(
+                PhotonTraceProgress(
+                    total:
+                        totalPhotons,
+
+                    completed:
+                        sourceID + 1,
+
+                    pathPoints:
+                        totalPathPoints,
+
+                    maximumQRTLInfluence:
+                        maximumQRTLInfluence
+                )
+            )
         }
 
+        // ============================================================
+        // RETURN COMPLETE PHOTON TRACE BATCH
+        // ============================================================
+
         return PhotonTraceBatch(
-            traces: traces,
-            paths: paths,
-            hits: hits
+            traces:
+                traces,
+
+            paths:
+                paths,
+
+            hits:
+                hits
         )
     }
     private func makeProjectionHit(

@@ -9,8 +9,48 @@ import Foundation
 import simd
 import SceneKit
 import SwiftUI
+struct PhotonTraceProgress {
 
+    let total: Int
+    let completed: Int
+    let pathPoints: Int
+    let maximumQRTLInfluence: Float
+}
+struct PhotonPipelineVerification {
 
+    let photonsCreated: Int
+    let photonsTraced: Int
+    let photonsReachedProjectionPlane: Int
+    let photonsWithCurvedPaths: Int
+
+    let totalPathPoints: Int
+    let maximumDeflection: Float
+    let maximumQRTLInfluence: Float
+
+    var creationVerified: Bool {
+        photonsCreated > 0
+    }
+
+    var tracingVerified: Bool {
+        photonsTraced > 0
+    }
+
+    var curvatureVerified: Bool {
+        photonsWithCurvedPaths > 0 &&
+        maximumDeflection > 0
+    }
+
+    var projectionVerified: Bool {
+        photonsReachedProjectionPlane > 0
+    }
+
+    var complete: Bool {
+        creationVerified &&
+        tracingVerified &&
+        curvatureVerified &&
+        projectionVerified
+    }
+}
 // ============================================================
 // PHOTON TRACE BATCH
 //
