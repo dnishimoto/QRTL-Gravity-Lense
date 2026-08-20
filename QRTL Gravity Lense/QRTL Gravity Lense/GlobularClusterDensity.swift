@@ -65,6 +65,77 @@ final class GlobularClusterDensityMap:
         Float
 
     // ========================================================
+    // GRAVITY MEASUREMENT (per-star mass)
+    // ========================================================
+    //
+    // starCount:
+    //     Total number of source stars in the cluster.
+    //
+    // perStarMassKg:
+    //     totalMass / starCount
+    //
+    //     10^6 solar masses, divided evenly across every star
+    //     in the distribution. This is the mass figure that
+    //     actually sources the gravity surface: each occupied
+    //     CA cell contributes (stars in cell) * perStarMassKg.
+    // ========================================================
+
+    var starCount:
+        Int {
+
+        positions.count
+    }
+
+    var perStarMassKg:
+        Float {
+
+        guard
+            starCount > 0,
+            totalMass.isFinite
+        else {
+            return 0.0
+        }
+
+        let value =
+            totalMass /
+            Float(starCount)
+
+        guard value.isFinite
+        else {
+            return 0.0
+        }
+
+        return max(
+            value,
+            0.0
+        )
+    }
+
+    var perStarMassSolar:
+        Float {
+
+        perStarMassKg /
+        Self.solarMassKg
+    }
+
+    /// Human-readable gravity measurement for the cluster —
+    /// total mass, star count, and the resulting per-star mass
+    /// that sources the gravity surface.
+    var gravityMeasurementReport:
+        String {
+
+        let totalSolar =
+            totalMass /
+            Self.solarMassKg
+
+        return
+            "Globular Cluster Gravity Measurement\n" +
+            "  Total mass:     \(totalSolar) M☉  (\(totalMass) kg)\n" +
+            "  Star count:     \(starCount)\n" +
+            "  Mass per star:  \(perStarMassSolar) M☉  (\(perStarMassKg) kg)"
+    }
+
+    // ========================================================
     // CELLULAR-AUTOMATA GRID
     // ========================================================
 
@@ -345,28 +416,48 @@ final class GlobularClusterDensityMap:
         at position: SIMD3<Float>
     ) -> Float {
 
-        let caDensity =
+        // ----------------------------------------------------
+        // STARS OCCUPYING THIS CELL
+        // ----------------------------------------------------
+        //
+        // density(at:) returns the raw CA count — one unit per
+        // source star that landed in this cell.
+        // ----------------------------------------------------
+
+        let starsInCell =
             density(
                 at:
                     position
             )
 
-        let normalization =
-            integratedDensity
-
         guard
-            caDensity.isFinite,
-            normalization.isFinite,
-            normalization > 0.0,
-            totalMass.isFinite
+            starsInCell.isFinite,
+            starsInCell > 0.0,
+            perStarMassKg.isFinite,
+            cellVolume.isFinite,
+            cellVolume > 0.0
         else {
             return 0.0
         }
 
+        // ----------------------------------------------------
+        // GRAVITY MEASUREMENT APPLIED
+        // ----------------------------------------------------
+        //
+        // Each star contributes exactly perStarMassKg
+        // (= totalMass / starCount). The cell's physical mass
+        // is (stars in cell) * perStarMassKg, and dividing by
+        // the cell volume gives the physical mass density that
+        // sources the gravity surface.
+        // ----------------------------------------------------
+
+        let cellMass =
+            starsInCell *
+            perStarMassKg
+
         let physicalDensity =
-            caDensity *
-            totalMass /
-            normalization
+            cellMass /
+            cellVolume
 
         guard physicalDensity.isFinite
         else {

@@ -111,6 +111,18 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
 
     func buildScene() {
+
+        // ----------------------------------------------------
+        // OUTPUT GRAVITY MEASUREMENT
+        // ----------------------------------------------------
+        //
+        // 10^6 solar masses / star count = mass per star.
+        // This is the mass figure now driving every occupied
+        // cell's contribution to the gravity surface below.
+        // ----------------------------------------------------
+
+        print(field.gravityMeasurementReport)
+
         childNodes.forEach { $0.removeFromParentNode() }
 
         surfaceNode = nil

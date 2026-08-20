@@ -1,3 +1,7 @@
+
+
+
+
 //
 //  QRTLField.swift
 //  QRTL Gravity Lense
@@ -81,6 +85,30 @@ final class QRTLField {
             densitySource.maximumDensity,
             0.000001
         )
+    }
+
+    // ========================================================
+    // GRAVITY MEASUREMENT (per-star mass)
+    // ========================================================
+    //
+    // Pass-through to the density source's per-star mass
+    // measurement: 10^6 solar masses / star count. This is the
+    // figure that actually sources the gravity surface.
+    // ========================================================
+
+    var perStarMassKg: Float {
+        densitySource.perStarMassKg
+    }
+
+    var starCount: Int {
+        densitySource.starCount
+    }
+
+    var gravityMeasurementReport: String {
+        "Globular Cluster Gravity Measurement\n" +
+        "  Total mass:     \(clusterMassKg / solarMassKg) M☉  (\(clusterMassKg) kg)\n" +
+        "  Star count:     \(starCount)\n" +
+        "  Mass per star:  \(perStarMassKg / solarMassKg) M☉  (\(perStarMassKg) kg)"
     }
     // ============================================================
     // EINSTEIN SPACETIME CURVATURE HEIGHT
@@ -1186,4 +1214,6 @@ final class QRTLField {
         return acceleration / length
     }
 }
+
+
 

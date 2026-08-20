@@ -210,6 +210,26 @@ protocol GlobularClusterDensitySource {
     var integratedDensity: Float { get }
 
     var fieldRadiusMeters: Float { get }
+
+    // ========================================================
+    // GRAVITY MEASUREMENT (per-star mass)
+    // ========================================================
+    //
+    // starCount:
+    //     Number of discrete stars sourcing the cluster.
+    //
+    // perStarMassKg:
+    //     totalMass / starCount
+    //
+    //     This is the mass assigned to each individual star,
+    //     which is what actually sources the gravity surface —
+    //     every occupied CA cell's physical mass is
+    //     (stars in cell) * perStarMassKg.
+    // ========================================================
+
+    var starCount: Int { get }
+
+    var perStarMassKg: Float { get }
 }
 struct ControlsSheet:
     View {
