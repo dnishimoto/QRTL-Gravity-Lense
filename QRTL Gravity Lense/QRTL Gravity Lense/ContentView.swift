@@ -298,7 +298,6 @@ struct ContentView: View {
 
             scene.addSourceGalaxy()
 
-            scene.addBottomPlaceholder()
 
             runFullPipeline()
         }
@@ -318,17 +317,7 @@ struct ContentView: View {
                 return
             }
 
-            if visible {
-
-                scene.displayPhotonPaths(
-                    output.photonPaths,
-                    field: output.field
-                )
-
-            } else {
-
-                scene.clearPhotonPaths()
-            }
+            if visible { scene.displayPhotonPaths( output.photonPaths ) } else { scene.clearPhotonPaths() }
         }
     }
 
@@ -682,11 +671,6 @@ struct ContentView: View {
 
         scene.addSourceGalaxy()
 
-        scene.addFrontProjectionPlane(
-            empty: true
-        )
-
-        scene.addBottomPlaceholder()
     }
 
     // ============================================================

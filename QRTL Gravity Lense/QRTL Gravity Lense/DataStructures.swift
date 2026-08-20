@@ -878,22 +878,67 @@ struct LensingProjectionResult {
 
 enum PhysicalConstants {
 
-    static let G = 6.67430e-11
+    // ============================================================
+    // MARK: - FUNDAMENTAL PHYSICAL CONSTANTS
+    // ============================================================
 
-    static let c = 299_792_458.0
+    /// Newtonian gravitational constant (m³ kg⁻¹ s⁻²)
+    static let G: Double =
+        6.67430e-11
 
-    static let epsilon0 = 8.8541878128e-12
+    /// Speed of light in vacuum (m/s)
+    static let speedOfLight: Double =
+        299_792_458.0
 
-    static let mu0 = 1.25663706212e-6
+    /// Alias retained for newer metric calculations.
+    static let c: Double =
+        speedOfLight
 
-    static let solarMass = 1.98847e30
+    /// Vacuum permittivity (F/m)
+    static let epsilon0: Double =
+        8.8541878128e-12
 
-    static let solarRadius = 6.957e8
+    /// Vacuum permeability (H/m)
+    static let mu0: Double =
+        1.25663706212e-6
 
-    static let radiansToArcseconds =
+    // ============================================================
+    // MARK: - ASTRONOMICAL CONSTANTS
+    // ============================================================
+
+    /// Solar mass (kg)
+    static let solarMass: Double =
+        1.98847e30
+
+    /// Solar radius (m)
+    static let solarRadius: Double =
+        6.957e8
+
+    // ============================================================
+    // MARK: - DERIVED RELATIVISTIC CONSTANTS
+    // ============================================================
+
+    /// Speed of light squared (m²/s²)
+    static let cSquared: Double =
+        speedOfLight * speedOfLight
+
+    /// Schwarzschild radius of one solar mass (m)
+    ///
+    /// rₛ = 2GM☉ / c²
+    static let solarSchwarzschildRadius: Double =
+        2.0 *
+        G *
+        solarMass /
+        cSquared
+
+    // ============================================================
+    // MARK: - ANGULAR CONVERSION
+    // ============================================================
+
+    /// Radians → arcseconds
+    static let radiansToArcseconds: Double =
         206_264.80624709636
 }
-
 // ============================================================
 // NUMERICAL UTILITIES
 // ============================================================

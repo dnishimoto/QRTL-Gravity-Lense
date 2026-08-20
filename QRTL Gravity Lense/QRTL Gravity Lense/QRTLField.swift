@@ -57,13 +57,15 @@ final class QRTLField {
         Float(PhysicalConstants.G)
     }
 
-    private var speedOfLight: Float {
-        Float(PhysicalConstants.c)
-    }
+  
+    private let speedOfLight: Double =
+        299_792_458.0
+
+ 
 
     private var speedOfLightSquared: Float {
         let c = speedOfLight
-        return max(c * c, 1.0)
+        return Float(max(c * c, 1.0))
     }
 
     // ========================================================
@@ -165,6 +167,393 @@ final class QRTLField {
 
         return scale
     }
+
+  
+    func inverseSpacetimeMetric(
+        at position: SIMD3<Float>
+    ) -> simd_double4x4 {
+
+        let metric =
+            spacetimeMetric(
+                at: position
+            )
+
+        return simd_inverse(metric)
+    }
+ 
+
+
+    // ============================================================
+    // MARK: - SPACETIME METRIC gμν
+    // ============================================================
+    //
+    // Coordinates:
+    //
+    //     x⁰ = ct
+    //     x¹ = x
+    //     x² = y
+    //     x³ = z
+    //
+    // Weak-field isotropic metric:
+    //
+    //     g₀₀ = -(1 + 2Φ/c²)
+    //     gᵢᵢ =  (1 - 2Φ/c²)
+    //
+    // Signature:
+    //
+    //     (-,+,+,+)
+    //
+    // The metric describes the local spacetime geometry generated
+    // by the QRTL gravitational potential.
+    //
+    // The photon should ultimately respond to this geometry through
+    // the Christoffel symbols and the null-geodesic equation.
+    //
+    // ============================================================
+
+    func spacetimeMetric(
+        at position: SIMD3<Float>
+    ) -> simd_double4x4 {
+
+        // --------------------------------------------------------
+        // GRAVITATIONAL POTENTIAL
+        // --------------------------------------------------------
+
+        let potential =
+            Double(
+                gravitationalPotential(
+                    at: position
+                )
+            )
+
+        // --------------------------------------------------------
+        // SPEED OF LIGHT
+        // --------------------------------------------------------
+
+        let c =
+            PhysicalConstants.c
+
+        let cSquared =
+            c * c
+
+        // --------------------------------------------------------
+        // WEAK-FIELD METRIC FACTOR
+        // --------------------------------------------------------
+        //
+        //     2Φ/c²
+        //
+        // This is dimensionless.
+        //
+        // --------------------------------------------------------
+
+        let twoPhiOverC2 =
+            2.0 *
+            potential /
+            cSquared
+
+        // --------------------------------------------------------
+        // TEMPORAL COMPONENT
+        // --------------------------------------------------------
+        //
+        //     g₀₀ = -(1 + 2Φ/c²)
+        //
+        // --------------------------------------------------------
+
+        let g00 =
+            -(1.0 + twoPhiOverC2)
+
+        // --------------------------------------------------------
+        // SPATIAL COMPONENTS
+        // --------------------------------------------------------
+        //
+        //     gxx = gyy = gzz
+        //
+        // --------------------------------------------------------
+
+        let spatialScale =
+            1.0 - twoPhiOverC2
+
+        // --------------------------------------------------------
+        // COLUMN 0
+        //
+        // g₀₀
+        // g₁₀
+        // g₂₀
+        // g₃₀
+        // --------------------------------------------------------
+
+        let column0 =
+            SIMD4<Double>(
+                g00,
+                0.0,
+                0.0,
+                0.0
+            )
+
+        // --------------------------------------------------------
+        // COLUMN 1
+        //
+        // g₀₁
+        // g₁₁
+        // g₂₁
+        // g₃₁
+        // --------------------------------------------------------
+
+        let column1 =
+            SIMD4<Double>(
+                0.0,
+                spatialScale,
+                0.0,
+                0.0
+            )
+
+        // --------------------------------------------------------
+        // COLUMN 2
+        //
+        // g₀₂
+        // g₁₂
+        // g₂₂
+        // g₃₂
+        // --------------------------------------------------------
+
+        let column2 =
+            SIMD4<Double>(
+                0.0,
+                0.0,
+                spatialScale,
+                0.0
+            )
+
+        // --------------------------------------------------------
+        // COLUMN 3
+        //
+        // g₀₃
+        // g₁₃
+        // g₂₃
+        // g₃₃
+        // --------------------------------------------------------
+
+        let column3 =
+            SIMD4<Double>(
+                0.0,
+                0.0,
+                0.0,
+                spatialScale
+            )
+
+        // --------------------------------------------------------
+        // BUILD METRIC
+        //
+        // simd_double4x4 is column-major.
+        // --------------------------------------------------------
+
+        return simd_double4x4(
+            columns: (
+                column0,
+                column1,
+                column2,
+                column3
+            )
+        )
+    }
+
+    // ============================================================
+    // MARK: - METRIC DERIVATIVE ∂gμν / ∂xᵃ
+    // ============================================================
+    //
+    // coordinate:
+    //
+    //     0 = ct
+    //     1 = x
+    //     2 = y
+    //     3 = z
+    //
+    // The current QRTL cluster is static, so:
+    //
+    //     ∂gμν / ∂(ct) = 0
+    //
+    // Spatial derivatives are calculated using a centered finite
+    // difference:
+    //
+    //     ∂g/∂xᵃ ≈ [g(x+h) - g(x-h)] / (2h)
+    //
+    // ============================================================
+
+    func metricDerivative(
+        at position: SIMD3<Float>,
+        coordinate: Int
+    ) -> simd_double4x4 {
+
+        // --------------------------------------------------------
+        // FINITE-DIFFERENCE STEP
+        // --------------------------------------------------------
+
+        let radius =
+            simd_length(position)
+
+        let h =
+            max(
+                1.0,
+                Double(radius) * 1.0e-5
+            )
+
+        // --------------------------------------------------------
+        // TIME COORDINATE
+        // --------------------------------------------------------
+        //
+        // Static gravitational field:
+        //
+        //     ∂gμν / ∂(ct) = 0
+        //
+        // --------------------------------------------------------
+
+        guard coordinate >= 1 && coordinate <= 3 else {
+
+            let zero0 =
+                SIMD4<Double>(
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                )
+
+            let zero1 =
+                SIMD4<Double>(
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                )
+
+            let zero2 =
+                SIMD4<Double>(
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                )
+
+            let zero3 =
+                SIMD4<Double>(
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                )
+
+            return simd_double4x4(
+                columns: (
+                    zero0,
+                    zero1,
+                    zero2,
+                    zero3
+                )
+            )
+        }
+
+        // --------------------------------------------------------
+        // OFFSET POSITIONS
+        // --------------------------------------------------------
+
+        var plus =
+            position
+
+        var minus =
+            position
+
+        switch coordinate {
+
+        case 1:
+            plus.x += Float(h)
+            minus.x -= Float(h)
+
+        case 2:
+            plus.y += Float(h)
+            minus.y -= Float(h)
+
+        case 3:
+            plus.z += Float(h)
+            minus.z -= Float(h)
+
+        default:
+            break
+        }
+
+        // --------------------------------------------------------
+        // METRIC AT x + h
+        // --------------------------------------------------------
+
+        let gPlus =
+            spacetimeMetric(
+                at: plus
+            )
+
+        // --------------------------------------------------------
+        // METRIC AT x - h
+        // --------------------------------------------------------
+
+        let gMinus =
+            spacetimeMetric(
+                at: minus
+            )
+
+        // --------------------------------------------------------
+        // CENTRAL FINITE DIFFERENCE
+        // --------------------------------------------------------
+        //
+        //     ∂g/∂xᵃ =
+        //
+        //     [g(x+h) - g(x-h)] / (2h)
+        //
+        // --------------------------------------------------------
+
+        let denominator =
+            2.0 * h
+
+        let derivativeColumn0 =
+            SIMD4<Double>(
+                (gPlus.columns.0.x - gMinus.columns.0.x) / denominator,
+                (gPlus.columns.0.y - gMinus.columns.0.y) / denominator,
+                (gPlus.columns.0.z - gMinus.columns.0.z) / denominator,
+                (gPlus.columns.0.w - gMinus.columns.0.w) / denominator
+            )
+
+        let derivativeColumn1 =
+            SIMD4<Double>(
+                (gPlus.columns.1.x - gMinus.columns.1.x) / denominator,
+                (gPlus.columns.1.y - gMinus.columns.1.y) / denominator,
+                (gPlus.columns.1.z - gMinus.columns.1.z) / denominator,
+                (gPlus.columns.1.w - gMinus.columns.1.w) / denominator
+            )
+
+        let derivativeColumn2 =
+            SIMD4<Double>(
+                (gPlus.columns.2.x - gMinus.columns.2.x) / denominator,
+                (gPlus.columns.2.y - gMinus.columns.2.y) / denominator,
+                (gPlus.columns.2.z - gMinus.columns.2.z) / denominator,
+                (gPlus.columns.2.w - gMinus.columns.2.w) / denominator
+            )
+
+        let derivativeColumn3 =
+            SIMD4<Double>(
+                (gPlus.columns.3.x - gMinus.columns.3.x) / denominator,
+                (gPlus.columns.3.y - gMinus.columns.3.y) / denominator,
+                (gPlus.columns.3.z - gMinus.columns.3.z) / denominator,
+                (gPlus.columns.3.w - gMinus.columns.3.w) / denominator
+            )
+
+        return simd_double4x4(
+            columns: (
+                derivativeColumn0,
+                derivativeColumn1,
+                derivativeColumn2,
+                derivativeColumn3
+            )
+        )
+ 
+
+    }
+
 
     func spacetimeCurvatureHeight(
         atXZ point: SIMD2<Float>
@@ -272,6 +661,7 @@ final class QRTLField {
         return normalization
     }
 
+    
     // ========================================================
     // PHYSICAL MASS DENSITY
     // ========================================================
