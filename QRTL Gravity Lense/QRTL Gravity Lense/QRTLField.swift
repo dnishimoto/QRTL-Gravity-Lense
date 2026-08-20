@@ -12,15 +12,23 @@ import simd
 // CELLULAR-AUTOMATA DENSITY SOURCE
 // ============================================================
 //
-// The cellular automata becomes the spatial mass distribution
-// of the globular cluster.
+// The globular-cluster cellular density map supplies the
+// spatial mass distribution.
 //
-// density(at:) must return MASS / VOLUME for the cell containing
-// the requested scene position.
+// QRTLField does NOT create a Gaussian mass distribution.
 //
+// ============================================================
 
+protocol GlobularClusterDensitySource {
 
+    func density(
+        at position: SIMD3<Float>
+    ) -> Float
 
+    var totalMass: Float { get }
+
+    var maximumDensity: Float { get }
+}
 
 // ============================================================
 // QRTL FIELD
@@ -29,7 +37,7 @@ import simd
 final class QRTLField {
 
     // ========================================================
-    // PRIMARY DATA SOURCES
+    // PRIMARY DATA
     // ========================================================
 
     let densitySource:
@@ -40,7 +48,6 @@ final class QRTLField {
 
     let referenceDensity:
         Float
-
 
     // ========================================================
     // INITIALIZATION
@@ -65,7 +72,6 @@ final class QRTLField {
                 0.000001
             )
     }
-
 
     // ========================================================
     // FIELD SAMPLE
@@ -116,90 +122,16 @@ final class QRTLField {
             Float
     }
 
-
     // ========================================================
-    // LOCAL FIELD VECTOR
-    // ========================================================
-
-    func vector(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let distance =
-            simd_length(position)
-
-        guard
-            distance.isFinite,
-            distance > 1.0e-6
-        else {
-            return .zero
-        }
-
-        let radialDirection =
-            simd_normalize(
-                -position
-            )
-
-        let strength =
-            self.strength(
-                at: position
-            )
-
-        return radialDirection *
-            strength
-    }
-
-
-    // ========================================================
-    // LOCAL FIELD STRENGTH
-    // ========================================================
-
-    func strength(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        let distance =
-            simd_length(position)
-
-        guard
-            distance.isFinite,
-            distance > 1.0e-6
-        else {
-            return 0.0
-        }
-
-        let density =
-            normalizedDensity(
-                at: position
-            )
-
-        guard density.isFinite else {
-            return 0.0
-        }
-
-        return min(
-            max(
-                density,
-                0.0
-            ),
-            1.0
-        )
-    }
-
-
-    // ========================================================
-    // CELLULAR-AUTOMATA MASS DENSITY
+    // MASS DENSITY
     // ========================================================
     //
-    // THIS IS THE IMPORTANT CHANGE.
+    // THIS IS THE CELLULAR-AUTOMATA MASS DISTRIBUTION.
     //
-    // QRTLField no longer obtains density from a Gaussian model.
+    // QRTLField asks GlobularClusterDensityMap for the density
+    // at every requested 3D position.
     //
-    // It directly samples the cellular-automata globular
-    // cluster.
-    //
-    // rho(x,y,z) = cellular automata mass / cell volume
-    //
+    // ========================================================
 
     func massDensity(
         at position: SIMD3<Float>
@@ -219,7 +151,6 @@ final class QRTLField {
             0.0
         )
     }
-
 
     // ========================================================
     // NORMALIZED CELLULAR-AUTOMATA DENSITY
@@ -251,55 +182,6 @@ final class QRTLField {
         )
     }
 
-
-    // ========================================================
-    // QRTL / GRAVITY-LIKE INFLUENCE
-    // ========================================================
-
-    func influence(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radius =
-            simd_length(position)
-
-        guard
-            radius.isFinite,
-            radius > 0.000001
-        else {
-            return .zero
-        }
-
-        let inwardDirection =
-            -position /
-            radius
-
-        let density =
-            normalizedDensity(
-                at: position
-            )
-
-        let distanceFalloff =
-            1.0 /
-            max(
-                radius * radius,
-                0.01
-            )
-
-        let strength =
-            Float(parameters.alphaQ) *
-            density *
-            distanceFalloff
-
-        guard strength.isFinite else {
-            return .zero
-        }
-
-        return inwardDirection *
-            strength
-    }
-
-
     // ========================================================
     // QRTL SOURCE
     // ========================================================
@@ -327,6 +209,51 @@ final class QRTLField {
         )
     }
 
+    // ========================================================
+    // QRTL / GRAVITY-LIKE INFLUENCE
+    // ========================================================
+
+    func influence(
+        at position: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let radius =
+            simd_length(position)
+
+        guard
+            radius.isFinite,
+            radius > 0.000001
+        else {
+            return .zero
+        }
+
+        let inwardDirection =
+            -position / radius
+
+        let density =
+            normalizedDensity(
+                at: position
+            )
+
+        let distanceFalloff =
+            1.0 /
+            max(
+                radius * radius,
+                0.01
+            )
+
+        let strength =
+            Float(parameters.alphaQ) *
+            density *
+            distanceFalloff
+
+        guard strength.isFinite else {
+            return .zero
+        }
+
+        return inwardDirection *
+            strength
+    }
 
     // ========================================================
     // BOLGARINO RADIAL FLOW
@@ -347,8 +274,7 @@ final class QRTLField {
         }
 
         let radialDirection =
-            position /
-            radius
+            position / radius
 
         let source =
             qrtlSource(
@@ -363,8 +289,7 @@ final class QRTLField {
             )
 
         let fluxMagnitude =
-            source *
-            falloff
+            source * falloff
 
         guard fluxMagnitude.isFinite else {
             return .zero
@@ -373,7 +298,6 @@ final class QRTLField {
         return radialDirection *
             fluxMagnitude
     }
-
 
     // ========================================================
     // QRTL CURRENT DENSITY
@@ -394,8 +318,7 @@ final class QRTLField {
             )
 
         let currentDensity =
-            flux *
-            coupling
+            flux * coupling
 
         guard
             currentDensity.x.isFinite,
@@ -407,7 +330,6 @@ final class QRTLField {
 
         return currentDensity
     }
-
 
     // ========================================================
     // QRTL CURRENT
@@ -433,7 +355,6 @@ final class QRTLField {
 
         return current
     }
-
 
     // ========================================================
     // MAGNETIC FIELD
@@ -471,8 +392,7 @@ final class QRTLField {
         }
 
         let radial =
-            position /
-            radius
+            position / radius
 
         let referenceAxis =
             SIMD3<Float>(
@@ -504,9 +424,7 @@ final class QRTLField {
         let tangentLength =
             simd_length(tangent)
 
-        guard
-            tangentLength > 0.000001
-        else {
+        guard tangentLength > 0.000001 else {
             return .zero
         }
 
@@ -534,7 +452,6 @@ final class QRTLField {
             fieldStrength
     }
 
-
     // ========================================================
     // MAGNETIC FIELD MAGNITUDE
     // ========================================================
@@ -543,21 +460,12 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> Float {
 
-        let field =
+        simd_length(
             magneticField(
                 at: position
             )
-
-        let magnitude =
-            simd_length(field)
-
-        guard magnitude.isFinite else {
-            return 0.0
-        }
-
-        return magnitude
+        )
     }
-
 
     // ========================================================
     // ELECTROMAGNETIC FIELD
@@ -567,11 +475,10 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> SIMD3<Float> {
 
-        return magneticField(
+        magneticField(
             at: position
         )
     }
-
 
     // ========================================================
     // ELECTROMAGNETIC INFLUENCE
@@ -591,21 +498,9 @@ final class QRTLField {
                 parameters.photonEMCoupling
             )
 
-        let influence =
-            magnetic *
+        return magnetic *
             coupling
-
-        guard
-            influence.x.isFinite,
-            influence.y.isFinite,
-            influence.z.isFinite
-        else {
-            return .zero
-        }
-
-        return influence
     }
-
 
     // ========================================================
     // ELECTROMAGNETIC INFLUENCE MAGNITUDE
@@ -615,21 +510,12 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> Float {
 
-        let influence =
+        simd_length(
             electromagneticInfluence(
                 at: position
             )
-
-        let magnitude =
-            simd_length(influence)
-
-        guard magnitude.isFinite else {
-            return 0.0
-        }
-
-        return magnitude
+        )
     }
-
 
     // ========================================================
     // MAGNETIC ENERGY DENSITY
@@ -647,16 +533,15 @@ final class QRTLField {
         let bSquared =
             simd_length_squared(field)
 
-        guard bSquared.isFinite else {
-            return 0.0
-        }
-
         let mu0 =
             Float(
                 PhysicalConstants.mu0
             )
 
-        guard mu0 > 0.0 else {
+        guard
+            bSquared.isFinite,
+            mu0 > 0.0
+        else {
             return 0.0
         }
 
@@ -673,7 +558,6 @@ final class QRTLField {
             0.0
         )
     }
-
 
     // ========================================================
     // QRTL ENERGY DENSITY
@@ -710,20 +594,19 @@ final class QRTLField {
         )
     }
 
-
     // ========================================================
     // GRAVITATIONAL POTENTIAL
     // ========================================================
     //
-    // The potential is now based on the cellular-automata
-    // mass density sampled through massDensity(at:).
+    // The local CA density contributes to the effective
+    // gravitational field.
     //
-    // Phi = -G M(r) / r
-    //
+    // ========================================================
 
     func gravitationalPotential(
         at position: SIMD3<Float>,
-        effectiveEnergyDensity: Float
+        effectiveEnergyDensity:
+            Float
     ) -> Float {
 
         let radius =
@@ -747,7 +630,7 @@ final class QRTLField {
             )
 
         // ----------------------------------------------------
-        // CELLULAR-AUTOMATA MASS DENSITY
+        // CELLULAR-AUTOMATA DENSITY
         // ----------------------------------------------------
 
         let localDensity =
@@ -755,18 +638,15 @@ final class QRTLField {
                 at: position
             )
 
-        guard
-            localDensity.isFinite,
-            localDensity >= 0.0
-        else {
+        guard localDensity.isFinite else {
             return 0.0
         }
 
         // ----------------------------------------------------
-        // QRTL ENERGY -> EFFECTIVE MASS DENSITY
+        // QRTL ENERGY -> EFFECTIVE MASS
         // ----------------------------------------------------
 
-        let safeEnergyDensity =
+        let safeEnergy =
             effectiveEnergyDensity.isFinite
             ? max(
                 effectiveEnergyDensity,
@@ -775,7 +655,7 @@ final class QRTLField {
             : 0.0
 
         let effectiveMassDensity =
-            safeEnergyDensity /
+            safeEnergy /
             max(
                 c * c,
                 1.0
@@ -797,7 +677,7 @@ final class QRTLField {
         }
 
         // ----------------------------------------------------
-        // LOCAL ENCLOSED-MASS APPROXIMATION
+        // LOCAL VOLUME
         // ----------------------------------------------------
 
         let volume =
@@ -811,15 +691,12 @@ final class QRTLField {
             totalDensity *
             volume
 
-        guard
-            enclosedMass.isFinite,
-            enclosedMass >= 0.0
-        else {
+        guard enclosedMass.isFinite else {
             return 0.0
         }
 
         // ----------------------------------------------------
-        // GRAVITATIONAL POTENTIAL
+        // POTENTIAL
         // ----------------------------------------------------
 
         let potential =
@@ -834,7 +711,6 @@ final class QRTLField {
         return potential
     }
 
-
     // ========================================================
     // ELECTROMAGNETIC OPTICAL CONTRIBUTION
     // ========================================================
@@ -843,18 +719,10 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> Float {
 
-        let energy =
-            magneticEnergyDensity(
-                at: position
-            )
-
-        guard energy.isFinite else {
-            return 0.0
-        }
-
-        return energy
+        magneticEnergyDensity(
+            at: position
+        )
     }
-
 
     // ========================================================
     // COMPLETE FIELD SAMPLE
@@ -957,7 +825,6 @@ final class QRTLField {
             electromagneticIndex
 
         return Sample(
-
             massDensity:
                 density,
 
@@ -1002,6 +869,172 @@ final class QRTLField {
         )
     }
 
+    // ========================================================
+    // 360-DEGREE SPACETIME CURVATURE
+    // ========================================================
+    //
+    // IMPORTANT:
+    //
+    // The surface coordinate is X/Z.
+    //
+    //     X = horizontal
+    //     Z = depth
+    //
+    // Radius is calculated from BOTH:
+    //
+    //     r = sqrt(x² + z²)
+    //
+    // Therefore curvature exists in every direction.
+    //
+    // ========================================================
+
+    func spacetimeCurvatureHeight(
+        atXZ point: SIMD2<Float>
+    ) -> Float {
+
+        let fieldPosition =
+            SIMD3<Float>(
+                point.x,
+                0.0,
+                point.y
+            )
+
+        // ----------------------------------------------------
+        // TRUE RADIAL DISTANCE
+        // ----------------------------------------------------
+
+        let radius =
+            simd_length(point)
+
+        guard radius.isFinite else {
+            return 0.0
+        }
+
+        // ----------------------------------------------------
+        // CELLULAR-AUTOMATA DENSITY
+        // ----------------------------------------------------
+
+        let density =
+            normalizedDensity(
+                at: fieldPosition
+            )
+
+        guard density.isFinite else {
+            return 0.0
+        }
+
+        // ----------------------------------------------------
+        // COMPLETE QRTL SAMPLE
+        // ----------------------------------------------------
+
+        let fieldSample =
+            sample(
+                at: fieldPosition
+            )
+
+        // ----------------------------------------------------
+        // GRAVITATIONAL POTENTIAL
+        // ----------------------------------------------------
+
+        let potentialMagnitude =
+            abs(
+                fieldSample.gravitationalPotential
+            )
+
+        // ----------------------------------------------------
+        // RADIAL BOWL ENVELOPE
+        // ----------------------------------------------------
+        //
+        // Larger radius -> flatter surface.
+        //
+        // This is rotationally symmetric around Y.
+        //
+        // ----------------------------------------------------
+
+        let normalizedRadius =
+            radius / 12.0
+
+        let radialEnvelope =
+            exp(
+                -0.5 *
+                normalizedRadius *
+                normalizedRadius
+            )
+
+        // ----------------------------------------------------
+        // DENSITY TERM
+        // ----------------------------------------------------
+
+        let densityTerm =
+            min(
+                max(
+                    density,
+                    0.0
+                ),
+                1.0
+            )
+
+        // ----------------------------------------------------
+        // POTENTIAL TERM
+        // ----------------------------------------------------
+
+        let c =
+            Float(
+                PhysicalConstants.c
+            )
+
+        let potentialScale =
+            max(
+                c * c,
+                1.0
+            )
+
+        let potentialTerm =
+            min(
+                max(
+                    potentialMagnitude /
+                    potentialScale,
+                    0.0
+                ),
+                1.0
+            )
+
+        // ----------------------------------------------------
+        // COMBINED CURVATURE
+        // ----------------------------------------------------
+
+        let curvatureStrength =
+            0.70 * densityTerm +
+            0.30 * potentialTerm
+
+        // ----------------------------------------------------
+        // FINAL BOWL HEIGHT
+        // ----------------------------------------------------
+        //
+        // Negative Y means downward.
+        //
+        // Center:
+        //      deepest
+        //
+        // Outside:
+        //      approaches zero
+        //
+        // ----------------------------------------------------
+
+        let curvatureScale:
+            Float = 5.0
+
+        let height =
+            -curvatureStrength *
+            radialEnvelope *
+            curvatureScale
+
+        guard height.isFinite else {
+            return 0.0
+        }
+
+        return height
+    }
 
     // ========================================================
     // TOTAL INDEX GRADIENT
@@ -1046,32 +1079,38 @@ final class QRTLField {
 
         let xPlus =
             sample(
-                at: position + xOffset
+                at:
+                    position + xOffset
             ).totalIndex
 
         let xMinus =
             sample(
-                at: position - xOffset
+                at:
+                    position - xOffset
             ).totalIndex
 
         let yPlus =
             sample(
-                at: position + yOffset
+                at:
+                    position + yOffset
             ).totalIndex
 
         let yMinus =
             sample(
-                at: position - yOffset
+                at:
+                    position - yOffset
             ).totalIndex
 
         let zPlus =
             sample(
-                at: position + zOffset
+                at:
+                    position + zOffset
             ).totalIndex
 
         let zMinus =
             sample(
-                at: position - zOffset
+                at:
+                    position - zOffset
             ).totalIndex
 
         let twoH =
@@ -1079,15 +1118,9 @@ final class QRTLField {
 
         let gradient =
             SIMD3<Float>(
-
-                (xPlus - xMinus) /
-                    twoH,
-
-                (yPlus - yMinus) /
-                    twoH,
-
-                (zPlus - zMinus) /
-                    twoH
+                (xPlus - xMinus) / twoH,
+                (yPlus - yMinus) / twoH,
+                (zPlus - zMinus) / twoH
             )
 
         guard
@@ -1101,14 +1134,14 @@ final class QRTLField {
         return gradient
     }
 
-
     // ========================================================
     // QRTL LENSING ACCELERATION
     // ========================================================
 
     func qrtlLensingAcceleration(
         at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
+        direction photonDirection:
+            SIMD3<Float>
     ) -> SIMD3<Float> {
 
         let radius =
@@ -1126,10 +1159,7 @@ final class QRTLField {
                 photonDirection
             )
 
-        guard
-            directionLength.isFinite,
-            directionLength > 0.000001
-        else {
+        guard directionLength > 0.000001 else {
             return .zero
         }
 
@@ -1157,10 +1187,7 @@ final class QRTLField {
                 transverseRadial
             )
 
-        guard
-            transverseLength.isFinite,
-            transverseLength > 0.000001
-        else {
+        guard transverseLength > 0.000001 else {
             return .zero
         }
 
@@ -1199,15 +1226,13 @@ final class QRTLField {
                 at: position
             )
 
-        let qrtlFlux =
+        let flux =
             bolgarinoFlux(
                 at: position
             )
 
-        let qrtlFluxStrength =
-            simd_length(
-                qrtlFlux
-            )
+        let fluxStrength =
+            simd_length(flux)
 
         let magnetic =
             magneticField(
@@ -1215,8 +1240,15 @@ final class QRTLField {
             )
 
         let magneticStrength =
-            simd_length(
-                magnetic
+            simd_length(magnetic)
+
+        let densityTerm =
+            min(
+                max(
+                    density,
+                    0.0
+                ),
+                1.0
             )
 
         let sourceTerm =
@@ -1231,7 +1263,7 @@ final class QRTLField {
         let fluxTerm =
             min(
                 max(
-                    qrtlFluxStrength,
+                    fluxStrength,
                     0.0
                 ),
                 1.0
@@ -1246,34 +1278,40 @@ final class QRTLField {
                 1.0
             )
 
+        // ----------------------------------------------------
+        // COMBINED FIELD STRENGTH
+        // ----------------------------------------------------
+
         let fieldStrength =
-            0.50 * density +
+            0.50 * densityTerm +
             0.30 * sourceTerm +
             0.15 * fluxTerm +
             0.05 * magneticTerm
 
-        guard
-            fieldStrength.isFinite,
-            fieldStrength > 0.000001
-        else {
+        guard fieldStrength > 0.000001 else {
             return .zero
         }
+
+        // ----------------------------------------------------
+        // IMPACT PARAMETER FALLoff
+        // ----------------------------------------------------
 
         let impactFalloff =
             1.0 /
             safeImpactParameter
 
+        // ----------------------------------------------------
+        // RADIAL ENVELOPE
+        // ----------------------------------------------------
+
         let normalizedRadius =
-            radius /
-            12.0
+            radius / 12.0
 
         let radialEnvelope =
             exp(
                 -0.5 *
-                pow(
-                    normalizedRadius,
-                    2.0
-                )
+                normalizedRadius *
+                normalizedRadius
             )
 
         let gamma =
@@ -1288,28 +1326,13 @@ final class QRTLField {
             impactFalloff *
             radialEnvelope
 
-        guard
-            lensingMagnitude.isFinite,
-            lensingMagnitude > 0.000001
-        else {
+        guard lensingMagnitude.isFinite else {
             return .zero
         }
 
-        let acceleration =
-            inwardLensingDirection *
+        return inwardLensingDirection *
             lensingMagnitude
-
-        guard
-            acceleration.x.isFinite,
-            acceleration.y.isFinite,
-            acceleration.z.isFinite
-        else {
-            return .zero
-        }
-
-        return acceleration
     }
-
 
     // ========================================================
     // CURVILINEAR PHOTON DIRECTION
@@ -1317,7 +1340,8 @@ final class QRTLField {
 
     func qrtlCurvilinearDirection(
         at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>,
+        direction photonDirection:
+            SIMD3<Float>,
         stepSize: Float
     ) -> SIMD3<Float> {
 
@@ -1353,10 +1377,7 @@ final class QRTLField {
         let length =
             simd_length(deflected)
 
-        guard
-            length.isFinite,
-            length > 0.000001
-        else {
+        guard length > 0.000001 else {
             return direction
         }
 
@@ -1364,34 +1385,23 @@ final class QRTLField {
             length
     }
 
-
     // ========================================================
     // QRTL LENSING STRENGTH
     // ========================================================
 
     func qrtlLensingStrength(
         at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
+        direction photonDirection:
+            SIMD3<Float>
     ) -> Float {
 
-        let acceleration =
+        simd_length(
             qrtlLensingAcceleration(
                 at: position,
                 direction: photonDirection
             )
-
-        let strength =
-            simd_length(
-                acceleration
-            )
-
-        guard strength.isFinite else {
-            return 0.0
-        }
-
-        return strength
+        )
     }
-
 
     // ========================================================
     // QRTL IMPACT PARAMETER
@@ -1399,7 +1409,8 @@ final class QRTLField {
 
     func qrtlImpactParameter(
         at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
+        direction photonDirection:
+            SIMD3<Float>
     ) -> Float {
 
         let directionLength =
@@ -1407,13 +1418,8 @@ final class QRTLField {
                 photonDirection
             )
 
-        guard
-            directionLength.isFinite,
-            directionLength > 0.000001
-        else {
-            return simd_length(
-                position
-            )
+        guard directionLength > 0.000001 else {
+            return simd_length(position)
         }
 
         let direction =
@@ -1431,18 +1437,10 @@ final class QRTLField {
             direction *
             longitudinal
 
-        let impactParameter =
-            simd_length(
-                closestPoint
-            )
-
-        guard impactParameter.isFinite else {
-            return 0.0
-        }
-
-        return impactParameter
+        return simd_length(
+            closestPoint
+        )
     }
-
 
     // ========================================================
     // QRTL OUTWARD FIELD
@@ -1460,17 +1458,12 @@ final class QRTLField {
         let length =
             simd_length(flux)
 
-        guard
-            length.isFinite,
-            length > 0.000001
-        else {
+        guard length > 0.000001 else {
             return .zero
         }
 
-        return flux /
-            length
+        return flux / length
     }
-
 
     // ========================================================
     // QRTL PHOTON BEND DIRECTION
@@ -1478,7 +1471,8 @@ final class QRTLField {
 
     func qrtlPhotonBendDirection(
         at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
+        direction photonDirection:
+            SIMD3<Float>
     ) -> SIMD3<Float> {
 
         let acceleration =
@@ -1488,80 +1482,12 @@ final class QRTLField {
             )
 
         let length =
-            simd_length(
-                acceleration
-            )
+            simd_length(acceleration)
 
-        guard
-            length.isFinite,
-            length > 0.000001
-        else {
+        guard length > 0.000001 else {
             return .zero
         }
 
-        return acceleration /
-            length
-    }
-    func spacetimeCurvatureHeight(
-        atXZ point: SIMD2<Float>
-    ) -> Float {
-
-        // ---------------------------------------------------------
-        // Convert XZ surface coordinate into a 3D QRTL field point.
-        //
-        // The surface is being viewed in the X-Z plane, so Y is
-        // initially the uncurved spacetime height.
-        // ---------------------------------------------------------
-
-        let fieldPosition = SIMD3<Float>(
-            point.x,
-            0.0,
-            point.y
-        )
-
-        // ---------------------------------------------------------
-        // Sample the QRTL field.
-        // ---------------------------------------------------------
-
-        let sample = self.sample(
-            at: fieldPosition
-        )
-
-        // ---------------------------------------------------------
-        // Gravitational potential.
-        //
-        // The potential is negative near the mass concentration.
-        // We take its magnitude because the SceneKit surface needs
-        // a positive visual displacement downward into the bowl.
-        // ---------------------------------------------------------
-
-        let potentialMagnitude =
-            abs(sample.gravitationalPotential)
-
-        guard
-            potentialMagnitude.isFinite,
-            potentialMagnitude > 0.0
-        else {
-            return 0.0
-        }
-
-        // ---------------------------------------------------------
-        // Convert the physical potential into a visual height.
-        //
-        // curvatureScale controls how deep the bowl appears.
-        // This is a visualization scale, not a physical constant.
-        // ---------------------------------------------------------
-
-        let curvatureScale: Float = 2.5
-
-        let height =
-            -Float(potentialMagnitude) *
-            Float(curvatureScale)
-        
-        guard height.isFinite else {
-            return 0.0
-        }
-
-        return height
+        return acceleration / length
     }
 }
