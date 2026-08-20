@@ -9,32 +9,66 @@
 import Foundation
 import simd
 
+//
+//  GlobularClusterDensity.swift
+//  QRTL Gravity Lense
+//
+//  Cellular-Automata Driven Globular Cluster Density
+//
+
+import Foundation
+import simd
+
 final class GlobularClusterDensityMap:
     GlobularClusterDensitySource {
 
-    // ============================================================
+    // ========================================================
+    // PHYSICAL CONSTANTS
+    // ========================================================
+
+    static let solarMassKg: Float =
+        1.98847e30
+
+    static let oneMillionSolarMassesKg: Float =
+        1.0e6 *
+        solarMassKg
+
+    // ========================================================
     // SOURCE STAR DISTRIBUTION
-    // ============================================================
+    // ========================================================
 
     let positions:
         [SIMD3<Float>]
 
-    let radius:
+    // ========================================================
+    // PHYSICAL CLUSTER RADIUS
+    // ========================================================
+
+    /// Radius of the CA field in meters.
+
+    let fieldRadiusMeters:
         Float
 
-    // ============================================================
-    // MASS MODEL
-    // ============================================================
+    // ========================================================
+    // TOTAL PHYSICAL CLUSTER MASS
+    // ========================================================
+
+    /// Total cluster mass in kilograms.
+    ///
+    /// For the QRTL lensing experiment:
+    ///
+    /// 1,000,000 solar masses
+    ///
+    /// = 1.98847e36 kg
 
     let totalMass:
         Float
 
-    let massPerStar:
-        Float
+    // ========================================================
+    // CELLULAR-AUTOMATA GRID
+    // ========================================================
 
-    // ============================================================
-    // CELLULAR AUTOMATA GRID
-    // ============================================================
+    /// Cell size in meters.
 
     let cellSize:
         Float
@@ -42,34 +76,77 @@ final class GlobularClusterDensityMap:
     private let cellVolume:
         Float
 
+    /// Raw dimensionless CA density.
+
     private var densityGrid:
         [SIMD3<Int>: Float] = [:]
 
-    // ============================================================
-    // DENSITY NORMALIZATION
-    // ============================================================
+    // ========================================================
+    // MAXIMUM CA DENSITY
+    // ========================================================
 
-    let maximumDensity:
-        Float
+    /// Maximum raw CA density.
 
-    // ============================================================
+    var maximumDensity:
+        Float {
+
+        densityGrid.values.max() ?? 0.0
+    }
+
+    // ========================================================
+    // INTEGRATED CA DENSITY
+    // ========================================================
+
+    /// Integral of the raw CA density over physical volume.
+    ///
+    /// Units:
+    ///
+    /// CA-density × m³
+
+    var integratedDensity:
+        Float {
+
+        let integral =
+            densityGrid.values.reduce(
+                0.0
+            ) {
+                partial,
+                density in
+
+                partial +
+                density *
+                cellVolume
+            }
+
+        guard integral.isFinite
+        else {
+            return 0.0
+        }
+
+        return max(
+            integral,
+            0.0
+        )
+    }
+
+    // ========================================================
     // INITIALIZATION
-    // ============================================================
+    // ========================================================
 
     init(
         positions: [SIMD3<Float>],
-        radius: Float,
+        radiusMeters: Float,
         totalMass: Float,
-        cellSize: Float = 0.20
+        cellSizeMeters: Float = 0.20
     ) {
 
         self.positions =
             positions
 
-        self.radius =
+        self.fieldRadiusMeters =
             max(
-                radius,
-                0.0001
+                radiusMeters,
+                0.000001
             )
 
         self.totalMass =
@@ -80,8 +157,8 @@ final class GlobularClusterDensityMap:
 
         self.cellSize =
             max(
-                cellSize,
-                0.0001
+                cellSizeMeters,
+                0.000001
             )
 
         self.cellVolume =
@@ -89,21 +166,27 @@ final class GlobularClusterDensityMap:
             self.cellSize *
             self.cellSize
 
-        self.massPerStar =
-            self.totalMass /
-            max(
-                Float(positions.count),
-                1.0
-            )
-
-        // ========================================================
-        // BUILD 3D CELLULAR DENSITY GRID
-        // ========================================================
+        // ====================================================
+        // BUILD CA DENSITY GRID
+        // ====================================================
 
         var grid:
             [SIMD3<Int>: Float] = [:]
 
         for position in positions {
+
+            let distance =
+                simd_length(
+                    position
+                )
+
+            guard
+                distance.isFinite,
+                distance <=
+                    self.fieldRadiusMeters
+            else {
+                continue
+            }
 
             let cell =
                 Self.cellCoordinate(
@@ -112,31 +195,31 @@ final class GlobularClusterDensityMap:
                         self.cellSize
                 )
 
-            let densityContribution =
-                self.massPerStar /
-                self.cellVolume
+            // ------------------------------------------------
+            // EACH SOURCE STAR CONTRIBUTES ONE UNIT OF
+            // DIMENSIONLESS CELLULAR DENSITY.
+            //
+            // Physical mass normalization is performed later.
+            // ------------------------------------------------
 
             grid[cell, default: 0.0] +=
-                densityContribution
+                1.0
         }
 
         self.densityGrid =
             grid
-
-        self.maximumDensity =
-            grid.values.max() ?? 0.0
     }
 
-    // ============================================================
+    // ========================================================
     // CELL COORDINATE
-    // ============================================================
+    // ========================================================
 
     private static func cellCoordinate(
         _ position: SIMD3<Float>,
         cellSize: Float
     ) -> SIMD3<Int> {
 
-        return SIMD3<Int>(
+        SIMD3<Int>(
             Int(
                 floor(
                     position.x /
@@ -160,9 +243,9 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
-    // MASS DENSITY
-    // ============================================================
+    // ========================================================
+    // RAW CELLULAR-AUTOMATA DENSITY
+    // ========================================================
 
     func density(
         at position: SIMD3<Float>
@@ -174,7 +257,9 @@ final class GlobularClusterDensityMap:
             )
 
         guard
-            distance <= radius
+            distance.isFinite,
+            distance <=
+                fieldRadiusMeters
         else {
             return 0.0
         }
@@ -186,22 +271,34 @@ final class GlobularClusterDensityMap:
                     cellSize
             )
 
+        let value =
+            densityGrid[cell] ?? 0.0
+
+        guard value.isFinite
+        else {
+            return 0.0
+        }
+
         return max(
-            densityGrid[cell] ?? 0.0,
+            value,
             0.0
         )
     }
 
-    // ============================================================
-    // NORMALIZED DENSITY
-    // ============================================================
+    // ========================================================
+    // NORMALIZED CA DENSITY
+    // ========================================================
 
     func normalizedDensity(
         at position: SIMD3<Float>
     ) -> Float {
 
+        let maximum =
+            maximumDensity
+
         guard
-            maximumDensity > 0.0
+            maximum.isFinite,
+            maximum > 0.0
         else {
             return 0.0
         }
@@ -211,10 +308,9 @@ final class GlobularClusterDensityMap:
                 at:
                     position
             ) /
-            maximumDensity
+            maximum
 
-        guard
-            value.isFinite
+        guard value.isFinite
         else {
             return 0.0
         }
@@ -228,13 +324,80 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
+    // ========================================================
+    // PHYSICAL MASS DENSITY
+    // ========================================================
+    //
+    // This is the important normalization:
+    //
+    // rhoPhysical =
+    //      rhoCA *
+    //      totalMass /
+    //      integratedDensity
+    //
+    // Therefore:
+    //
+    // ∫rhoPhysical dV = totalMass
+    //
+    // ========================================================
+
+    func physicalMassDensity(
+        at position: SIMD3<Float>
+    ) -> Float {
+
+        let caDensity =
+            density(
+                at:
+                    position
+            )
+
+        let normalization =
+            integratedDensity
+
+        guard
+            caDensity.isFinite,
+            normalization.isFinite,
+            normalization > 0.0,
+            totalMass.isFinite
+        else {
+            return 0.0
+        }
+
+        let physicalDensity =
+            caDensity *
+            totalMass /
+            normalization
+
+        guard physicalDensity.isFinite
+        else {
+            return 0.0
+        }
+
+        return max(
+            physicalDensity,
+            0.0
+        )
+    }
+
+    // ========================================================
     // CELL OCCUPANCY
-    // ============================================================
+    // ========================================================
 
     func containsCell(
         at position: SIMD3<Float>
     ) -> Bool {
+
+        let distance =
+            simd_length(
+                position
+            )
+
+        guard
+            distance <=
+                fieldRadiusMeters
+        else {
+            return false
+        }
 
         let cell =
             Self.cellCoordinate(
@@ -246,31 +409,92 @@ final class GlobularClusterDensityMap:
         return densityGrid[cell] != nil
     }
 
-    // ============================================================
-    // CELL MASS
-    // ============================================================
+    // ========================================================
+    // PHYSICAL MASS IN CELL
+    // ========================================================
 
     func mass(
         at position: SIMD3<Float>
     ) -> Float {
 
         let density =
-            self.density(
+            physicalMassDensity(
                 at:
                     position
             )
 
-        return density *
+        let mass =
+            density *
             cellVolume
+
+        guard mass.isFinite
+        else {
+            return 0.0
+        }
+
+        return max(
+            mass,
+            0.0
+        )
     }
 
-    // ============================================================
-    // NUMBER OF OCCUPIED CELLS
-    // ============================================================
+    // ========================================================
+    // OCCUPIED CELL COUNT
+    // ========================================================
 
     var occupiedCellCount:
         Int {
 
-        return densityGrid.count
+        densityGrid.count
+    }
+
+    // ========================================================
+    // TOTAL MASS CHECK
+    // ========================================================
+
+    /// Reconstructed physical mass from the normalized CA grid.
+    ///
+    /// This should equal totalMass to numerical precision.
+
+    var gridPhysicalMass:
+        Float {
+
+        guard
+            integratedDensity > 0.0
+        else {
+            return 0.0
+        }
+
+        let reconstructedMass =
+            integratedDensity *
+            totalMass /
+            integratedDensity
+
+        guard reconstructedMass.isFinite
+        else {
+            return 0.0
+        }
+
+        return reconstructedMass
+    }
+
+    // ========================================================
+    // MASS CONSERVATION ERROR
+    // ========================================================
+
+    var massConservationError:
+        Float {
+
+        guard
+            totalMass > 0.0
+        else {
+            return 0.0
+        }
+
+        return abs(
+            gridPhysicalMass -
+            totalMass
+        ) /
+        totalMass
     }
 }

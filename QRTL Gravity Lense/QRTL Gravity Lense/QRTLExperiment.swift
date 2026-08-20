@@ -1,7 +1,4 @@
 //
-//  File.swift
-//  QRTL Gravity Lense
-//
 //  QRTLExperiment.swift
 //  QRTL Gravity Lense
 //
@@ -13,13 +10,55 @@ import simd
 import SwiftUI
 
 // ============================================================
-// EXPERIMENT
+// QRTL EXPERIMENT
+// ============================================================
+//
+// Physical cluster:
+//
+//     M = 10^6 solar masses
+//
+//     M = 1.98847 × 10^36 kg
+//
+// The cellular-automata density map distributes this total
+// mass through the cluster volume.
+//
+// QRTLField then calculates:
+//
+//     rho(x)
+//          ↓
+//     M_enclosed(r)
+//          ↓
+//     Phi(r) = -G M_enclosed(r) / r
+//          ↓
+//     ∇Phi
+//          ↓
+//     transverse photon bending
+//
 // ============================================================
 
 final class QRTLExperiment {
 
+    // ========================================================
+    // FIELD
+    // ========================================================
+
     let field: QRTLField
+
     let tracer: QRTLPhotonTracer
+
+    // ========================================================
+    // PHYSICAL CONSTANTS
+    // ========================================================
+
+    private static let solarMassKg: Double =
+        1.98847e30
+
+    private static let defaultClusterMassKg: Double =
+        1.0e6 * solarMassKg
+
+    // ========================================================
+    // INITIALIZATION
+    // ========================================================
 
     init(
         mass: Double,
@@ -27,39 +66,83 @@ final class QRTLExperiment {
         parameters: QRTLParameters
     ) {
 
-        // ========================================================
-        // CREATE STAR POSITIONS
+        // ====================================================
+        // TOTAL PHYSICAL MASS
+        // ====================================================
+
+        let clusterMassKg: Double
+
+        if mass.isFinite && mass > 0.0 {
+            clusterMassKg = mass
+        } else {
+            clusterMassKg =
+                Self.defaultClusterMassKg
+        }
+
+        // ====================================================
+        // PHYSICAL CLUSTER RADIUS
+        // ====================================================
+
+        let clusterRadiusMeters =
+            Float(
+                max(
+                    radius,
+                    1.0e-6
+                )
+            )
+
+        // ====================================================
+        // STAR POSITIONS
+        // ====================================================
         //
-        // This creates the same type of spherical distribution
-        // used by the globular-cluster renderer.
-        // ========================================================
+        // These positions define the cellular-automata
+        // spatial distribution.
+        //
+        // They do NOT individually determine the total mass.
+        //
+        // The density map assigns the complete cluster mass
+        // across this distribution.
+        //
+        // ====================================================
 
         let starCount = 3000
 
         var positions:
             [SIMD3<Float>] = []
 
-        positions.reserveCapacity(starCount)
+        positions.reserveCapacity(
+            starCount
+        )
 
-        let clusterRadius =
-            Float(
-                max(
-                    radius,
-                    0.0001
-                )
-            )
+        // ====================================================
+        // SPHERICAL DISTRIBUTION
+        // ====================================================
 
         for _ in 0..<starCount {
 
+            // ------------------------------------------------
+            // Azimuth
+            // ------------------------------------------------
+
             let theta =
                 Float.random(
-                    in: 0.0...(2.0 * Float.pi)
+                    in:
+                        0.0...(2.0 * Float.pi)
                 )
+
+            // ------------------------------------------------
+            // Uniform cosine of polar angle
+            // ------------------------------------------------
 
             let zDirection =
                 Float.random(
-                    in: -1.0...1.0
+                    in:
+                        -1.0...1.0
                 )
+
+            // ------------------------------------------------
+            // XY component
+            // ------------------------------------------------
 
             let radialXY =
                 sqrt(
@@ -71,18 +154,31 @@ final class QRTLExperiment {
                     )
                 )
 
-            // Uniform volume distribution.
+            // ------------------------------------------------
+            // Uniform volume distribution
+            //
+            // r = R * U^(1/3)
+            // ------------------------------------------------
+
+            let randomUnit =
+                Float.random(
+                    in:
+                        0.0...1.0
+                )
+
             let radialFraction =
                 pow(
-                    Float.random(
-                        in: 0.0...1.0
-                    ),
+                    randomUnit,
                     1.0 / 3.0
                 )
 
             let r =
-                clusterRadius *
+                clusterRadiusMeters *
                 radialFraction
+
+            // ------------------------------------------------
+            // Cartesian position
+            // ------------------------------------------------
 
             let x =
                 r *
@@ -107,45 +203,53 @@ final class QRTLExperiment {
             )
         }
 
-        // ========================================================
-        // CREATE CELLULAR DENSITY MAP
+        // ====================================================
+        // CREATE CELLULAR-AUTOMATA DENSITY SOURCE
+        // ====================================================
         //
-        // The star positions become the mass-density source
-        // sampled by QRTLField.
-        // ========================================================
+        // The entire density distribution is normalized to:
+        //
+        //     clusterMassKg
+        //
+        // Therefore the integrated physical mass is:
+        //
+        //     ∫ rho dV = 10^6 solar masses
+        //
+        // ====================================================
 
         let densitySource =
             GlobularClusterDensityMap(
                 positions:
                     positions,
-                radius:
-                    clusterRadius,
+
+                radiusMeters:
+                    clusterRadiusMeters,
+
                 totalMass:
                     Float(
-                        max(
-                            mass,
-                            0.0
-                        )
+                        clusterMassKg
                     ),
-                cellSize:
+
+                cellSizeMeters:
                     0.20
             )
 
-        // ========================================================
+        // ====================================================
         // CREATE QRTL FIELD
-        // ========================================================
+        // ====================================================
 
         self.field =
             QRTLField(
                 densitySource:
                     densitySource,
+
                 parameters:
                     parameters
             )
 
-        // ========================================================
+        // ====================================================
         // CREATE PHOTON TRACER
-        // ========================================================
+        // ====================================================
 
         self.tracer =
             QRTLPhotonTracer(
@@ -161,52 +265,110 @@ final class QRTLExperiment {
     func run(
         impactParameter:
             Double,
+
         startDistance:
             Double,
+
         endDistance:
             Double,
+
         stepSize:
             Double
     ) -> QRTLExperimentResult {
 
+        // ========================================================
+        // SAFE INPUTS
+        // ========================================================
+
+        let safeImpactParameter =
+            max(
+                abs(
+                    impactParameter
+                ),
+                1.0e-9
+            )
+
+        let safeStartDistance =
+            max(
+                startDistance,
+                1.0e-9
+            )
+
+        let safeEndDistance =
+            max(
+                endDistance,
+                1.0e-9
+            )
+
+        let safeStepSize =
+            max(
+                stepSize,
+                1.0e-9
+            )
+
+        // ========================================================
+        // PHOTON START POSITION
+        // ========================================================
+        //
+        // Photon travels in +X.
+        //
+        // Impact parameter is Y.
+        //
+        // ========================================================
+
         let start =
             SIMD3<Double>(
-                -startDistance,
-                impactParameter,
+                -safeStartDistance,
+                safeImpactParameter,
                 0.0
             )
 
         let totalDistance =
-            startDistance +
-            endDistance
+            safeStartDistance +
+            safeEndDistance
+
+        // ========================================================
+        // TRACE PHOTON THROUGH EINSTEIN/QRTL FIELD
+        // ========================================================
 
         let path =
             tracer.trace(
                 start:
                     start,
+
                 direction:
                     SIMD3<Double>(
                         1.0,
                         0.0,
                         0.0
                     ),
+
                 totalDistance:
                     totalDistance,
+
                 stepSize:
-                    stepSize
+                    safeStepSize
             )
+
+        // ========================================================
+        // VALIDATE PATH
+        // ========================================================
 
         guard path.count >= 3 else {
 
             return QRTLExperimentResult(
                 qrtlDeflection:
                     0.0,
+
                 grDeflection:
                     0.0,
+
                 differencePercent:
                     0.0,
+
                 qrtlDeflectionArcseconds:
                     0.0,
+
                 grDeflectionArcseconds:
                     0.0
             )
@@ -216,24 +378,78 @@ final class QRTLExperiment {
         // INCOMING PHOTON DIRECTION
         // ========================================================
 
-        let incoming =
-            simd_normalize(
-                path[1] -
-                path[0]
+        let incomingVector =
+            path[1] -
+            path[0]
+
+        let incomingLength =
+            simd_length(
+                incomingVector
             )
+
+        guard incomingLength > 0.0 else {
+
+            return QRTLExperimentResult(
+                qrtlDeflection:
+                    0.0,
+
+                grDeflection:
+                    0.0,
+
+                differencePercent:
+                    0.0,
+
+                qrtlDeflectionArcseconds:
+                    0.0,
+
+                grDeflectionArcseconds:
+                    0.0
+            )
+        }
+
+        let incoming =
+            incomingVector /
+            incomingLength
 
         // ========================================================
         // OUTGOING PHOTON DIRECTION
         // ========================================================
 
-        let outgoing =
-            simd_normalize(
-                path[path.count - 1] -
-                path[path.count - 2]
+        let outgoingVector =
+            path[path.count - 1] -
+            path[path.count - 2]
+
+        let outgoingLength =
+            simd_length(
+                outgoingVector
             )
 
+        guard outgoingLength > 0.0 else {
+
+            return QRTLExperimentResult(
+                qrtlDeflection:
+                    0.0,
+
+                grDeflection:
+                    0.0,
+
+                differencePercent:
+                    0.0,
+
+                qrtlDeflectionArcseconds:
+                    0.0,
+
+                grDeflectionArcseconds:
+                    0.0
+            )
+        }
+
+        let outgoing =
+            outgoingVector /
+            outgoingLength
+
         // ========================================================
-        // ANGLE BETWEEN INCOMING AND OUTGOING
+        // ANGLE BETWEEN INCOMING AND OUTGOING RAYS
         // ========================================================
 
         let cosine =
@@ -254,47 +470,80 @@ final class QRTLExperiment {
             )
 
         // ========================================================
-        // STANDARD WEAK-FIELD GR DEFLECTION
-        //
-        // alpha = 4GM / bc²
+        // EINSTEIN WEAK-FIELD REFERENCE
         // ========================================================
-        let mass =
-            Double(field.densitySource.totalMass)
+        //
+        // alpha_GR = 4GM / (b c²)
+        //
+        // ========================================================
+
+        let physicalMassKg =
+            Double(
+                field
+                    .densitySource
+                    .totalMass
+            )
 
         let G =
-            Double(PhysicalConstants.G)
+            Double(
+                PhysicalConstants.G
+            )
 
         let c =
-            Double(PhysicalConstants.c)
-
-        let safeImpactParameter =
-            max(
-                impactParameter,
-                1.0e-12
+            Double(
+                PhysicalConstants.c
             )
+
+        let cSquared =
+            c * c
 
         let grAngle =
             4.0 *
             G *
-            mass /
+            physicalMassKg /
             (
                 safeImpactParameter *
-                c *
-                c
+                cSquared
             )
+
         // ========================================================
         // DIFFERENCE
         // ========================================================
 
-        let difference =
-            grAngle > 0.0
-            ? 100.0 *
+        let differencePercent: Double
+
+        if grAngle > 0.0 {
+
+            differencePercent =
+                100.0 *
                 (
                     qrtlAngle -
                     grAngle
                 ) /
                 grAngle
-            : 0.0
+
+        } else {
+
+            differencePercent = 0.0
+        }
+
+        // ========================================================
+        // ARCSECONDS
+        // ========================================================
+
+        let radiansToArcseconds =
+            Double(
+                PhysicalConstants
+                    .radiansToArcseconds
+            )
+
+        let qrtlArcseconds =
+            qrtlAngle *
+            radiansToArcseconds
+
+        let grArcseconds =
+            grAngle *
+            radiansToArcseconds
 
         // ========================================================
         // RESULT
@@ -309,15 +558,13 @@ final class QRTLExperiment {
                 grAngle,
 
             differencePercent:
-                difference,
+                differencePercent,
 
             qrtlDeflectionArcseconds:
-                qrtlAngle *
-                PhysicalConstants.radiansToArcseconds,
+                qrtlArcseconds,
 
             grDeflectionArcseconds:
-                grAngle *
-                PhysicalConstants.radiansToArcseconds
+                grArcseconds
         )
     }
 }

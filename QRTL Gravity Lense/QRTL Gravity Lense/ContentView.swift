@@ -4,89 +4,88 @@
 /*
  The key change is to stop making the photon follow the QRTL radial field vector. Instead, the QRTL field should behave as a central lensing potential whose transverse influence accumulates along the photon path.
  */
+//
+//  ContentView.swift
+//  QRTL Gravity Lense
+//
+//  Created by David Nishimoto on 8/18/26.
+//
+
 import SwiftUI
 import SceneKit
 import simd
 import Combine
 import UIKit
 
+struct ContentView: View {
 
-struct ContentView:
-    View {
+    // ============================================================
+    // PHYSICAL CLUSTER PARAMETERS
+    // ============================================================
 
-    
-    @State private var massSolar:
-        Double =
-        1_000_000
+    @State private var massSolar: Double =
+        1_000_000.0
 
-    @State private var radiusSolar:
-        Double =
-        35
+    @State private var radiusSolar: Double =
+        35.0
 
-    @State private var alphaQ:
-        Double =
+    // ============================================================
+    // QRTL PARAMETERS
+    // ============================================================
+
+    @State private var alphaQ: Double =
         5e-6
 
-    @State private var etaQ:
-        Double =
+    @State private var etaQ: Double =
         3.0
 
-    @State private var gammaQ:
-        Double =
+    @State private var gammaQ: Double =
         1.0
 
-    @State private var electromagneticCoupling:
-        Double =
+    @State private var electromagneticCoupling: Double =
         2e-11
 
-    @State private var photonEMCoupling:
-        Double =
+    @State private var photonEMCoupling: Double =
         5e-21
 
-    @State private var chiQ:
-        Double =
+    @State private var chiQ: Double =
         1.0
 
-    @State private var interactionRate:
-        Double =
+    @State private var interactionRate: Double =
         0.0
 
+    // ============================================================
+    // UI STATE
+    // ============================================================
 
-   
     @State private var result:
         QRTLExperimentResult?
 
-
     @State private var isRunning:
-        Bool =
-        false
-
+        Bool = false
 
     @State private var statusMessage:
         String =
         "Ready — source galaxy → QRTL lens → observation plane"
 
-
-  
-
     @State private var showControls:
-            Bool =
-            false
+        Bool = false
 
-        @State private var showPhotonPaths:
-            Bool =
-            true
+    @State private var showPhotonPaths:
+        Bool = true
 
-
+    // ============================================================
+    // SCENE CONTROLLER
+    // ============================================================
 
     @StateObject private var scene =
         LensingSceneController()
 
+    // ============================================================
+    // BODY
+    // ============================================================
 
-    var globularClusterPositions: [SIMD3<Float>] = []
-    
-    var body:
-        some View {
+    var body: some View {
 
         ZStack {
 
@@ -180,6 +179,10 @@ struct ContentView:
             }
         }
 
+        // ========================================================
+        // CONTROL SHEET
+        // ========================================================
+
         .sheet(
             isPresented:
                 $showControls
@@ -240,21 +243,15 @@ struct ContentView:
             )
         }
 
-        // ====================================================
-        // INITIAL SETUP
-        //
-        // Build the persistent scene furniture ONCE here.
-        // clearDynamic() (called inside runFullPipeline()) no
-        // longer removes the cluster/galaxy/bottom plane — see
-        // the earlier clearDynamic fix — so runFullPipeline()
-        // no longer needs to rebuild them on every call, and this
-        // no longer races against clearDynamic() wiping them out.
-        // ====================================================
+        // ========================================================
+        // INITIAL SCENE
+        // ========================================================
 
         .onAppear {
 
             scene.addGlobularCluster(
-                radius: 4.0
+                radius:
+                    4.0
             )
 
             scene.addSourceGalaxy()
@@ -264,8 +261,13 @@ struct ContentView:
             runFullPipeline()
         }
 
+        // ========================================================
+        // PHOTON PATH VISIBILITY
+        // ========================================================
+
         .onChange(
-            of: showPhotonPaths
+            of:
+                showPhotonPaths
         ) { _, visible in
 
             guard
@@ -279,7 +281,8 @@ struct ContentView:
 
                 scene.displayPhotonPaths(
                     output.photonPaths,
-                    field: output.field
+                    field:
+                        output.field
                 )
 
             } else {
@@ -289,10 +292,9 @@ struct ContentView:
         }
     }
 
-
-    // ========================================================
+    // ============================================================
     // RESET
-    // ========================================================
+    // ============================================================
 
     private func reset() {
 
@@ -328,24 +330,20 @@ struct ContentView:
         statusMessage =
             "Reset to pure GR"
 
-        // ----------------------------------------------------
-        // CLEAR PER-RUN OUTPUTS, THEN EXPLICITLY REBUILD
-        // FURNITURE
-        //
-        // addGlobularCluster / addSourceGalaxy / addFrontProjectionPlane /
-        // addBottomPlaceholder each remove their own previous node
-        // before adding a new one, so calling them again here is
-        // safe and idempotent — this deliberately gives Reset a
-        // "fresh start" look, distinct from a normal pipeline run
-        // which now leaves the cluster/galaxy alone.
-        // ----------------------------------------------------
+        // ========================================================
+        // CLEAR SCENE
+        // ========================================================
 
         scene.clearDynamic()
 
+        // SceneKit uses visualization units.
+        //
+        // Do NOT pass physical meters here.
+        //
+
         scene.addGlobularCluster(
             radius:
-                radiusSolar *
-                PhysicalConstants.solarRadius
+                4.0
         )
 
         scene.addSourceGalaxy()
@@ -358,10 +356,14 @@ struct ContentView:
         scene.addBottomPlaceholder()
     }
 
+    // ============================================================
+    // FULL PHYSICS PIPELINE
+    // ============================================================
 
     private func runFullPipeline() {
 
-        guard !isRunning else {
+        guard !isRunning
+        else {
             return
         }
 
@@ -369,8 +371,11 @@ struct ContentView:
         // LOCK PIPELINE
         // ========================================================
 
-        isRunning = true
-        result = nil
+        isRunning =
+            true
+
+        result =
+            nil
 
         statusMessage =
             "Starting QRTL lensing pipeline…"
@@ -383,21 +388,19 @@ struct ContentView:
             massSolar *
             PhysicalConstants.solarMass
 
-        let radius =
+        let radiusMeters =
             radiusSolar *
             PhysicalConstants.solarRadius
 
         let showPaths =
             showPhotonPaths
+        
+        let radius =
+              radiusSolar *
+              PhysicalConstants.solarRadius
 
         // ========================================================
-        // CLEAR PER-RUN PIPELINE OUTPUTS
-        // ========================================================
-
-        scene.clearDynamic()
-
-        // ========================================================
-        // CAPTURE SOURCE GALAXY
+        // SOURCE GALAXY
         // ========================================================
 
         let sourceStars =
@@ -433,6 +436,9 @@ struct ContentView:
 
         // ========================================================
         // LENSING PARAMETERS
+        //
+        // The photon is bent by the transverse spacetime
+        // gradient. It does NOT follow the radial QRTL vector.
         // ========================================================
 
         var lensingParameters =
@@ -448,16 +454,16 @@ struct ContentView:
             60.0
 
         lensingParameters.deflectionStrength =
-            0.35
+            1.0
 
         lensingParameters.qrtlLensingStrength =
-            0.40
+            1.0
 
         lensingParameters.qrtlFieldCoupling =
-            8.0
+            1.0
 
         lensingParameters.maximumPhotonBend =
-            0.12
+            0.35
 
         lensingParameters.projectionDistance =
             10.0
@@ -465,17 +471,26 @@ struct ContentView:
         lensingParameters.projectionPlaneHalfExtent =
             18.0
 
+        // ========================================================
+        // FIRST VALIDATION:
+        //
+        // GRAVITY ONLY
+        //
+        // Turn off EM/magnetic bending while validating the
+        // Einstein gravitational lens.
+        // ========================================================
+
         lensingParameters.magneticPhotonCoupling =
-            1.0
+            0.0
 
         lensingParameters.magneticBendingStrength =
-            1.0
+            0.0
 
         lensingParameters.currentCoupling =
-            1.0
+            0.0
 
         lensingParameters.electromagneticCoupling =
-            1.0
+            0.0
 
         // ========================================================
         // BACKGROUND PHYSICS
@@ -487,14 +502,26 @@ struct ContentView:
                 autoreleasepool {
 
                     // =================================================
-                    // STAGE 1 — QRTL EXPERIMENT
+                    // STAGE 1
+                    //
+                    // AUTHORITATIVE MASS + GRAVITY FIELD
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 1/4 — calculating QRTL field…"
+                            "Stage 1/4 — calculating Einstein spacetime field…"
                     }
+
+                    // =================================================
+                    // CREATE ONE AUTHORITATIVE EXPERIMENT
+                    //
+                    // mass:
+                    //     kg
+                    //
+                    // radiusMeters:
+                    //     meters
+                    // =================================================
 
                     let experiment =
                         QRTLExperiment(
@@ -505,6 +532,71 @@ struct ContentView:
                             parameters:
                                 params
                         )
+                    // =================================================
+                    // IMPORTANT
+                    //
+                    // DO NOT CREATE ANOTHER
+                    // GlobularClusterDensityMap HERE.
+                    //
+                    // experiment.field already contains:
+                    //
+                    //     1,000,000 solar masses
+                    //             ↓
+                    //     physical density
+                    //             ↓
+                    //     QRTL gravitational field
+                    // =================================================
+
+                    let field =
+                        experiment.field
+
+                    // =================================================
+                    // MASS CONSERVATION CHECK
+                    // =================================================
+
+                    let requestedMass =
+                        mass
+
+                    let actualMass =
+                        Double(
+                            field.densitySource.totalMass
+                        )
+
+                    let relativeMassError =
+                        requestedMass > 0.0
+                        ? abs(
+                            actualMass -
+                            requestedMass
+                        ) /
+                        requestedMass
+                        : 0.0
+
+                    print(
+                        """
+                        ================================================
+                        QRTL MASS VALIDATION
+                        ================================================
+                        Requested mass:
+                            \(requestedMass) kg
+
+                        Requested solar masses:
+                            \(massSolar)
+
+                        Field mass:
+                            \(actualMass) kg
+
+                        Relative mass error:
+                            \(relativeMassError)
+
+                        Physical radius:
+                            \(radiusMeters) m
+                        ================================================
+                        """
+                    )
+
+                    // =================================================
+                    // GRAVITATIONAL DEFLECTION TEST
+                    // =================================================
 
                     let outcome =
                         experiment.run(
@@ -524,33 +616,17 @@ struct ContentView:
                                 0.15 *
                                 PhysicalConstants.solarRadius
                         )
-                    let clusterDensitySource =
-                        GlobularClusterDensityMap(
-                            positions:
-                                globularClusterPositions,
-                            radius:
-                                Float(radius),
-                            totalMass:
-                                Float(mass),
-                            cellSize:
-                                0.20
-                        )
 
-                    let field =
-                        QRTLField(
-                            densitySource:
-                                clusterDensitySource,
-                            parameters:
-                                params
-                        )
                     // =================================================
-                    // STAGE 2 — SOURCE GALAXY PHOTONS
+                    // STAGE 2
+                    //
+                    // SOURCE GALAXY PHOTONS
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 2/4 — tracing galaxy photons…"
+                            "Stage 2/4 — tracing galaxy photons through spacetime…"
                     }
 
                     let photonBatch =
@@ -568,6 +644,10 @@ struct ContentView:
                                 showPaths
                         )
 
+                    // =================================================
+                    // PROJECTION
+                    // =================================================
+
                     let projection =
                         LensingProjectionResult.calculate(
                             from:
@@ -575,7 +655,7 @@ struct ContentView:
                         )
 
                     // =================================================
-                    // STAGE 3 — PREPARE PROJECTION
+                    // STAGE 3
                     // =================================================
 
                     DispatchQueue.main.async {
@@ -586,6 +666,7 @@ struct ContentView:
 
                     let output =
                         LensingPipelineOutput(
+
                             experimentResult:
                                 outcome,
 
@@ -617,6 +698,7 @@ struct ContentView:
 
                     let heatmapImage =
                         QRTLHeatmapGenerator.makeHeatmapImage(
+
                             field:
                                 field,
 
@@ -630,34 +712,27 @@ struct ContentView:
                         )
 
                     // =================================================
-                    // STAGE 4 — RENDER
+                    // STAGE 4
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 4/4 — rendering QRTL gravity surface…"
+                            "Stage 4/4 — rendering Einstein/QRTL gravity surface…"
 
                         // ------------------------------------------------
-                        // RENDER NORMAL PIPELINE OUTPUT
+                        // NORMAL PIPELINE OUTPUT
                         // ------------------------------------------------
 
                         self.scene.renderPipelineOutput(
                             output,
+
                             showPhotonPaths:
                                 showPaths
                         )
 
                         // ------------------------------------------------
-                        // INSTALL COMPLETE QRTL GRAVITY SURFACE
-                        //
-                        // QRTLGravitySurfaceEntity owns:
-                        //
-                        //   • curved gravity surface
-                        //   • photon A paths
-                        //   • photon B paths
-                        //   • galaxy A projection
-                        //   • galaxy B projection
+                        // QRTL GRAVITY SURFACE
                         // ------------------------------------------------
 
                         self.scene.installQRTLGravitySurface(
@@ -666,14 +741,11 @@ struct ContentView:
                         )
 
                         // ------------------------------------------------
-                        // OPTIONAL EXISTING SPACETIME SURFACE
-                        //
-                        // Keep this only if you still want the older
-                        // deformed heatmap surface in addition to the
-                        // QRTLGravitySurfaceEntity.
+                        // DEFORMED SPACETIME SURFACE
                         // ------------------------------------------------
 
                         self.scene.addDeformedSpacetimeSurface(
+
                             field:
                                 field,
 
@@ -682,7 +754,7 @@ struct ContentView:
                         )
 
                         // ------------------------------------------------
-                        // RESULTS
+                        // FINAL RESULT
                         // ------------------------------------------------
 
                         self.result =
@@ -700,7 +772,7 @@ struct ContentView:
             }
 
         // ========================================================
-        // EXECUTE BACKGROUND WORK
+        // EXECUTE
         // ========================================================
 
         DispatchQueue.global(

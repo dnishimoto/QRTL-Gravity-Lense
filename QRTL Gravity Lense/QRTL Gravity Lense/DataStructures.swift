@@ -96,6 +96,44 @@ struct SourceGalaxyStar:
     }
 }
 
+// ============================================================
+// CELLULAR-AUTOMATA DENSITY SOURCE
+// ============================================================
+//
+// density()
+//      = dimensionless cellular-automata spatial distribution
+//
+// integratedDensity
+//      = integral of CA density over physical volume
+//
+// fieldRadiusMeters
+//      = physical radius represented by the cluster
+//
+// The physical normalization is:
+//
+// rhoPhysical(r)
+//      = rhoCA(r) * Mcluster / integratedDensity
+//
+// Therefore:
+//
+// ∫ rhoPhysical dV = Mcluster
+//
+// ============================================================
+
+protocol GlobularClusterDensitySource {
+
+    func density(
+        at position: SIMD3<Float>
+    ) -> Float
+
+    var totalMass: Float { get }
+
+    var maximumDensity: Float { get }
+
+    var integratedDensity: Float { get }
+
+    var fieldRadiusMeters: Float { get }
+}
 struct ControlsSheet:
     View {
 
