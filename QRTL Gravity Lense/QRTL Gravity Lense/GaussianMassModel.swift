@@ -1,13 +1,4 @@
 //
-//  File.swift
-//  QRTL Gravity Lense
-//
-//  Created by David Nishimoto on 8/19/26.
-//
-
-import Foundation
-
-//
 //  GaussianMassModel.swift
 //  QRTL Gravity Lense
 //

@@ -381,7 +381,9 @@ struct ContentView:
 
     private func runFullPipeline() {
 
-        guard !isRunning else { return }
+        guard !isRunning else {
+            return
+        }
 
         // ========================================================
         // LOCK PIPELINE
@@ -390,8 +392,8 @@ struct ContentView:
         isRunning = true
         result = nil
 
-        statusMessage = "Starting QRTL lensing pipeline…"
-
+        statusMessage =
+            "Starting QRTL lensing pipeline…"
 
         // ========================================================
         // CAPTURE SWIFTUI VALUES
@@ -408,13 +410,11 @@ struct ContentView:
         let showPaths =
             showPhotonPaths
 
-
         // ========================================================
         // CLEAR PER-RUN PIPELINE OUTPUTS
         // ========================================================
 
         scene.clearDynamic()
-
 
         // ========================================================
         // CAPTURE SOURCE GALAXY
@@ -422,7 +422,6 @@ struct ContentView:
 
         let sourceStars =
             scene.sourceGalaxyStars
-
 
         // ========================================================
         // QRTL PARAMETERS
@@ -452,10 +451,8 @@ struct ContentView:
         params.photonEMCoupling =
             photonEMCoupling
 
-
         // ========================================================
         // LENSING PARAMETERS
-        // (stronger deflection + wider plane for two clear images)
         // ========================================================
 
         var lensingParameters =
@@ -470,7 +467,6 @@ struct ContentView:
         lensingParameters.maximumPropagationRadius =
             60.0
 
-        // Stronger values so the two photon families separate
         lensingParameters.deflectionStrength =
             0.35
 
@@ -483,7 +479,6 @@ struct ContentView:
         lensingParameters.maximumPhotonBend =
             0.12
 
-        // Wider projection plane so fewer hits are clipped
         lensingParameters.projectionDistance =
             10.0
 
@@ -502,7 +497,6 @@ struct ContentView:
         lensingParameters.electromagneticCoupling =
             1.0
 
-
         // ========================================================
         // BACKGROUND PHYSICS
         // ========================================================
@@ -517,145 +511,224 @@ struct ContentView:
                     // =================================================
 
                     DispatchQueue.main.async {
+
                         self.statusMessage =
                             "Stage 1/4 — calculating QRTL field…"
                     }
 
                     let experiment =
                         QRTLExperiment(
-                            mass: mass,
-                            radius: radius,
-                            parameters: params
+                            mass:
+                                mass,
+                            radius:
+                                radius,
+                            parameters:
+                                params
                         )
 
                     let outcome =
                         experiment.run(
                             impactParameter:
-                                0.15 * PhysicalConstants.solarRadius,
+                                0.15 *
+                                PhysicalConstants.solarRadius,
+
                             startDistance:
-                                6.0 * PhysicalConstants.solarRadius,
+                                6.0 *
+                                PhysicalConstants.solarRadius,
+
                             endDistance:
-                                6.0 * PhysicalConstants.solarRadius,
+                                6.0 *
+                                PhysicalConstants.solarRadius,
+
                             stepSize:
-                                0.15 * PhysicalConstants.solarRadius
+                                0.15 *
+                                PhysicalConstants.solarRadius
                         )
 
                     let field =
                         QRTLField(
                             massModel:
                                 GaussianMassModel(
-                                    totalMass: mass,
-                                    characteristicRadius:
-                                        max(radius, 0.0001)
-                                ),
-                            parameters: params
-                        )
+                                    totalMass:
+                                        mass,
 
+                                    characteristicRadius:
+                                        max(
+                                            radius,
+                                            0.0001
+                                        )
+                                ),
+
+                            parameters:
+                                params
+                        )
 
                     // =================================================
                     // STAGE 2 — SOURCE GALAXY PHOTONS
                     // =================================================
 
                     DispatchQueue.main.async {
+
                         self.statusMessage =
                             "Stage 2/4 — tracing galaxy photons…"
                     }
 
                     let photonBatch =
                         self.scene.traceSourceGalaxy(
-                            stars: sourceStars,
-                            field: field,
-                            parameters: lensingParameters,
-                            showPaths: showPaths
+                            stars:
+                                sourceStars,
+
+                            field:
+                                field,
+
+                            parameters:
+                                lensingParameters,
+
+                            showPaths:
+                                showPaths
                         )
 
                     let projection =
                         LensingProjectionResult.calculate(
-                            from: photonBatch.hits
+                            from:
+                                photonBatch.hits
                         )
 
-
                     // =================================================
-                    // STAGE 3
+                    // STAGE 3 — PREPARE PROJECTION
                     // =================================================
 
                     DispatchQueue.main.async {
+
                         self.statusMessage =
                             "Stage 3/4 — preparing projection scene…"
                     }
 
                     let output =
                         LensingPipelineOutput(
-                            experimentResult: outcome,
-                            field: field,
-                            photonTraces: photonBatch.traces,
-                            photonPaths: photonBatch.paths,
-                            photonHits: photonBatch.hits,
-                            projection: projection,
-                            tracedPhotonCount: photonBatch.traces.count,
-                            successfulProjectionHits: photonBatch.hits.count
+                            experimentResult:
+                                outcome,
+
+                            field:
+                                field,
+
+                            photonTraces:
+                                photonBatch.traces,
+
+                            photonPaths:
+                                photonBatch.paths,
+
+                            photonHits:
+                                photonBatch.hits,
+
+                            projection:
+                                projection,
+
+                            tracedPhotonCount:
+                                photonBatch.traces.count,
+
+                            successfulProjectionHits:
+                                photonBatch.hits.count
                         )
 
-
                     // =================================================
-                    // COMPUTE HEATMAP IMAGE (background)
+                    // HEATMAP
                     // =================================================
 
                     let heatmapImage =
                         QRTLHeatmapGenerator.makeHeatmapImage(
-                            field: field,
-                            size: 128,
+                            field:
+                                field,
+
+                            size:
+                                128,
+
                             halfExtent:
-                                Double(self.scene.heatmapHalfExtent)
+                                Double(
+                                    self.scene.heatmapHalfExtent
+                                )
                         )
 
-
                     // =================================================
-                    // STAGE 4 — RENDER (main thread)
+                    // STAGE 4 — RENDER
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 4/4 — rendering projection…"
+                            "Stage 4/4 — rendering QRTL gravity surface…"
+
+                        // ------------------------------------------------
+                        // RENDER NORMAL PIPELINE OUTPUT
+                        // ------------------------------------------------
 
                         self.scene.renderPipelineOutput(
                             output,
-                            showPhotonPaths: showPaths
+                            showPhotonPaths:
+                                showPaths
                         )
 
-                        // CHANGED: replaces the old flat
-                        // applyBottomHeatmap(heatmapImage) call.
-                        // Uses the same `field` computed in Stage 1
-                        // to deform the surface mesh (mass density +
-                        // QRTL/Bolgarino flux), then textures it with
-                        // the same heatmap image as before.
+                        // ------------------------------------------------
+                        // INSTALL COMPLETE QRTL GRAVITY SURFACE
+                        //
+                        // QRTLGravitySurfaceEntity owns:
+                        //
+                        //   • curved gravity surface
+                        //   • photon A paths
+                        //   • photon B paths
+                        //   • galaxy A projection
+                        //   • galaxy B projection
+                        // ------------------------------------------------
+
+                        self.scene.installQRTLGravitySurface(
+                            field:
+                                field
+                        )
+
+                        // ------------------------------------------------
+                        // OPTIONAL EXISTING SPACETIME SURFACE
+                        //
+                        // Keep this only if you still want the older
+                        // deformed heatmap surface in addition to the
+                        // QRTLGravitySurfaceEntity.
+                        // ------------------------------------------------
+
                         self.scene.addDeformedSpacetimeSurface(
-                            field: field,
-                            heatmap: heatmapImage
+                            field:
+                                field,
+
+                            heatmap:
+                                heatmapImage
                         )
 
-                        self.result = outcome
+                        // ------------------------------------------------
+                        // RESULTS
+                        // ------------------------------------------------
+
+                        self.result =
+                            outcome
 
                         self.statusMessage =
                             "Projection complete — " +
-                            "\(output.successfulProjectionHits) photon hits, " +
-                            "\(output.photonPaths.count) photon paths"
+                            "\(photonBatch.hits.count) photon hits, " +
+                            "\(photonBatch.paths.count) photon paths"
 
-                        self.isRunning = false
+                        self.isRunning =
+                            false
                     }
                 }
             }
-
 
         // ========================================================
         // EXECUTE BACKGROUND WORK
         // ========================================================
 
         DispatchQueue.global(
-            qos: .userInitiated
+            qos:
+                .userInitiated
         ).async(
-            execute: physicsWorkItem
+            execute:
+                physicsWorkItem
         )
     }
 }

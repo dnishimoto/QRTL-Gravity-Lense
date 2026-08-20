@@ -79,6 +79,8 @@ final class LensingSceneController:
     private let photonPathRoot =
         SCNNode()
 
+    private(set) var qrtlGravitySurface:
+            QRTLGravitySurfaceEntity?
 
     // ========================================================
     // SHARED MATERIALS (FIX #3)
@@ -216,7 +218,33 @@ final class LensingSceneController:
         addAxes()
         addBottomPlaceholder()
         addFrontProjectionPlane(empty: true)
+      
     }
+    func installQRTLGravitySurface(
+        field: QRTLField
+    ) {
+
+        qrtlGravitySurface?.removeFromParentNode()
+        qrtlGravitySurface = nil
+
+        let entity =
+            QRTLGravitySurfaceEntity(
+                field: field,
+                gridSize: 64,
+                extent: 18.0,
+                numberOfStars: 220,
+                photonSteps: 500,
+                curvatureScale: 1.0
+            )
+
+        qrtlGravitySurface =
+            entity
+
+        scene.rootNode.addChildNode(
+            entity
+        )
+    }
+   
     // ============================================================
     // PHOTON PATH → GR SURFACE-RIDING SPLINE
     //
