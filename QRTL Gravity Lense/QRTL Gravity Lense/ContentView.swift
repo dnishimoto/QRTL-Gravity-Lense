@@ -20,69 +20,48 @@ import UIKit
 struct ContentView: View {
 
     // ============================================================
-    // PHYSICAL CLUSTER PARAMETERS
+    // MARK: - PHYSICAL CLUSTER PARAMETERS
     // ============================================================
 
-    @State private var massSolar: Double =
-        1_000_000.0
-
-    @State private var radiusSolar: Double =
-        35.0
+    @State private var massSolar: Double = 1_000_000.0
+    @State private var radiusSolar: Double = 35.0
 
     // ============================================================
-    // QRTL PARAMETERS
+    // MARK: - QRTL PARAMETERS
     // ============================================================
 
-    @State private var alphaQ: Double =
-        5e-6
-
-    @State private var etaQ: Double =
-        3.0
-
-    @State private var gammaQ: Double =
-        1.0
-
-    @State private var electromagneticCoupling: Double =
-        2e-11
-
-    @State private var photonEMCoupling: Double =
-        5e-21
-
-    @State private var chiQ: Double =
-        1.0
-
-    @State private var interactionRate: Double =
-        0.0
+    @State private var alphaQ: Double = 5e-6
+    @State private var etaQ: Double = 3.0
+    @State private var gammaQ: Double = 1.0
+    @State private var electromagneticCoupling: Double = 2e-11
+    @State private var photonEMCoupling: Double = 5e-21
+    @State private var chiQ: Double = 1.0
+    @State private var interactionRate: Double = 0.0
 
     // ============================================================
-    // UI STATE
+    // MARK: - UI STATE
     // ============================================================
 
-    @State private var result:
-        QRTLExperimentResult?
+    @State private var result: QRTLExperimentResult?
 
-    @State private var isRunning:
-        Bool = false
+    @State private var isRunning: Bool = false
 
-    @State private var statusMessage:
-        String =
+    @State private var statusMessage: String =
         "Ready — source galaxy → QRTL lens → observation plane"
 
-    @State private var showControls:
-        Bool = false
+    @State private var showControls: Bool = false
 
-    @State private var showPhotonPaths:
-        Bool = true
+    @State private var showPhotonPaths: Bool = true
 
     // ============================================================
-    // SCENE CONTROLLER
+    // MARK: - SCENE CONTROLLER
     // ============================================================
 
     @StateObject private var scene =
         LensingSceneController()
 
     // ============================================================
-    // BODY
+    // MARK: - BODY
     // ============================================================
 
     var body: some View {
@@ -90,8 +69,7 @@ struct ContentView: View {
         ZStack {
 
             LensingSceneView(
-                controller:
-                    scene
+                controller: scene
             )
             .ignoresSafeArea()
 
@@ -100,41 +78,26 @@ struct ContentView: View {
                 Spacer()
 
                 Toggle(
-                    isOn:
-                        $showPhotonPaths
+                    isOn: $showPhotonPaths
                 ) {
 
                     Label(
                         "Smooth Photon Paths",
-                        systemImage:
-                            "wave.3.forward"
+                        systemImage: "wave.3.forward"
                     )
                     .labelStyle(
                         .titleAndIcon
                     )
                 }
-                .padding(
-                    .horizontal
-                )
-                .padding(
-                    .bottom,
-                    16
-                )
-                .foregroundColor(
-                    .white
-                )
+                .padding(.horizontal)
+                .padding(.bottom, 16)
+                .foregroundColor(.white)
                 .background(
                     .ultraThinMaterial,
-                    in:
-                        Capsule()
+                    in: Capsule()
                 )
-                .tint(
-                    .pink
-                )
-                .frame(
-                    maxWidth:
-                        250
-                )
+                .tint(.pink)
+                .frame(maxWidth: 250)
 
                 HStack {
 
@@ -142,8 +105,7 @@ struct ContentView: View {
 
                     Button {
 
-                        showControls =
-                            true
+                        showControls = true
 
                     } label: {
 
@@ -156,23 +118,15 @@ struct ContentView: View {
                                 .semibold
                             )
                         )
-                        .foregroundStyle(
-                            .white
-                        )
-                        .padding(
-                            16
-                        )
+                        .foregroundStyle(.white)
+                        .padding(16)
                         .background(
                             .ultraThinMaterial,
-                            in:
-                                Circle()
+                            in: Circle()
                         )
                     }
                     .padding(
-                        [
-                            .trailing,
-                            .bottom
-                        ],
+                        [.trailing, .bottom],
                         28
                     )
                 }
@@ -180,12 +134,11 @@ struct ContentView: View {
         }
 
         // ========================================================
-        // CONTROL SHEET
+        // MARK: - CONTROL SHEET
         // ========================================================
 
         .sheet(
-            isPresented:
-                $showControls
+            isPresented: $showControls
         ) {
 
             ControlsSheet(
@@ -233,10 +186,7 @@ struct ContentView: View {
                     reset
             )
             .presentationDetents(
-                [
-                    .medium,
-                    .large
-                ]
+                [.medium, .large]
             )
             .presentationDragIndicator(
                 .visible
@@ -244,14 +194,13 @@ struct ContentView: View {
         }
 
         // ========================================================
-        // INITIAL SCENE
+        // MARK: - INITIAL SCENE
         // ========================================================
 
         .onAppear {
 
             scene.addGlobularCluster(
-                radius:
-                    4.0
+                radius: 4.0
             )
 
             scene.addSourceGalaxy()
@@ -262,12 +211,11 @@ struct ContentView: View {
         }
 
         // ========================================================
-        // PHOTON PATH VISIBILITY
+        // MARK: - PHOTON PATH VISIBILITY
         // ========================================================
 
         .onChange(
-            of:
-                showPhotonPaths
+            of: showPhotonPaths
         ) { _, visible in
 
             guard
@@ -281,8 +229,7 @@ struct ContentView: View {
 
                 scene.displayPhotonPaths(
                     output.photonPaths,
-                    field:
-                        output.field
+                    field: output.field
                 )
 
             } else {
@@ -293,42 +240,29 @@ struct ContentView: View {
     }
 
     // ============================================================
-    // RESET
+    // MARK: - RESET
     // ============================================================
 
     private func reset() {
 
-        guard !isRunning
-        else {
+        guard !isRunning else {
             return
         }
 
-        alphaQ =
-            0.0
+        alphaQ = 0.0
+        etaQ = 0.0
+        gammaQ = 1.0
 
-        etaQ =
-            0.0
+        electromagneticCoupling = 0.0
+        photonEMCoupling = 0.0
 
-        gammaQ =
-            1.0
+        chiQ = 1.0
+        interactionRate = 0.0
 
-        electromagneticCoupling =
-            0.0
-
-        photonEMCoupling =
-            0.0
-
-        chiQ =
-            1.0
-
-        interactionRate =
-            0.0
-
-        result =
-            nil
+        result = nil
 
         statusMessage =
-            "Reset to pure GR"
+            "Reset to QRTL gravity-only mode"
 
         // ========================================================
         // CLEAR SCENE
@@ -336,34 +270,26 @@ struct ContentView: View {
 
         scene.clearDynamic()
 
-        // SceneKit uses visualization units.
-        //
-        // Do NOT pass physical meters here.
-        //
-
         scene.addGlobularCluster(
-            radius:
-                4.0
+            radius: 4.0
         )
 
         scene.addSourceGalaxy()
 
         scene.addFrontProjectionPlane(
-            empty:
-                true
+            empty: true
         )
 
         scene.addBottomPlaceholder()
     }
 
     // ============================================================
-    // FULL PHYSICS PIPELINE
+    // MARK: - FULL PHYSICS PIPELINE
     // ============================================================
 
     private func runFullPipeline() {
 
-        guard !isRunning
-        else {
+        guard !isRunning else {
             return
         }
 
@@ -371,11 +297,8 @@ struct ContentView: View {
         // LOCK PIPELINE
         // ========================================================
 
-        isRunning =
-            true
-
-        result =
-            nil
+        isRunning = true
+        result = nil
 
         statusMessage =
             "Starting QRTL lensing pipeline…"
@@ -394,20 +317,12 @@ struct ContentView: View {
 
         let showPaths =
             showPhotonPaths
-        
+
         let radius =
-              radiusSolar *
-              PhysicalConstants.solarRadius
+            radiusMeters
 
         // ========================================================
-        // SOURCE GALAXY
-        // ========================================================
-
-        let sourceStars =
-            scene.sourceGalaxyStars
-
-        // ========================================================
-        // QRTL PARAMETERS
+        // MARK: - QRTL PHYSICAL PARAMETERS
         // ========================================================
 
         var params =
@@ -435,26 +350,17 @@ struct ContentView: View {
             photonEMCoupling
 
         // ========================================================
-        // LENSING PARAMETERS
-        //
-        // The photon is bent by the transverse spacetime
-        // gradient. It does NOT follow the radial QRTL vector.
+        // MARK: - PHOTON LENSING PARAMETERS
         // ========================================================
 
         var lensingParameters =
             LensingParameters()
 
-        lensingParameters.photonStepSize =
-            0.04
-
-        lensingParameters.maximumPhotonSteps =
-            1500
-
-        lensingParameters.maximumPropagationRadius =
-            60.0
-
-        lensingParameters.deflectionStrength =
-            1.0
+    
+   
+        // --------------------------------------------------------
+        // QRTL gravitational bending
+        // --------------------------------------------------------
 
         lensingParameters.qrtlLensingStrength =
             1.0
@@ -465,35 +371,42 @@ struct ContentView: View {
         lensingParameters.maximumPhotonBend =
             0.35
 
-        lensingParameters.projectionDistance =
-            10.0
+        // --------------------------------------------------------
+        // Electromagnetic photon interaction
+        // --------------------------------------------------------
+
+        lensingParameters.electromagneticCoupling =
+            Float(
+                electromagneticCoupling
+            )
+
+        lensingParameters.magneticPhotonCoupling =
+            1.0
+
+        lensingParameters.magneticBendingStrength =
+            1.0
+
 
         lensingParameters.projectionPlaneHalfExtent =
             18.0
 
-        // ========================================================
-        // FIRST VALIDATION:
-        //
-        // GRAVITY ONLY
-        //
-        // Turn off EM/magnetic bending while validating the
-        // Einstein gravitational lens.
-        // ========================================================
-
-        lensingParameters.magneticPhotonCoupling =
-            0.0
-
-        lensingParameters.magneticBendingStrength =
-            0.0
+        // --------------------------------------------------------
+        // Optional interaction parameters
+        // --------------------------------------------------------
 
         lensingParameters.currentCoupling =
-            0.0
+            1.0
 
-        lensingParameters.electromagneticCoupling =
-            0.0
+        lensingParameters.interactionRate =
+            Float(
+                interactionRate
+            )
+
+        lensingParameters.qrtlPhotonCoupling =
+            0.25
 
         // ========================================================
-        // BACKGROUND PHYSICS
+        // PHYSICS WORK
         // ========================================================
 
         let physicsWorkItem =
@@ -503,49 +416,29 @@ struct ContentView: View {
 
                     // =================================================
                     // STAGE 1
-                    //
-                    // AUTHORITATIVE MASS + GRAVITY FIELD
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 1/4 — calculating Einstein spacetime field…"
+                            "Stage 1/4 — calculating QRTL spacetime field…"
                     }
 
                     // =================================================
-                    // CREATE ONE AUTHORITATIVE EXPERIMENT
-                    //
-                    // mass:
-                    //     kg
-                    //
-                    // radiusMeters:
-                    //     meters
+                    // AUTHORITATIVE QRTL EXPERIMENT
                     // =================================================
 
                     let experiment =
                         QRTLExperiment(
                             mass:
                                 mass,
+
                             radius:
                                 radius,
+
                             parameters:
                                 params
                         )
-                    // =================================================
-                    // IMPORTANT
-                    //
-                    // DO NOT CREATE ANOTHER
-                    // GlobularClusterDensityMap HERE.
-                    //
-                    // experiment.field already contains:
-                    //
-                    //     1,000,000 solar masses
-                    //             ↓
-                    //     physical density
-                    //             ↓
-                    //     QRTL gravitational field
-                    // =================================================
 
                     let field =
                         experiment.field
@@ -564,18 +457,22 @@ struct ContentView: View {
 
                     let relativeMassError =
                         requestedMass > 0.0
-                        ? abs(
+                        ?
+                        abs(
                             actualMass -
                             requestedMass
-                        ) /
+                        )
+                        /
                         requestedMass
-                        : 0.0
+                        :
+                        0.0
 
                     print(
                         """
                         ================================================
                         QRTL MASS VALIDATION
                         ================================================
+
                         Requested mass:
                             \(requestedMass) kg
 
@@ -590,16 +487,18 @@ struct ContentView: View {
 
                         Physical radius:
                             \(radiusMeters) m
+
                         ================================================
                         """
                     )
 
                     // =================================================
-                    // GRAVITATIONAL DEFLECTION TEST
+                    // GRAVITATIONAL VALIDATION
                     // =================================================
 
                     let outcome =
                         experiment.run(
+
                             impactParameter:
                                 0.15 *
                                 PhysicalConstants.solarRadius,
@@ -619,29 +518,26 @@ struct ContentView: View {
 
                     // =================================================
                     // STAGE 2
-                    //
                     // SOURCE GALAXY PHOTONS
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 2/4 — tracing galaxy photons through spacetime…"
+                            "Stage 2/4 — tracing galaxy photons through QRTL gravity and EM field…"
                     }
+
+                    // =================================================
+                    // TRACE EVERY SOURCE GALAXY STAR
+                    // =================================================
 
                     let photonBatch =
                         self.scene.traceSourceGalaxy(
-                            stars:
-                                sourceStars,
-
                             field:
                                 field,
 
                             parameters:
-                                lensingParameters,
-
-                            showPaths:
-                                showPaths
+                                lensingParameters
                         )
 
                     // =================================================
@@ -656,12 +552,13 @@ struct ContentView: View {
 
                     // =================================================
                     // STAGE 3
+                    // PREPARE OUTPUT
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 3/4 — preparing projection scene…"
+                            "Stage 3/4 — preparing two-galaxy projection…"
                     }
 
                     let output =
@@ -713,20 +610,20 @@ struct ContentView: View {
 
                     // =================================================
                     // STAGE 4
+                    // RENDER EVERYTHING
                     // =================================================
 
                     DispatchQueue.main.async {
 
                         self.statusMessage =
-                            "Stage 4/4 — rendering Einstein/QRTL gravity surface…"
+                            "Stage 4/4 — rendering QRTL gravity surface and photon projection…"
 
                         // ------------------------------------------------
-                        // NORMAL PIPELINE OUTPUT
+                        // PHOTON / PROJECTION OUTPUT
                         // ------------------------------------------------
 
                         self.scene.renderPipelineOutput(
                             output,
-
                             showPhotonPaths:
                                 showPaths
                         )
@@ -745,7 +642,6 @@ struct ContentView: View {
                         // ------------------------------------------------
 
                         self.scene.addDeformedSpacetimeSurface(
-
                             field:
                                 field,
 
@@ -754,11 +650,18 @@ struct ContentView: View {
                         )
 
                         // ------------------------------------------------
-                        // FINAL RESULT
+                        // STORE PIPELINE OUTPUT
                         // ------------------------------------------------
+
+                        self.scene.lastPipelineOutput =
+                            output
 
                         self.result =
                             outcome
+
+                        // ------------------------------------------------
+                        // FINAL STATUS
+                        // ------------------------------------------------
 
                         self.statusMessage =
                             "Projection complete — " +
@@ -776,9 +679,9 @@ struct ContentView: View {
         // ========================================================
 
         DispatchQueue.global(
-            qos:
-                .userInitiated
-        ).async(
+            qos: .userInitiated
+        )
+        .async(
             execute:
                 physicsWorkItem
         )

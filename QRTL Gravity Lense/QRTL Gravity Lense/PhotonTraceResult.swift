@@ -1,5 +1,5 @@
 //
-//  File.swift
+//  PhotonTraceResult.swift
 //  QRTL Gravity Lense
 //
 //  Created by David Nishimoto on 8/18/26.
@@ -7,216 +7,82 @@
 
 import Foundation
 import simd
+
 // ============================================================
 // PHOTON TRACE RESULT
+// ============================================================
 //
-// Complete diagnostic/result state for one photon.
+// Stores the complete result of a QRTL photon integration.
 //
-// This structure is shared by:
-//     tracePhoton()
-//     ContentView
-//     makeHit()
-//     projection rendering
+// Coordinate convention:
+//
+//     X = photon propagation direction
+//     Y = transverse lensing direction
+//     Z = second transverse direction
+//
+// The tracer performs its numerical integration using
+// SIMD3<Double>.  The result is converted to Float for the
+// SceneKit / visualization pipeline.
+//
 // ============================================================
 
 struct PhotonTraceResult {
 
-    // =========================================================
-    // COMPLETE PHOTON PATH
-    // =========================================================
+    let origin: SIMD3<Float>
+    let direction: SIMD3<Float>
 
-    let positions:
-        [SIMD3<Float>]
+    let positions: [SIMD3<Float>]
 
+    let finalPosition: SIMD3<Float>
+    let finalDirection: SIMD3<Float>
 
-    // =========================================================
-    // STARTING STATE
-    // =========================================================
+    let hitProjection: Bool
 
-    let origin:
-        SIMD3<Float>
+    let projectionPoint: SIMD3<Float>?
+    let projectionCoordinates: SIMD2<Float>?
 
+    let stepCount: Int
+    let traveledDistance: Float
 
-    // =========================================================
-    // FINAL STATE
-    // =========================================================
+    let maximumQRTLInfluence: Float
+    let maximumMagneticField: Float
+    let maximumMagneticPhotonInfluence: Float
 
-    let finalPosition:
-        SIMD3<Float>
-
-    let finalDirection:
-        SIMD3<Float>
-
-
-    // =========================================================
-    // PROJECTION
-    // =========================================================
-
-    let hitProjection:
-        Bool
-
-    let projectionPosition:
-        SIMD3<Float>?
-
-    let projectionCoordinates:
-        SIMD2<Float>?
-
-
-    // =========================================================
-    // INTEGRATION
-    // =========================================================
-
-    let stepCount:
-        Int
-
-    let traveledDistance:
-        Float
-
-
-    // =========================================================
-    // QRTL DIAGNOSTICS
-    // =========================================================
-
-    let maximumQRTLInfluence:
-        Float
-
-
-    // =========================================================
-    // MAGNETIC DIAGNOSTICS
-    // =========================================================
-
-    let maximumMagneticField:
-        Float
-
-    let maximumMagneticPhotonInfluence:
-        Float
-
-
-    // =========================================================
-    // BACKWARD-COMPATIBLE ALIAS
-    //
-    // Existing code can continue using:
-    //
-    // trace.projectionPoint
-    //
-    // while the stored property remains:
-    //
-    // projectionPosition
-    // =========================================================
-
-    var projectionPoint:
-        SIMD3<Float>? {
-
-        return projectionPosition
-    }
-
-
-    // =========================================================
-    // BACKWARD-COMPATIBLE ALIAS
-    //
-    // Existing code can continue using:
-    //
-    // trace.path
-    // =========================================================
-
-    var path:
-        [SIMD3<Float>] {
-
-        return positions
-    }
-
-
-    // =========================================================
-    // BACKWARD-COMPATIBLE ALIAS
-    //
-    // Existing code can continue using:
-    //
-    // trace.reachedTarget
-    // =========================================================
-
-    var reachedTarget:
-        Bool {
-
-        return hitProjection
-    }
-
-
-    // =========================================================
-    // INITIALIZER
-    // =========================================================
+    let sourceCoordinates: SIMD3<Float>?
+    let interactionCount: Int
 
     init(
-        positions:
-            [SIMD3<Float>],
-
-        origin:
-            SIMD3<Float>,
-
-        finalPosition:
-            SIMD3<Float>,
-
-        finalDirection:
-            SIMD3<Float>,
-
-        hitProjection:
-            Bool,
-
-        projectionPosition:
-            SIMD3<Float>?,
-
-        projectionCoordinates:
-            SIMD2<Float>? = nil,
-
-        stepCount:
-            Int,
-
-        traveledDistance:
-            Float,
-
-        maximumQRTLInfluence:
-            Float,
-
-        maximumMagneticField:
-            Float,
-
-        maximumMagneticPhotonInfluence:
-            Float
+        origin: SIMD3<Float>,
+        direction: SIMD3<Float>,
+        positions: [SIMD3<Float>],
+        finalPosition: SIMD3<Float>,
+        finalDirection: SIMD3<Float>,
+        hitProjection: Bool,
+        projectionPoint: SIMD3<Float>?,
+        projectionCoordinates: SIMD2<Float>?,
+        stepCount: Int,
+        traveledDistance: Float,
+        maximumQRTLInfluence: Float,
+        maximumMagneticField: Float,
+        maximumMagneticPhotonInfluence: Float,
+        sourceCoordinates: SIMD3<Float>?,
+        interactionCount: Int
     ) {
-
-        self.positions =
-            positions
-
-        self.origin =
-            origin
-
-        self.finalPosition =
-            finalPosition
-
-        self.finalDirection =
-            finalDirection
-
-        self.hitProjection =
-            hitProjection
-
-        self.projectionPosition =
-            projectionPosition
-
-        self.projectionCoordinates =
-            projectionCoordinates
-
-        self.stepCount =
-            stepCount
-
-        self.traveledDistance =
-            traveledDistance
-
-        self.maximumQRTLInfluence =
-            maximumQRTLInfluence
-
-        self.maximumMagneticField =
-            maximumMagneticField
-
+        self.origin = origin
+        self.direction = direction
+        self.positions = positions
+        self.finalPosition = finalPosition
+        self.finalDirection = finalDirection
+        self.hitProjection = hitProjection
+        self.projectionPoint = projectionPoint
+        self.projectionCoordinates = projectionCoordinates
+        self.stepCount = stepCount
+        self.traveledDistance = traveledDistance
+        self.maximumQRTLInfluence = maximumQRTLInfluence
+        self.maximumMagneticField = maximumMagneticField
         self.maximumMagneticPhotonInfluence =
             maximumMagneticPhotonInfluence
+        self.sourceCoordinates = sourceCoordinates
+        self.interactionCount = interactionCount
     }
 }

@@ -2,25 +2,18 @@
 //  QRTLPhotonTracer.swift
 //  QRTL Gravity Lense
 //
-//  Photon propagation through the QRTL gravitational surface.
-//
-//  Primary mechanism:
-//      QRTLGravitySurface / QRTL gravitational field
-//
-//  Secondary mechanism:
-//      electromagnetic optical refraction
-//
-//  The photon is propagated step-by-step through the field.
-//  At every step the gravitational curvature perpendicular
-//  to the current photon direction changes the direction.
-//  The photon is then advanced along that new direction.
+//  Canonical photon propagation through the QRTL gravitational
+//  surface and electromagnetic optical field.
 //
 
 import Foundation
-import SwiftUI
 import simd
 
 final class QRTLPhotonTracer {
+
+    // ============================================================
+    // MARK: - FIELD
+    // ============================================================
 
     let field: QRTLField
 
@@ -29,37 +22,45 @@ final class QRTLPhotonTracer {
     }
 
     // ============================================================
-    // MARK: - QRTL GRAVITY ACCELERATION
+    // MARK: - FLOAT CONVERSION
     // ============================================================
 
-    private func qrtlGravityAcceleration(
-        at position: SIMD3<Double>,
-        direction: SIMD3<Double>
+    private func float3(
+        _ value: SIMD3<Double>
+    ) -> SIMD3<Float> {
+
+        SIMD3<Float>(
+            Float(value.x),
+            Float(value.y),
+            Float(value.z)
+        )
+    }
+
+    // ============================================================
+    // MARK: - TRANSVERSE COMPONENT
+    // ============================================================
+
+    private func transverseComponent(
+        _ vector: SIMD3<Double>,
+        relativeTo direction: SIMD3<Double>
     ) -> SIMD3<Double> {
 
-        let p = SIMD3<Float>(
-            Float(position.x),
-            Float(position.y),
-            Float(position.z)
-        )
+        let length = simd_length(direction)
 
-        let d = SIMD3<Float>(
-            Float(direction.x),
-            Float(direction.y),
-            Float(direction.z)
-        )
+        guard
+            length.isFinite,
+            length > 1.0e-12
+        else {
+            return .zero
+        }
 
-        let acceleration =
-            field.qrtlLensingAcceleration(
-                at: p,
-                direction: d
-            )
+        let d = direction / length
 
-        let result = SIMD3<Double>(
-            Double(acceleration.x),
-            Double(acceleration.y),
-            Double(acceleration.z)
-        )
+        let parallel =
+            simd_dot(vector, d)
+
+        let result =
+            vector - d * parallel
 
         guard
             result.x.isFinite,
@@ -70,197 +71,6 @@ final class QRTLPhotonTracer {
         }
 
         return result
-    }
-
-    // ============================================================
-    // MARK: - QRTL GRAVITY SURFACE
-    // ============================================================
-    //
-    // This represents the same scalar surface used by the
-    // visualization:
-    //
-    //      surface =
-    //          density contribution
-    //          +
-    //          Bolgarino-flow contribution
-    //
-    // The photon responds to the LOCAL GRADIENT of that surface.
-    //
-    // This is NOT treated as a second gravitational acceleration.
-    // It is a geometric curvature correction.
-    //
-    // ============================================================
-
-    private func qrtlGravitySurfaceValue(
-        at p: SIMD3<Float>
-    ) -> Float {
-
-        let density =
-            field.normalizedDensity(
-                at: p
-            )
-
-        let flow =
-            field.bolgarinoFlux(
-                at: p
-            )
-
-        let flowMagnitude =
-            simd_length(flow)
-
-        guard
-            density.isFinite,
-            flowMagnitude.isFinite
-        else {
-            return 0.0
-        }
-
-        let normalizedFlow =
-            flowMagnitude > 0.0
-            ? min(
-                flowMagnitude /
-                (flowMagnitude + 1.0),
-                1.0
-            )
-            : 0.0
-
-        let value =
-            0.65 * density
-            +
-            0.35 * Float(normalizedFlow)
-
-        return value.isFinite
-            ? value
-            : 0.0
-    }
-
-    // ============================================================
-    // MARK: - QRTL GRAVITY SURFACE GRADIENT
-    // ============================================================
-
-    private func qrtlGravitySurfaceGradient(
-        at position: SIMD3<Double>
-    ) -> SIMD3<Double> {
-
-        let p = SIMD3<Float>(
-            Float(position.x),
-            Float(position.y),
-            Float(position.z)
-        )
-
-        let radius =
-            max(
-                simd_length(p),
-                0.001
-            )
-
-        let h =
-            max(
-                radius * 0.002,
-                0.001
-            )
-
-        let dx =
-            SIMD3<Float>(
-                h,
-                0,
-                0
-            )
-
-        let dy =
-            SIMD3<Float>(
-                0,
-                h,
-                0
-            )
-
-        let dz =
-            SIMD3<Float>(
-                0,
-                0,
-                h
-            )
-
-        let gx =
-            (
-                qrtlGravitySurfaceValue(
-                    at: p + dx
-                )
-                -
-                qrtlGravitySurfaceValue(
-                    at: p - dx
-                )
-            )
-            /
-            (2.0 * h)
-
-        let gy =
-            (
-                qrtlGravitySurfaceValue(
-                    at: p + dy
-                )
-                -
-                qrtlGravitySurfaceValue(
-                    at: p - dy
-                )
-            )
-            /
-            (2.0 * h)
-
-        let gz =
-            (
-                qrtlGravitySurfaceValue(
-                    at: p + dz
-                )
-                -
-                qrtlGravitySurfaceValue(
-                    at: p - dz
-                )
-            )
-            /
-            (2.0 * h)
-
-        let gradient =
-            SIMD3<Double>(
-                Double(gx),
-                Double(gy),
-                Double(gz)
-            )
-
-        guard
-            gradient.x.isFinite,
-            gradient.y.isFinite,
-            gradient.z.isFinite
-        else {
-            return .zero
-        }
-
-        return gradient
-    }
-
-    // ============================================================
-    // MARK: - GRAVITY SURFACE CURVATURE
-    // ============================================================
-    //
-    // Only the component perpendicular to the photon direction
-    // changes the photon direction.
-    //
-    // ============================================================
-
-    private func qrtlGravitySurfaceCurvature(
-        at position: SIMD3<Double>,
-        direction: SIMD3<Double>
-    ) -> SIMD3<Double> {
-
-        let gradient =
-            qrtlGravitySurfaceGradient(
-                at: position
-            )
-
-        return transverseComponent(
-            gradient,
-            relativeTo: direction
-        )
     }
 
     // ============================================================
@@ -354,21 +164,21 @@ final class QRTLPhotonTracer {
         let dx =
             SIMD3<Double>(
                 h,
-                0,
-                0
+                0.0,
+                0.0
             )
 
         let dy =
             SIMD3<Double>(
-                0,
+                0.0,
                 h,
-                0
+                0.0
             )
 
         let dz =
             SIMD3<Double>(
-                0,
-                0,
+                0.0,
+                0.0,
                 h
             )
 
@@ -430,7 +240,7 @@ final class QRTLPhotonTracer {
     }
 
     // ============================================================
-    // MARK: - ELECTROMAGNETIC FORCE
+    // MARK: - ELECTROMAGNETIC REFRACTION
     // ============================================================
 
     private func electromagneticForce(
@@ -463,269 +273,469 @@ final class QRTLPhotonTracer {
             relativeTo: direction
         )
     }
-
     // ============================================================
-    // MARK: - PHOTON TRACE
+    // MARK: - PROJECTION PLANE INTERSECTION
     // ============================================================
 
-    func trace(
-        start: SIMD3<Double>,
-        direction: SIMD3<Double>,
-        totalDistance: Double,
-        stepSize: Double
-    ) -> [SIMD3<Double>] {
+    private func projectionIntersection(
+        previousPosition: SIMD3<Float>,
+        currentPosition: SIMD3<Float>,
+        parameters: LensingParameters
+    ) -> (
+        point: SIMD3<Float>,
+        coordinates: SIMD2<Float>
+    )? {
 
-        var position =
-            start
+        // ========================================================
+        // OBSERVATION PLANE
+        // ========================================================
+        //
+        // Photons propagate primarily along +X.
+        //
+        // Therefore the projection plane is:
+        //
+        //     X = targetPlaneX
+        //
+        // The remaining Y/Z coordinates become the projection
+        // coordinates.
+        //
+        // ========================================================
 
-        var dir =
-            simd_normalize(
-                direction
+        let targetX =
+            Float(parameters.targetPlaneX)
+
+        let previousX =
+            previousPosition.x
+
+        let currentX =
+            currentPosition.x
+
+        let dx =
+            currentX - previousX
+
+        guard
+            dx.isFinite,
+            abs(dx) > 1.0e-8
+        else {
+            return nil
+        }
+
+        // ========================================================
+        // SEGMENT / PLANE INTERSECTION
+        // ========================================================
+
+        let t =
+            (targetX - previousX) / dx
+
+        guard
+            t >= 0.0,
+            t <= 1.0,
+            t.isFinite
+        else {
+            return nil
+        }
+
+        // ========================================================
+        // INTERSECTION POINT
+        // ========================================================
+
+        let point =
+            previousPosition +
+            (
+                currentPosition -
+                previousPosition
+            ) * t
+
+        // ========================================================
+        // PROJECTION COORDINATES
+        // ========================================================
+        //
+        // X = depth / observation-plane position
+        // Y = horizontal image coordinate
+        // Z = vertical image coordinate
+        //
+        // ========================================================
+
+        let halfExtent =
+            Float(
+                parameters.projectionPlaneHalfExtent
             )
 
         guard
-            dir.x.isFinite,
-            dir.y.isFinite,
-            dir.z.isFinite,
-            simd_length(dir) > 1.0e-12
+            halfExtent.isFinite,
+            halfExtent > 0.0
         else {
-            return [start]
+            return nil
         }
 
-        var path:
-            [SIMD3<Double>] =
-            [position]
-
-        let effectiveStep =
-            max(
-                stepSize,
-                Double(
-                    field.parameters.minimumStep
-                )
+        let coordinates =
+            SIMD2<Float>(
+                point.y / halfExtent,
+                point.z / halfExtent
             )
 
-        let requestedSteps =
-            Int(
-                ceil(
-                    totalDistance /
-                    effectiveStep
-                )
-            )
+        // ========================================================
+        // VALIDATION
+        // ========================================================
 
-        let nSteps =
-            min(
-                max(
-                    requestedSteps,
-                    1
-                ),
-                field.parameters.maximumRaySteps
-            )
+        guard
+            point.x.isFinite,
+            point.y.isFinite,
+            point.z.isFinite,
+            coordinates.x.isFinite,
+            coordinates.y.isFinite
+        else {
+            return nil
+        }
 
-        path.reserveCapacity(
-            nSteps + 1
+        // ========================================================
+        // PROJECTION BOUNDS
+        // ========================================================
+
+        guard
+            abs(coordinates.x) <= 1.0,
+            abs(coordinates.y) <= 1.0
+        else {
+            return nil
+        }
+
+        return (
+            point: point,
+            coordinates: coordinates
+        )
+    }
+    // ============================================================
+    // MARK: - CANONICAL PHOTON TRACE
+    // ============================================================
+
+    func tracePhoton(
+        origin: SIMD3<Float>,
+        direction: SIMD3<Float>,
+        parameters: LensingParameters
+    ) -> PhotonTraceResult {
+
+        var position =
+            origin
+
+        var rayDirection =
+            simd_normalize(direction)
+
+        var positions:
+            [SIMD3<Float>] = []
+
+        positions.reserveCapacity(
+            parameters.maximumPhotonSteps + 1
         )
 
-        // ========================================================
-        // COUPLINGS
-        // ========================================================
+        positions.append(
+            position
+        )
 
-        let gravityCoupling =
-            max(
-                Double(
-                    field.parameters.qrtlFieldCoupling
-                ),
-                0.0
+        var stepCount = 0
+
+        var traveledDistance:
+            Float = 0.0
+
+        var interactionCount = 0
+
+        var maximumQRTLInfluence:
+            Float = 0.0
+
+        var maximumMagneticField:
+            Float = 0.0
+
+        var maximumMagneticPhotonInfluence:
+            Float = 0.0
+
+        var hitProjection = false
+
+        var projectionPoint:
+            SIMD3<Float>? = nil
+
+        var projectionCoordinates:
+            SIMD2<Float>? = nil
+
+        let stepSize =
+            Float(
+                parameters.photonStepSize
             )
 
-        let surfaceCoupling =
-            max(
-                Double(
-                    field.parameters.qrtlFieldCoupling
-                ),
-                0.0
-            )
-
-        let electromagneticCoupling =
-            max(
-                Double(
-                    field.parameters.photonEMCoupling
-                ),
-                0.0
+        let maximumRadius =
+            Float(
+                parameters.maximumPropagationRadius
             )
 
         // ========================================================
         // PHOTON PROPAGATION
         // ========================================================
 
-        for _ in 0..<nSteps {
+        for step
+        in 0..<parameters.maximumPhotonSteps {
 
-            // ----------------------------------------------------
-            // 1. QRTL GRAVITY
-            //
-            // This is the PRIMARY curvature mechanism.
-            // ----------------------------------------------------
+            stepCount = step + 1
 
-            let gravity =
-                qrtlGravityAcceleration(
-                    at: position,
-                    direction: dir
+            let currentPosition =
+                position
+
+            // ====================================================
+            // QRTL FIELD SAMPLE
+            // ====================================================
+
+            let sample =
+                field.sample(
+                    at: currentPosition
                 )
 
-            // ----------------------------------------------------
-            // 2. GRAVITY-SURFACE GEOMETRY
-            //
-            // This describes the local slope of the visualized
-            // QRTL gravity surface.
-            //
-            // It is deliberately weaker than the primary
-            // gravitational acceleration to avoid double-counting.
-            // ----------------------------------------------------
-
-            let surface =
-                qrtlGravitySurfaceCurvature(
-                    at: position,
-                    direction: dir
+            let qrtlInfluence =
+                Float(
+                    sample.totalIndex
                 )
 
-            // ----------------------------------------------------
-            // 3. ELECTROMAGNETIC REFRACTION
-            // ----------------------------------------------------
+            maximumQRTLInfluence =
+                max(
+                    maximumQRTLInfluence,
+                    abs(qrtlInfluence)
+                )
 
-            let electromagnetic =
+            // ====================================================
+            // QRTL GRAVITATIONAL BENDING
+            // ====================================================
+
+            let qrtlAcceleration =
+                field.qrtlLensingAcceleration(
+                    at: currentPosition,
+                    direction: rayDirection
+                )
+
+            let qrtlAccelerationFloat =
+                SIMD3<Float>(
+                    Float(qrtlAcceleration.x),
+                    Float(qrtlAcceleration.y),
+                    Float(qrtlAcceleration.z)
+                )
+
+            let qrtlTransverse =
+                qrtlAccelerationFloat
+                -
+                rayDirection
+                *
+                simd_dot(
+                    qrtlAccelerationFloat,
+                    rayDirection
+                )
+
+            // ====================================================
+            // ELECTROMAGNETIC REFRACTION
+            // ====================================================
+
+            let positionDouble =
+                SIMD3<Double>(
+                    Double(currentPosition.x),
+                    Double(currentPosition.y),
+                    Double(currentPosition.z)
+                )
+
+            let directionDouble =
+                SIMD3<Double>(
+                    Double(rayDirection.x),
+                    Double(rayDirection.y),
+                    Double(rayDirection.z)
+                )
+
+            let emForce =
                 electromagneticForce(
-                    at: position,
-                    direction: dir
+                    at: positionDouble,
+                    direction: directionDouble
                 )
 
-            // ----------------------------------------------------
-            // 4. COMBINE FIELD CONTRIBUTIONS
-            // ----------------------------------------------------
-
-            let totalAcceleration =
-                gravity
-                *
-                gravityCoupling
-
-                +
-
-                surface
-                *
-                surfaceCoupling
-                *
-                0.10
-
-                +
-
-                electromagnetic
-                *
-                electromagneticCoupling
-
-            guard
-                totalAcceleration.x.isFinite,
-                totalAcceleration.y.isFinite,
-                totalAcceleration.z.isFinite
-            else {
-                break
-            }
-
-            // ----------------------------------------------------
-            // 5. ONLY TRANSVERSE COMPONENT BENDS PHOTON
-            // ----------------------------------------------------
-
-            let transverseAcceleration =
-                transverseComponent(
-                    totalAcceleration,
-                    relativeTo: dir
+            let emForceFloat =
+                float3(
+                    emForce
                 )
 
-            // ----------------------------------------------------
-            // 6. CURVE THE PHOTON DIRECTION
-            //
-            // d(direction)/ds = transverse curvature
-            // ----------------------------------------------------
+            maximumMagneticPhotonInfluence =
+                max(
+                    maximumMagneticPhotonInfluence,
+                    simd_length(emForceFloat)
+                )
 
-            var newDirection =
-                dir
-                +
-                transverseAcceleration
-                *
-                effectiveStep
+            // ====================================================
+            // MAGNETIC FIELD DIAGNOSTIC
+            // ====================================================
 
-            let magnitude =
+            let magneticInfluence =
+                field.electromagneticInfluence(
+                    at: currentPosition
+                )
+
+            let magneticMagnitude =
                 simd_length(
-                    newDirection
+                    magneticInfluence
+                )
+
+            maximumMagneticField =
+                max(
+                    maximumMagneticField,
+                    magneticMagnitude
+                )
+
+            // ====================================================
+            // COMBINED PHOTON BENDING
+            // ====================================================
+
+            let combinedBending =
+                qrtlTransverse
+                +
+                emForceFloat
+
+            let bendingMagnitude =
+                simd_length(
+                    combinedBending
+                )
+
+            if bendingMagnitude > 0.0 {
+                interactionCount += 1
+            }
+
+            // ====================================================
+            // UPDATE PHOTON DIRECTION
+            // ====================================================
+
+            rayDirection +=
+                combinedBending
+                *
+                Float(
+                    parameters.deflectionStrength
+                )
+                *
+                stepSize
+
+            let directionLength =
+                simd_length(
+                    rayDirection
                 )
 
             guard
-                magnitude.isFinite,
-                magnitude > 1.0e-20
+                directionLength.isFinite,
+                directionLength > 1.0e-12
             else {
                 break
             }
 
-            newDirection /=
-                magnitude
+            rayDirection =
+                simd_normalize(
+                    rayDirection
+                )
 
-            dir =
-                newDirection
+            // ====================================================
+            // ADVANCE PHOTON
+            // ====================================================
 
-            // ----------------------------------------------------
-            // 7. ADVANCE PHOTON
-            // ----------------------------------------------------
+            let previousPosition =
+                position
 
             position +=
-                dir
+                rayDirection
                 *
-                effectiveStep
+                stepSize
 
-            guard
-                position.x.isFinite,
-                position.y.isFinite,
-                position.z.isFinite
-            else {
-                break
-            }
+            traveledDistance +=
+                stepSize
 
-            path.append(
+            positions.append(
                 position
             )
+
+            // ====================================================
+            // PROJECTION PLANE
+            // ====================================================
+
+            if
+                !hitProjection,
+                let hit =
+                    projectionIntersection(
+                        previousPosition:
+                            previousPosition,
+                        currentPosition:
+                            position,
+                        parameters:
+                            parameters
+                    )
+            {
+                hitProjection = true
+
+                projectionPoint =
+                    hit.point
+
+                projectionCoordinates =
+                    hit.coordinates
+            }
+
+            // ====================================================
+            // PROPAGATION LIMIT
+            // ====================================================
+
+            if
+                simd_length(position)
+                >
+                maximumRadius
+            {
+                break
+            }
         }
 
-        return path
-    }
+        // ========================================================
+        // FINAL RESULT
+        // ========================================================
 
-    // ============================================================
-    // MARK: - TRANSVERSE COMPONENT
-    // ============================================================
+        return PhotonTraceResult(
 
-    private func transverseComponent(
-        _ vector: SIMD3<Double>,
-        relativeTo direction: SIMD3<Double>
-    ) -> SIMD3<Double> {
+            origin:
+                origin,
 
-        let d =
-            simd_normalize(
-                direction
-            )
+            direction:
+                simd_normalize(
+                    direction
+                ),
 
-        guard
-            d.x.isFinite,
-            d.y.isFinite,
-            d.z.isFinite,
-            simd_length(d) > 1.0e-12
-        else {
-            return .zero
-        }
+            positions:
+                positions,
 
-        let parallel =
-            simd_dot(
-                vector,
-                d
-            )
+            finalPosition:
+                position,
 
-        return
-            vector
-            -
-            d * parallel
+            finalDirection:
+                rayDirection,
+
+            hitProjection:
+                hitProjection,
+
+            projectionPoint:
+                projectionPoint,
+
+            projectionCoordinates:
+                projectionCoordinates,
+
+            stepCount:
+                stepCount,
+
+            traveledDistance:
+                traveledDistance,
+
+            maximumQRTLInfluence:
+                maximumQRTLInfluence,
+
+            maximumMagneticField:
+                maximumMagneticField,
+
+            maximumMagneticPhotonInfluence:
+                maximumMagneticPhotonInfluence,
+
+            sourceCoordinates:
+                nil,
+
+            interactionCount:
+                interactionCount
+        )
     }
 }

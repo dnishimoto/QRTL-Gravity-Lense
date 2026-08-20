@@ -14,7 +14,7 @@ import SwiftUI
 // ============================================================
 // PHOTON TRACE BATCH
 //
-// Contains the complete photon-tracing output for one
+// Contains the complete photon-tracing oLensingProjectionHitutput for one
 // source galaxy.
 //
 // Physics:
@@ -33,15 +33,52 @@ import SwiftUI
 
 struct PhotonTraceBatch {
 
+    // =========================================================
+    // COMPLETE TRACE RESULTS
+    // =========================================================
+
     let traces:
         [PhotonTraceResult]
+
+    // =========================================================
+    // PHOTON PATHS
+    // =========================================================
 
     let paths:
         [[SIMD3<Float>]]
 
+    // =========================================================
+    // SUCCESSFUL PROJECTION HITS
+    // =========================================================
+
     let hits:
         [LensingProjectionHit]
+
+    // =========================================================
+    // CONVENIENCE COUNTS
+    // =========================================================
+
+    var photonCount:
+        Int {
+        traces.count
+    }
+
+    var pathCount:
+        Int {
+        paths.count
+    }
+
+    var hitCount:
+        Int {
+        hits.count
+    }
+
+    var hasHits:
+        Bool {
+        !hits.isEmpty
+    }
 }
+
 
 
 

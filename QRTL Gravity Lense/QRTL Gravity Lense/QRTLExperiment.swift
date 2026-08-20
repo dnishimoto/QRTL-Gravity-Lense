@@ -7,32 +7,30 @@
 
 import Foundation
 import simd
-import SwiftUI
+
+
 
 // ============================================================
 // QRTL EXPERIMENT
 // ============================================================
 //
-// Physical cluster:
+// Authoritative physics experiment.
 //
-//     M = 10^6 solar masses
+// Pipeline:
 //
-//     M = 1.98847 × 10^36 kg
-//
-// The cellular-automata density map distributes this total
-// mass through the cluster volume.
-//
-// QRTLField then calculates:
-//
-//     rho(x)
-//          ↓
-//     M_enclosed(r)
-//          ↓
-//     Phi(r) = -G M_enclosed(r) / r
-//          ↓
-//     ∇Phi
-//          ↓
-//     transverse photon bending
+// BARYONIC MASS
+//      ↓
+// GLOBULAR CLUSTER DENSITY
+//      ↓
+// QRTL FIELD
+//      ↓
+// GRAVITATIONAL / QRTL FIELD
+//      ↓
+// QRTL PHOTON TRACER
+//      ↓
+// PHOTONTRACE RESULT
+//      ↓
+// DEFLECTION COMPARISON WITH GR
 //
 // ============================================================
 
@@ -44,7 +42,11 @@ final class QRTLExperiment {
 
     let field: QRTLField
 
-    let tracer: QRTLPhotonTracer
+    // ========================================================
+    // PARAMETERS
+    // ========================================================
+
+    let parameters: QRTLParameters
 
     // ========================================================
     // PHYSICAL CONSTANTS
@@ -66,8 +68,10 @@ final class QRTLExperiment {
         parameters: QRTLParameters
     ) {
 
+        self.parameters = parameters
+
         // ====================================================
-        // TOTAL PHYSICAL MASS
+        // TOTAL CLUSTER MASS
         // ====================================================
 
         let clusterMassKg: Double
@@ -80,7 +84,7 @@ final class QRTLExperiment {
         }
 
         // ====================================================
-        // PHYSICAL CLUSTER RADIUS
+        // CLUSTER RADIUS
         // ====================================================
 
         let clusterRadiusMeters =
@@ -92,17 +96,7 @@ final class QRTLExperiment {
             )
 
         // ====================================================
-        // STAR POSITIONS
-        // ====================================================
-        //
-        // These positions define the cellular-automata
-        // spatial distribution.
-        //
-        // They do NOT individually determine the total mass.
-        //
-        // The density map assigns the complete cluster mass
-        // across this distribution.
-        //
+        // STAR DISTRIBUTION
         // ====================================================
 
         let starCount = 3000
@@ -115,14 +109,10 @@ final class QRTLExperiment {
         )
 
         // ====================================================
-        // SPHERICAL DISTRIBUTION
+        // SPHERICAL STAR DISTRIBUTION
         // ====================================================
 
         for _ in 0..<starCount {
-
-            // ------------------------------------------------
-            // Azimuth
-            // ------------------------------------------------
 
             let theta =
                 Float.random(
@@ -130,19 +120,11 @@ final class QRTLExperiment {
                         0.0...(2.0 * Float.pi)
                 )
 
-            // ------------------------------------------------
-            // Uniform cosine of polar angle
-            // ------------------------------------------------
-
             let zDirection =
                 Float.random(
                     in:
                         -1.0...1.0
                 )
-
-            // ------------------------------------------------
-            // XY component
-            // ------------------------------------------------
 
             let radialXY =
                 sqrt(
@@ -154,18 +136,13 @@ final class QRTLExperiment {
                     )
                 )
 
-            // ------------------------------------------------
-            // Uniform volume distribution
-            //
-            // r = R * U^(1/3)
-            // ------------------------------------------------
-
             let randomUnit =
                 Float.random(
                     in:
                         0.0...1.0
                 )
 
+            // Uniform volume distribution.
             let radialFraction =
                 pow(
                     randomUnit,
@@ -175,10 +152,6 @@ final class QRTLExperiment {
             let r =
                 clusterRadiusMeters *
                 radialFraction
-
-            // ------------------------------------------------
-            // Cartesian position
-            // ------------------------------------------------
 
             let x =
                 r *
@@ -204,76 +177,41 @@ final class QRTLExperiment {
         }
 
         // ====================================================
-        // CREATE CELLULAR-AUTOMATA DENSITY SOURCE
-        // ====================================================
-        //
-        // The entire density distribution is normalized to:
-        //
-        //     clusterMassKg
-        //
-        // Therefore the integrated physical mass is:
-        //
-        //     ∫ rho dV = 10^6 solar masses
-        //
+        // CELLULAR-AUTOMATA DENSITY SOURCE
         // ====================================================
 
         let densitySource =
             GlobularClusterDensityMap(
                 positions:
                     positions,
-
                 radiusMeters:
                     clusterRadiusMeters,
-
                 totalMass:
                     Float(
                         clusterMassKg
                     ),
-
                 cellSizeMeters:
                     0.20
             )
 
         // ====================================================
-        // CREATE QRTL FIELD
+        // QRTL FIELD
         // ====================================================
 
         self.field =
             QRTLField(
                 densitySource:
                     densitySource,
-
                 parameters:
                     parameters
             )
-
-        // ====================================================
-        // CREATE PHOTON TRACER
-        // ====================================================
-
-        self.tracer =
-            QRTLPhotonTracer(
-                field:
-                    self.field
-            )
     }
 
-    // ============================================================
-    // RUN EXPERIMENT
-    // ============================================================
-
     func run(
-        impactParameter:
-            Double,
-
-        startDistance:
-            Double,
-
-        endDistance:
-            Double,
-
-        stepSize:
-            Double
+        impactParameter: Double,
+        startDistance: Double,
+        endDistance: Double,
+        stepSize: Double
     ) -> QRTLExperimentResult {
 
         // ========================================================
@@ -282,9 +220,7 @@ final class QRTLExperiment {
 
         let safeImpactParameter =
             max(
-                abs(
-                    impactParameter
-                ),
+                abs(impactParameter),
                 1.0e-9
             )
 
@@ -307,7 +243,7 @@ final class QRTLExperiment {
             )
 
         // ========================================================
-        // PHOTON START POSITION
+        // PHOTON ORIGIN
         // ========================================================
         //
         // Photon travels in +X.
@@ -316,95 +252,181 @@ final class QRTLExperiment {
         //
         // ========================================================
 
-        let start =
+        let origin =
             SIMD3<Double>(
                 -safeStartDistance,
                 safeImpactParameter,
                 0.0
             )
 
+        let direction =
+            SIMD3<Double>(
+                1.0,
+                0.0,
+                0.0
+            )
+
+        // ========================================================
+        // TOTAL TRAVEL DISTANCE
+        // ========================================================
+
         let totalDistance =
             safeStartDistance +
             safeEndDistance
 
         // ========================================================
-        // TRACE PHOTON THROUGH EINSTEIN/QRTL FIELD
+        // INTEGRATION STEPS
         // ========================================================
 
-        let path =
-            tracer.trace(
-                start:
-                    start,
+        let calculatedMaxSteps =
+            max(
+                Int(
+                    ceil(
+                        totalDistance /
+                        safeStepSize
+                    )
+                ),
+                1
+            )
 
-                direction:
-                    SIMD3<Double>(
-                        1.0,
-                        0.0,
-                        0.0
+        // ========================================================
+        // CURRENT LENSING PARAMETERS
+        // ========================================================
+        //
+        // This matches the CURRENT LensingParameters definition.
+        //
+        // No maxRadius
+        // No stepSize
+        // No maxSteps
+        // No projectionX
+        // No projectionDistance
+        // No targetPlaneZ
+        //
+        // ========================================================
+
+        let lensingParameters =
+            LensingParameters(
+
+                maximumPropagationRadius:
+                    Float(
+                        max(
+                            totalDistance,
+                            0.001
+                        )
                     ),
 
-                totalDistance:
-                    totalDistance,
+                photonStepSize:
+                    Float(
+                        safeStepSize
+                    ),
 
-                stepSize:
-                    safeStepSize
-            )
+                maximumPhotonSteps:
+                    calculatedMaxSteps,
 
-        // ========================================================
-        // VALIDATE PATH
-        // ========================================================
+                deflectionStrength:
+                    1.0,
 
-        guard path.count >= 3 else {
+                qrtlLensingStrength:
+                    1.0,
 
-            return QRTLExperimentResult(
-                qrtlDeflection:
+                maximumPhotonBend:
+                    0.35,
+
+                qrtlFieldCoupling:
+                    1.0,
+
+                qrtlPhotonCoupling:
+                    0.25,
+
+                electromagneticCoupling:
                     0.0,
 
-                grDeflection:
+                magneticPhotonCoupling:
                     0.0,
 
-                differencePercent:
+                magneticBendingStrength:
                     0.0,
 
-                qrtlDeflectionArcseconds:
+                currentCoupling:
                     0.0,
 
-                grDeflectionArcseconds:
+                targetPlaneX:
+                    Float(
+                        safeEndDistance
+                    ),
+
+                projectionPlaneHalfExtent:
+                    18.0,
+
+                interactionRate:
                     0.0
             )
+
+        // ========================================================
+        // PHOTON TRACER
+        // ========================================================
+
+        let tracer =
+            QRTLPhotonTracer(
+                field:
+                    field
+            )
+
+        let trace =
+            tracer.tracePhoton(
+                origin:
+                    SIMD3<Float>(
+                        Float(origin.x),
+                        Float(origin.y),
+                        Float(origin.z)
+                    ),
+
+                direction:
+                    SIMD3<Float>(
+                        Float(direction.x),
+                        Float(direction.y),
+                        Float(direction.z)
+                    ),
+
+                parameters:
+                    lensingParameters
+            )
+
+        // ========================================================
+        // VALIDATE TRACE
+        // ========================================================
+
+        guard
+            trace.positions.count >= 2
+        else {
+            return zeroResult()
         }
 
         // ========================================================
-        // INCOMING PHOTON DIRECTION
+        // PHOTON POSITIONS
+        // ========================================================
+
+        let positions =
+            trace.positions
+
+        // ========================================================
+        // INCOMING DIRECTION
         // ========================================================
 
         let incomingVector =
-            path[1] -
-            path[0]
+            positions[1] -
+            positions[0]
 
         let incomingLength =
             simd_length(
                 incomingVector
             )
 
-        guard incomingLength > 0.0 else {
-
-            return QRTLExperimentResult(
-                qrtlDeflection:
-                    0.0,
-
-                grDeflection:
-                    0.0,
-
-                differencePercent:
-                    0.0,
-
-                qrtlDeflectionArcseconds:
-                    0.0,
-
-                grDeflectionArcseconds:
-                    0.0
-            )
+        guard
+            incomingLength.isFinite,
+            incomingLength > 0.000001
+        else {
+            return zeroResult()
         }
 
         let incoming =
@@ -412,68 +434,110 @@ final class QRTLExperiment {
             incomingLength
 
         // ========================================================
-        // OUTGOING PHOTON DIRECTION
+        // OUTGOING DIRECTION
         // ========================================================
 
-        let outgoingVector =
-            path[path.count - 1] -
-            path[path.count - 2]
+        var outgoing =
+            trace.finalDirection
 
         let outgoingLength =
             simd_length(
-                outgoingVector
+                outgoing
             )
 
-        guard outgoingLength > 0.0 else {
+        if
+            !outgoingLength.isFinite ||
+            outgoingLength <= 0.000001
+        {
+            let finalIndex =
+                positions.count - 1
 
-            return QRTLExperimentResult(
-                qrtlDeflection:
-                    0.0,
+            let outgoingVector =
+                positions[finalIndex] -
+                positions[finalIndex - 1]
 
-                grDeflection:
-                    0.0,
+            let fallbackLength =
+                simd_length(
+                    outgoingVector
+                )
 
-                differencePercent:
-                    0.0,
+            guard
+                fallbackLength.isFinite,
+                fallbackLength > 0.000001
+            else {
+                return zeroResult()
+            }
 
-                qrtlDeflectionArcseconds:
-                    0.0,
+            outgoing =
+                outgoingVector /
+                fallbackLength
 
-                grDeflectionArcseconds:
-                    0.0
-            )
+        } else {
+
+            outgoing /=
+                outgoingLength
         }
 
-        let outgoing =
-            outgoingVector /
-            outgoingLength
-
         // ========================================================
-        // ANGLE BETWEEN INCOMING AND OUTGOING RAYS
+        // DEFLECTION ANGLE
         // ========================================================
 
-        let cosine =
-            clamped(
-                simd_dot(
-                    incoming,
-                    outgoing
-                ),
-                minimum:
-                    -1.0,
-                maximum:
-                    1.0
+        let incomingFloat =
+            SIMD3<Float>(
+                incoming.x,
+                incoming.y,
+                incoming.z
             )
 
-        let qrtlAngle =
+        let outgoingFloat =
+            SIMD3<Float>(
+                outgoing.x,
+                outgoing.y,
+                outgoing.z
+            )
+
+        let dotProduct =
+            simd_dot(
+                incomingFloat,
+                outgoingFloat
+            )
+
+        let cosine =
+            min(
+                max(
+                    dotProduct,
+                    -1.0
+                ),
+                1.0
+            )
+
+        let qrtlAngleFloat =
             acos(
                 cosine
             )
+
+        guard
+            qrtlAngleFloat.isFinite
+        else {
+            return zeroResult()
+        }
+
+        let qrtlAngle =
+            Double(
+                qrtlAngleFloat
+            )
+
+        guard
+            qrtlAngle.isFinite
+        else {
+            return zeroResult()
+        }
 
         // ========================================================
         // EINSTEIN WEAK-FIELD REFERENCE
         // ========================================================
         //
-        // alpha_GR = 4GM / (b c²)
+        // alpha_GR = 4GM / (bc²)
         //
         // ========================================================
 
@@ -497,17 +561,31 @@ final class QRTLExperiment {
         let cSquared =
             c * c
 
+        let denominator =
+            safeImpactParameter *
+            cSquared
+
+        guard
+            denominator.isFinite,
+            denominator > 0.0
+        else {
+            return zeroResult()
+        }
+
         let grAngle =
             4.0 *
             G *
             physicalMassKg /
-            (
-                safeImpactParameter *
-                cSquared
-            )
+            denominator
+
+        guard
+            grAngle.isFinite
+        else {
+            return zeroResult()
+        }
 
         // ========================================================
-        // DIFFERENCE
+        // DIFFERENCE FROM GENERAL RELATIVITY
         // ========================================================
 
         let differencePercent: Double
@@ -524,7 +602,8 @@ final class QRTLExperiment {
 
         } else {
 
-            differencePercent = 0.0
+            differencePercent =
+                0.0
         }
 
         // ========================================================
@@ -565,6 +644,31 @@ final class QRTLExperiment {
 
             grDeflectionArcseconds:
                 grArcseconds
+        )
+    }
+    // ========================================================
+    // ZERO RESULT
+    // ========================================================
+
+    private func zeroResult()
+        -> QRTLExperimentResult {
+
+        QRTLExperimentResult(
+
+            qrtlDeflection:
+                0.0,
+
+            grDeflection:
+                0.0,
+
+            differencePercent:
+                0.0,
+
+            qrtlDeflectionArcseconds:
+                0.0,
+
+            grDeflectionArcseconds:
+                0.0
         )
     }
 }

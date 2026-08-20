@@ -26,7 +26,7 @@ final class LensingSceneController:
     @Published private(set) var pipelineStatus:
         String = "Ready"
 
-    @Published private(set) var lastPipelineOutput:
+    @Published var lastPipelineOutput:
         LensingPipelineOutput?
 
     private(set) var values: [Float]
@@ -1486,73 +1486,174 @@ final class LensingSceneController:
     // physics tracing pipeline.
     // ============================================================
 
+    // ============================================================
+    // TRACE SOURCE GALAXY
+    // ============================================================
+
     func traceSourceGalaxy(
-        stars: [SourceGalaxyStar],
         field: QRTLField,
-        parameters: LensingParameters,
-        showPaths: Bool
+        parameters: LensingParameters
     ) -> PhotonTraceBatch {
+
+        let tracer = QRTLPhotonTracer(
+            field: field
+        )
 
         var traces: [PhotonTraceResult] = []
         var paths: [[SIMD3<Float>]] = []
         var hits: [LensingProjectionHit] = []
 
-        traces.reserveCapacity(stars.count * 2)
-        hits.reserveCapacity(stars.count * 2)
-        if showPaths {
-            paths.reserveCapacity(stars.count * 2)
-        }
+        traces.reserveCapacity(
+            sourceGalaxyStars.count
+        )
 
-        for star in stars {
+        paths.reserveCapacity(
+            sourceGalaxyStars.count
+        )
 
-            // -------------------------------------------------
-            // Launch TWO photons (A & B) on opposite sides
-            // of the lens so we get two distinct images
-            // -------------------------------------------------
-            let pair = makePhotonPairDirections(for: star)
+        hits.reserveCapacity(
+            sourceGalaxyStars.count
+        )
 
-            let launches: [(SIMD3<Float>, SIMD3<Float>)] = [
-                (star.position, pair.left),   // Photon A
-                (star.position, pair.right)   // Photon B
-            ]
+        for (sourceID, star) in sourceGalaxyStars.enumerated() {
 
-            for (origin, direction) in launches {
+            let origin = SIMD3<Float>(
+                star.position.x,
+                star.position.y,
+                star.position.z
+            )
 
-                let trace = tracePhoton(
-                    origin: origin,
-                    direction: direction,
-                    field: field,
-                    parameters: parameters
-                )
+            let direction = SIMD3<Float>(
+                1.0,
+                0.0,
+                0.0
+            )
 
-                traces.append(trace)
+            // QRTLPhotonTracer already contains `field`.
+            let trace = tracer.tracePhoton(
+                origin: origin,
+                direction: direction,
+                parameters: parameters
+            )
 
-                if showPaths, trace.positions.count >= 2 {
-                    paths.append(trace.positions)
-                }
+            traces.append(trace)
 
-                guard trace.hitProjection,
-                      let projectionPoint = trace.projectionPosition
-                else { continue }
+            paths.append(
+                trace.positions
+            )
 
-                let hit = LensingProjectionHit(
-                    point: projectionPoint,
-                    coordinates: SIMD2<Float>(projectionPoint.y, projectionPoint.z),
-                    sourceCoordinates: SIMD2<Float>(star.position.y, star.position.z),
-                    direction: trace.finalDirection,
-                    traveledDistance: trace.traveledDistance,
-                    interactionCount: trace.stepCount,
-                    maximumMagneticField: trace.maximumMagneticField,
-                    maximumQRTLInfluence: trace.maximumQRTLInfluence,
-                    maximumMagneticPhotonInfluence: trace.maximumMagneticPhotonInfluence,
-                    sourceID: star.id
-                )
-
+            if let hit = makeProjectionHit(
+                from: trace,
+                sourceID: sourceID,
+                parameters: parameters
+            ) {
                 hits.append(hit)
             }
         }
 
-        return PhotonTraceBatch(traces: traces, paths: paths, hits: hits)
+        return PhotonTraceBatch(
+            traces: traces,
+            paths: paths,
+            hits: hits
+        )
+    }
+    private func makeProjectionHit(
+        from trace: PhotonTraceResult,
+        sourceID: Int,
+        parameters: LensingParameters
+    ) -> LensingProjectionHit? {
+
+        // ============================================================
+        // REQUIRE A VALID PROJECTION HIT
+        // ============================================================
+
+        guard trace.hitProjection,
+              let point = trace.projectionPoint
+        else {
+            return nil
+        }
+
+        // ============================================================
+        // CONVERT 2D PROJECTION COORDINATES → 3D
+        //
+        // SIMD2:
+        //
+        //     (Y, Z)
+        //
+        // becomes:
+        //
+        //     (X, Y, Z)
+        //
+        // where X is the configured projection plane.
+        // ============================================================
+
+        let coordinates3D: SIMD3<Float>?
+
+        if let coordinates2D = trace.projectionCoordinates {
+
+            coordinates3D = SIMD3<Float>(
+                parameters.targetPlaneX,
+                coordinates2D.x,
+                coordinates2D.y
+            )
+
+        } else {
+
+            coordinates3D = nil
+        }
+
+        // ============================================================
+        // CREATE PROJECTION HIT
+        // ============================================================
+
+        return LensingProjectionHit(
+            point: point,
+            coordinates: coordinates3D,
+            sourceCoordinates: trace.sourceCoordinates,
+            direction: trace.finalDirection,
+            traveledDistance: trace.traveledDistance,
+            interactionCount: trace.interactionCount,
+            maximumMagneticField:
+                trace.maximumMagneticField,
+            maximumQRTLInfluence:
+                trace.maximumQRTLInfluence,
+            maximumMagneticPhotonInfluence:
+                trace.maximumMagneticPhotonInfluence,
+            sourceID: sourceID
+        )
+    }
+    private func makeRandomPhotonDirection(
+        for star: SourceGalaxyStar
+    ) -> SIMD3<Float> {
+
+        let forward =
+            SIMD3<Float>(
+                1.0,
+                0.0,
+                0.0
+            )
+
+        let angle =
+            Float.random(
+                in: 0.0...(2.0 * .pi)
+            )
+
+        let spread =
+            Float.random(
+                in: 0.12...0.28
+            )
+
+        let transverse =
+            SIMD3<Float>(
+                0.0,
+                cos(angle),
+                sin(angle)
+            )
+
+        return simd_normalize(
+            forward +
+            transverse * spread
+        )
     }
     private func projectionPlaneIntersection(
         from start: SIMD3<Float>,
@@ -1560,11 +1661,19 @@ final class LensingSceneController:
         parameters: LensingParameters
     ) -> SIMD3<Float>? {
 
-        let planeX =
-            parameters.projectionDistance
+        // ============================================================
+        // PROJECTION PLANE
+        // ============================================================
+        //
+        // The canonical projection plane is:
+        //
+        //     X = parameters.targetPlaneX
+        //
+        // Y/Z define the position on that plane.
+        // ============================================================
 
-        let halfExtent =
-            parameters.projectionPlaneHalfExtent
+        let planeX = parameters.targetPlaneX
+        let halfExtent = parameters.projectionPlaneHalfExtent
 
         guard planeX.isFinite,
               halfExtent.isFinite,
@@ -1573,20 +1682,25 @@ final class LensingSceneController:
             return nil
         }
 
-        let x0 =
-            start.x
+        // ============================================================
+        // VALIDATE SEGMENT ENDPOINTS
+        // ============================================================
 
-        let x1 =
-            end.x
-
-        guard x0.isFinite,
-              x1.isFinite
+        guard start.x.isFinite,
+              start.y.isFinite,
+              start.z.isFinite,
+              end.x.isFinite,
+              end.y.isFinite,
+              end.z.isFinite
         else {
             return nil
         }
 
-        let dx =
-            x1 - x0
+        // ============================================================
+        // X-DIRECTION OF PHOTON SEGMENT
+        // ============================================================
+
+        let dx = end.x - start.x
 
         guard dx.isFinite,
               abs(dx) > 0.000001
@@ -1594,8 +1708,18 @@ final class LensingSceneController:
             return nil
         }
 
+        // ============================================================
+        // LINEAR INTERSECTION WITH X = planeX
+        //
+        // start + t(end - start)
+        //
+        // Solve:
+        //
+        //     start.x + t(end.x - start.x) = planeX
+        // ============================================================
+
         let t =
-            (planeX - x0) / dx
+            (planeX - start.x) / dx
 
         guard t.isFinite,
               t >= 0.0,
@@ -1603,6 +1727,10 @@ final class LensingSceneController:
         else {
             return nil
         }
+
+        // ============================================================
+        // CALCULATE INTERSECTION
+        // ============================================================
 
         let intersection =
             start +
@@ -1615,17 +1743,28 @@ final class LensingSceneController:
             return nil
         }
 
+        // ============================================================
+        // PROJECTION PLANE BOUNDS
+        //
+        // The projection plane is bounded in Y/Z.
+        // ============================================================
+
         guard abs(intersection.y) <= halfExtent,
               abs(intersection.z) <= halfExtent
         else {
             return nil
         }
 
-        var result =
-            intersection
+        // ============================================================
+        // FORCE EXACT PLANE X
+        //
+        // Prevent floating-point interpolation from leaving the
+        // intersection microscopically off the projection plane.
+        // ============================================================
 
-        result.x =
-            planeX
+        var result = intersection
+
+        result.x = planeX
 
         return result
     }
@@ -1780,393 +1919,546 @@ final class LensingSceneController:
         field: QRTLField,
         parameters: LensingParameters
     ) -> PhotonTraceResult {
+
+        // ============================================================
+        // INITIAL STATE
+        // ============================================================
+
         var position = origin
 
-        let initialDirectionLength =
-            simd_length(
-                direction
-            )
+        let initialDirectionLength = simd_length(direction)
 
-        guard initialDirectionLength.isFinite,
-              initialDirectionLength > 0.000001
+        guard
+            initialDirectionLength.isFinite,
+            initialDirectionLength > 1.0e-12
         else {
             return PhotonTraceResult(
-                positions: [
-                    origin
-                ],
                 origin: origin,
+                direction: .zero,
+                positions: [origin],
                 finalPosition: origin,
                 finalDirection: .zero,
                 hitProjection: false,
-                projectionPosition: nil,
+                projectionPoint: nil,
+                projectionCoordinates: nil,
                 stepCount: 0,
                 traveledDistance: 0.0,
                 maximumQRTLInfluence: 0.0,
                 maximumMagneticField: 0.0,
-                maximumMagneticPhotonInfluence: 0.0
+                maximumMagneticPhotonInfluence: 0.0,
+                sourceCoordinates: nil,
+                interactionCount: 0
             )
         }
 
-        var photonDirection =
-            simd_normalize(
-                direction
-            )
+        var rayDirection =
+            simd_normalize(direction)
 
-        guard photonDirection.x.isFinite,
-              photonDirection.y.isFinite,
-              photonDirection.z.isFinite
-        else {
-            return PhotonTraceResult(
-                positions: [
-                    origin
-                ],
-                origin: origin,
-                finalPosition: origin,
-                finalDirection: .zero,
-                hitProjection: false,
-                projectionPosition: nil,
-                stepCount: 0,
-                traveledDistance: 0.0,
-                maximumQRTLInfluence: 0.0,
-                maximumMagneticField: 0.0,
-                maximumMagneticPhotonInfluence: 0.0
-            )
-        }
+        // ============================================================
+        // PATH
+        // ============================================================
 
         var positions: [SIMD3<Float>] = []
+
         positions.reserveCapacity(
             parameters.maximumPhotonSteps + 1
         )
 
-        positions.append(
-            position
-        )
+        positions.append(position)
+
+        // ============================================================
+        // DIAGNOSTICS
+        // ============================================================
+
+        var stepCount = 0
+
+        var traveledDistance: Float = 0.0
+
+        var interactionCount = 0
 
         var maximumQRTLInfluence: Float = 0.0
-        var maximumMagneticField: Float = 0.0
-        var maximumMagneticPhotonInfluence: Float = 0.0
-        var traveledDistance: Float = 0.0
-        var stepCount: Int = 0
 
-        // Optical axis and lens center.
-        let lensCenter = SIMD3<Float>(
-            lensX,
-            0.0,
+        var maximumMagneticField: Float = 0.0
+
+        var maximumMagneticPhotonInfluence: Float = 0.0
+
+        // ============================================================
+        // PROJECTION
+        // ============================================================
+
+        var hitProjection = false
+
+        var projectionPoint: SIMD3<Float>? = nil
+
+        var projectionCoordinates: SIMD2<Float>? = nil
+
+        // ============================================================
+        // STEP PARAMETERS
+        // ============================================================
+
+        let stepSize = max(
+            Float(parameters.photonStepSize),
+            1.0e-6
+        )
+
+        let maximumRadius = max(
+            Float(parameters.maximumPropagationRadius),
+            stepSize
+        )
+
+        let maximumSteps =
+            max(
+                parameters.maximumPhotonSteps,
+                1
+            )
+
+        // ============================================================
+        // COUPLINGS
+        // ============================================================
+
+        let deflectionStrength = max(
+            Float(parameters.deflectionStrength),
             0.0
         )
 
-        // The narrow lens-plane region where the thin-lens impulse
-        // is applied. This is a numerical smoothing width, measured
-        // in SceneKit units, not a physical cluster radius.
-        let lensHalfThickness: Float = 0.10
+        // ============================================================
+        // PHOTON PROPAGATION
+        // ============================================================
 
-        // Ensure each ray receives the thin-lens impulse exactly once.
-        var hasAppliedEinsteinDeflection = false
+        for step in 0..<maximumSteps {
 
-        for _ in 0..<parameters.maximumPhotonSteps {
-            stepCount += 1
+            stepCount = step + 1
 
-            let step =
-                parameters.photonStepSize
+            // ========================================================
+            // CURRENT POSITION
+            // ========================================================
 
-            guard step.isFinite,
-                  step > 0.0
-            else {
-                break
-            }
+            let currentPosition = position
 
-            let previousPosition =
-                position
+            // ========================================================
+            // 1. QRTL FIELD SAMPLE
+            // ========================================================
 
-            // --------------------------------------------------------
-            // DIAGNOSTICS
-            //
-            // These remain available for your pipeline diagnostics,
-            // but they do not alter the Einstein GR trajectory.
-            // --------------------------------------------------------
+            let sample =
+                field.sample(
+                    at: currentPosition
+                )
 
             let qrtlInfluence =
-                field.influence(
-                    at: position
-                )
+                Float(sample.totalIndex)
 
-            let qrtlMagnitude =
-                simd_length(
-                    qrtlInfluence
-                )
+            if qrtlInfluence.isFinite {
 
-            if qrtlMagnitude.isFinite {
-                maximumQRTLInfluence = max(
-                    maximumQRTLInfluence,
-                    qrtlMagnitude
-                )
+                maximumQRTLInfluence =
+                    max(
+                        maximumQRTLInfluence,
+                        abs(qrtlInfluence)
+                    )
             }
+
+            // ========================================================
+            // 2. MAGNETIC FIELD
+            // ========================================================
+
+            let magneticField =
+                field.magneticField(
+                    at: currentPosition
+                )
+
+            let magneticMagnitude =
+                simd_length(magneticField)
+
+            if magneticMagnitude.isFinite {
+
+                maximumMagneticField =
+                    max(
+                        maximumMagneticField,
+                        magneticMagnitude
+                    )
+            }
+
+            // ========================================================
+            // 3. ELECTROMAGNETIC PHOTON INFLUENCE
+            // ========================================================
 
             let electromagneticInfluence =
                 field.electromagneticInfluence(
-                    at: position
+                    at: currentPosition
                 )
 
-            let electromagneticPhotonMagnitude =
+            let magneticPhotonMagnitude =
                 simd_length(
                     electromagneticInfluence
                 )
 
-            if electromagneticPhotonMagnitude.isFinite {
-                maximumMagneticPhotonInfluence = max(
-                    maximumMagneticPhotonInfluence,
-                    electromagneticPhotonMagnitude
-                )
-            }
+            if magneticPhotonMagnitude.isFinite {
 
-            let electromagneticField =
-                field.electromagneticField(
-                    at: position
-                )
-
-            let magneticFieldMagnitude =
-                simd_length(
-                    electromagneticField
-                )
-
-            if magneticFieldMagnitude.isFinite {
-                maximumMagneticField = max(
-                    maximumMagneticField,
-                    magneticFieldMagnitude
-                )
-            }
-
-            // --------------------------------------------------------
-            // EINSTEIN THIN-LENS DEFLECTION
-            //
-            // Apply the weak-field GR impulse when the ray crosses
-            // the central lens plane x = lensX.
-            // --------------------------------------------------------
-
-            let willCrossLensPlane =
-                previousPosition.x <= lensCenter.x &&
-                previousPosition.x + photonDirection.x * step >= lensCenter.x
-
-            let isInsideLensSlab =
-                abs(
-                    previousPosition.x -
-                    lensCenter.x
-                ) <= lensHalfThickness
-
-            if !hasAppliedEinsteinDeflection &&
-                (willCrossLensPlane || isInsideLensSlab)
-            {
-                // Use the ray's transverse location at the lens plane.
-                let dx =
-                    photonDirection.x *
-                    step
-
-                let t: Float
-
-                if abs(dx) > 0.000001 {
-                    t =
-                        min(
-                            max(
-                                (
-                                    lensCenter.x -
-                                    previousPosition.x
-                                ) /
-                                dx,
-                                0.0
-                            ),
-                            1.0
-                        )
-                } else {
-                    t = 0.0
-                }
-
-                let lensPlanePosition =
-                    previousPosition +
-                    photonDirection *
-                    step *
-                    t
-
-                let transverseOffset =
-                    SIMD2<Float>(
-                        lensPlanePosition.y -
-                        lensCenter.y,
-
-                        lensPlanePosition.z -
-                        lensCenter.z
+                maximumMagneticPhotonInfluence =
+                    max(
+                        maximumMagneticPhotonInfluence,
+                        magneticPhotonMagnitude
                     )
-
-                let impactParameterScene =
-                    simd_length(
-                        transverseOffset
-                    )
-
-                // A central ray has no unique deflection direction.
-                if impactParameterScene > 0.000001 {
-                    let impactParameterMeters =
-                        Double(
-                            impactParameterScene
-                        ) *
-                        metersPerSceneUnit
-
-                    let physicalDeflection =
-                        einsteinDeflectionAngle(
-                            impactParameterMeters:
-                                impactParameterMeters
-                        )
-
-                    let displayedDeflection =
-                        physicalDeflection *
-                        einsteinDisplayGain
-
-                    let inwardTransverseDirection =
-                        -transverseOffset /
-                        impactParameterScene
-
-                    // A small-angle direction update:
-                    //
-                    // new direction ≈ old direction
-                    //               + α × inward transverse unit vector
-                    //
-                    // The transverse vector is expressed in the
-                    // controller's Y–Z coordinates.
-                    let deflectionKick =
-                        SIMD3<Float>(
-                            0.0,
-                            inwardTransverseDirection.x *
-                            Float(displayedDeflection),
-
-                            inwardTransverseDirection.y *
-                            Float(displayedDeflection)
-                        )
-
-                    photonDirection =
-                        simd_normalize(
-                            photonDirection +
-                            deflectionKick
-                        )
-
-                    // Preserve forward travel toward the detector.
-                    if photonDirection.x <= 0.000001 {
-                        photonDirection.x = 0.000001
-                        photonDirection =
-                            simd_normalize(
-                                photonDirection
-                            )
-                    }
-                }
-
-                hasAppliedEinsteinDeflection = true
             }
 
-            // --------------------------------------------------------
-            // ADVANCE ONE STEP
-            // --------------------------------------------------------
+            // ========================================================
+            // 4. QRTL LENSING ACCELERATION
+            // ========================================================
 
-            let nextPosition =
-                position +
-                photonDirection *
-                step
+            let acceleration =
+                field.qrtlLensingAcceleration(
+                    at: currentPosition,
+                    direction: rayDirection
+                )
 
-            guard nextPosition.x.isFinite,
-                  nextPosition.y.isFinite,
-                  nextPosition.z.isFinite
+            guard
+                acceleration.x.isFinite,
+                acceleration.y.isFinite,
+                acceleration.z.isFinite
             else {
                 break
             }
 
-            // --------------------------------------------------------
-            // INTERSECT THE POSITIVE-X PROJECTION PLANE
-            // --------------------------------------------------------
+            // ========================================================
+            // 5. TRANSVERSE QRTL ACCELERATION
+            //
+            // Remove the component parallel to the photon direction.
+            // Only the transverse component bends the trajectory.
+            // ========================================================
 
-            if let intersection =
-                projectionPlaneIntersection(
-                    from: previousPosition,
-                    to: nextPosition,
-                    parameters: parameters
-                )
-            {
-                position = intersection
-
-                positions.append(
-                    intersection
+            let parallelComponent =
+                simd_dot(
+                    acceleration,
+                    rayDirection
                 )
 
-                traveledDistance +=
-                    simd_distance(
-                        previousPosition,
-                        intersection
-                    )
+            let transverseAcceleration =
+                acceleration -
+                rayDirection * parallelComponent
 
-                return PhotonTraceResult(
-                    positions: positions,
-                    origin: origin,
-                    finalPosition: intersection,
-                    finalDirection: photonDirection,
-                    hitProjection: true,
-                    projectionPosition: intersection,
-                    stepCount: stepCount,
-                    traveledDistance: traveledDistance,
-                    maximumQRTLInfluence: maximumQRTLInfluence,
-                    maximumMagneticField: maximumMagneticField,
-                    maximumMagneticPhotonInfluence: maximumMagneticPhotonInfluence
-                )
+            guard
+                transverseAcceleration.x.isFinite,
+                transverseAcceleration.y.isFinite,
+                transverseAcceleration.z.isFinite
+            else {
+                break
             }
 
-            position = nextPosition
+            // ========================================================
+            // 6. UPDATE PHOTON DIRECTION
+            // ========================================================
+
+            rayDirection +=
+                transverseAcceleration *
+                deflectionStrength *
+                stepSize
+
+            let directionLength =
+                simd_length(rayDirection)
+
+            guard
+                directionLength.isFinite,
+                directionLength > 1.0e-12
+            else {
+                break
+            }
+
+            rayDirection =
+                simd_normalize(
+                    rayDirection
+                )
+
+            // ========================================================
+            // 7. INTERACTION COUNT
+            // ========================================================
+
+            let interactionMagnitude =
+                simd_length(
+                    transverseAcceleration
+                )
+
+            if interactionMagnitude.isFinite,
+               interactionMagnitude > 1.0e-12 {
+
+                interactionCount += 1
+            }
+
+            // ========================================================
+            // 8. ADVANCE PHOTON
+            // ========================================================
+
+            let previousPosition =
+                position
+
+            position +=
+                rayDirection *
+                stepSize
+
+            guard
+                position.x.isFinite,
+                position.y.isFinite,
+                position.z.isFinite
+            else {
+                break
+            }
+
+            let actualStepDistance =
+                simd_length(
+                    position -
+                    previousPosition
+                )
+
+            if actualStepDistance.isFinite {
+
+                traveledDistance +=
+                    actualStepDistance
+            }
 
             positions.append(
                 position
             )
 
-            traveledDistance += step
+            // ========================================================
+            // 9. PROJECTION PLANE
+            // ========================================================
 
-            let distanceFromCenter =
-                simd_length(
-                    position
-                )
+            if !hitProjection {
 
-            if distanceFromCenter.isFinite,
-               distanceFromCenter >
-                parameters.maximumPropagationRadius
-            {
+                if let hit =
+                    projectionIntersection(
+                        previousPosition:
+                            previousPosition,
+                        currentPosition:
+                            position,
+                        parameters:
+                            parameters
+                    )
+                {
+
+                    hitProjection = true
+
+                    projectionPoint =
+                        hit.point
+
+                    projectionCoordinates =
+                        hit.coordinates
+                }
+            }
+
+            // ========================================================
+            // 10. PROPAGATION LIMIT
+            // ========================================================
+
+            if simd_length(position) >= maximumRadius {
+
                 break
             }
         }
 
+        // ============================================================
+        // FINAL RESULT
+        // ============================================================
+
         return PhotonTraceResult(
-            positions: positions,
-            origin: origin,
-            finalPosition: position,
-            finalDirection: photonDirection,
-            hitProjection: false,
-            projectionPosition: nil,
-            stepCount: stepCount,
-            traveledDistance: traveledDistance,
-            maximumQRTLInfluence: maximumQRTLInfluence,
-            maximumMagneticField: maximumMagneticField,
-            maximumMagneticPhotonInfluence: maximumMagneticPhotonInfluence
+
+            origin:
+                origin,
+
+            direction:
+                simd_normalize(direction),
+
+            positions:
+                positions,
+
+            finalPosition:
+                position,
+
+            finalDirection:
+                rayDirection,
+
+            hitProjection:
+                hitProjection,
+
+            projectionPoint:
+                projectionPoint,
+
+            projectionCoordinates:
+                projectionCoordinates,
+
+            stepCount:
+                stepCount,
+
+            traveledDistance:
+                traveledDistance,
+
+            maximumQRTLInfluence:
+                maximumQRTLInfluence,
+
+            maximumMagneticField:
+                maximumMagneticField,
+
+            maximumMagneticPhotonInfluence:
+                maximumMagneticPhotonInfluence,
+
+            sourceCoordinates:
+                nil,
+
+            interactionCount:
+                interactionCount
         )
     }
  
-    private func makePhotonPairDirections(
-        for star: SourceGalaxyStar
-    ) -> (left: SIMD3<Float>, right: SIMD3<Float>) {
+    private func projectionIntersection(
+        previousPosition: SIMD3<Float>,
+        currentPosition: SIMD3<Float>,
+        parameters: LensingParameters
+    ) -> (
+        point: SIMD3<Float>,
+        coordinates: SIMD2<Float>
+    )? {
 
-        let forward = SIMD3<Float>(1, 0, 0)
+        // ============================================================
+        // PROJECTION PLANE
+        // ============================================================
+        //
+        // The projection plane is perpendicular to the X axis:
+        //
+        //     X = parameters.targetPlaneX
+        //
+        // The returned 2D projection coordinates are:
+        //
+        //     (Y, Z)
+        // ============================================================
 
-        // Random but stable orientation for this star
-        let angle = Float.random(in: -Float.pi ... Float.pi)
-        let transverse = SIMD3<Float>(0, cos(angle), sin(angle))
+        let projectionX =
+            parameters.targetPlaneX
 
-        // Larger offset → clearer separation of the two images
-        let offset = Float.random(in: 0.12 ... 0.28)
+        let halfExtent =
+            parameters.projectionPlaneHalfExtent
 
-        let left  = simd_normalize(forward - transverse * offset)
-        let right = simd_normalize(forward + transverse * offset)
+        // ============================================================
+        // VALIDATE PARAMETERS
+        // ============================================================
 
-        return (left, right)
+        guard projectionX.isFinite,
+              halfExtent.isFinite,
+              halfExtent > 0.0
+        else {
+            return nil
+        }
+
+        // ============================================================
+        // VALIDATE PHOTON POSITIONS
+        // ============================================================
+
+        guard previousPosition.x.isFinite,
+              previousPosition.y.isFinite,
+              previousPosition.z.isFinite,
+              currentPosition.x.isFinite,
+              currentPosition.y.isFinite,
+              currentPosition.z.isFinite
+        else {
+            return nil
+        }
+
+        // ============================================================
+        // X-AXIS SEGMENT
+        // ============================================================
+
+        let x0 =
+            previousPosition.x
+
+        let x1 =
+            currentPosition.x
+
+        let denominator =
+            x1 - x0
+
+        guard denominator.isFinite,
+              abs(denominator) > 1.0e-8
+        else {
+            return nil
+        }
+
+        // ============================================================
+        // LINEAR INTERSECTION
+        //
+        // previous + t(current - previous)
+        //
+        // Solve:
+        //
+        // previous.x +
+        //     t(current.x - previous.x)
+        //     =
+        // projectionX
+        // ============================================================
+
+        let t =
+            (projectionX - x0) /
+            denominator
+
+        guard t.isFinite,
+              t >= 0.0,
+              t <= 1.0
+        else {
+            return nil
+        }
+
+        // ============================================================
+        // INTERSECTION POINT
+        // ============================================================
+
+        var point =
+            previousPosition +
+            (currentPosition - previousPosition) * t
+
+        guard point.x.isFinite,
+              point.y.isFinite,
+              point.z.isFinite
+        else {
+            return nil
+        }
+
+        // ============================================================
+        // FORCE EXACT PROJECTION X
+        //
+        // Removes small floating-point error from the interpolation.
+        // ============================================================
+
+        point.x =
+            projectionX
+
+        // ============================================================
+        // PROJECTION-PLANE BOUNDS
+        //
+        // Y/Z define the 2D coordinates on the observation plane.
+        // ============================================================
+
+        guard abs(point.y) <= halfExtent,
+              abs(point.z) <= halfExtent
+        else {
+            return nil
+        }
+
+        // ============================================================
+        // 2D PROJECTION COORDINATES
+        //
+        // SIMD2:
+        //
+        //     x = world Y
+        //     y = world Z
+        // ============================================================
+
+        let coordinates =
+            SIMD2<Float>(
+                point.y,
+                point.z
+            )
+
+        return (
+            point: point,
+            coordinates: coordinates
+        )
     }
-  
  
     // ========================================================
     // CAMERA / LIGHTING

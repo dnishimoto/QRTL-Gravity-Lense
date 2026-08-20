@@ -9,6 +9,9 @@ import Foundation
 import SwiftUI
 
 
+import Foundation
+import simd
+
 // ============================================================
 // QRTL LENSING PROJECTION ACCUMULATOR
 // ============================================================
@@ -22,13 +25,11 @@ final class LensingProjectionAccumulator {
     let resolution: Int
     let halfExtent: Float
 
-
     // =========================================================
     // ACCUMULATED PROJECTION VALUES
     // =========================================================
 
     private(set) var values: [Float]
-
 
     // =========================================================
     // INITIALIZER
@@ -39,39 +40,49 @@ final class LensingProjectionAccumulator {
         halfExtent: Float = 12.0
     ) {
 
-        self.resolution =
-            max(resolution, 2)
+        self.resolution = max(resolution, 2)
+        self.halfExtent = max(
+            halfExtent.isFinite ? halfExtent : 12.0,
+            0.000001
+        )
 
-        self.halfExtent =
-            max(halfExtent, 0.000001)
-
-        self.values =
-            Array(
-                repeating: 0.0,
-                count:
-                    self.resolution *
-                    self.resolution
-            )
+        self.values = Array(
+            repeating: 0.0,
+            count: self.resolution * self.resolution
+        )
     }
+    // ============================================================
+    // LEGACY COMPATIBILITY — ADD HIT
+    // ============================================================
+
+    func addHit(
+        _ hit: LensingProjectionHit,
+        strength: Float = 1.0
+    ) {
+        accumulate(
+            hit,
+            strength: strength
+        )
+    }
+    // =========================================================
+    // CLEAR
+    // =========================================================
 
     func clear() {
         reset()
     }
+
     // =========================================================
     // RESET
     // =========================================================
 
     func reset() {
 
-        values =
-            Array(
-                repeating: 0.0,
-                count:
-                    resolution *
-                    resolution
-            )
+        values = Array(
+            repeating: 0.0,
+            count: resolution * resolution
+        )
     }
-
 
     // =========================================================
     // ACCUMULATE SINGLE HIT
@@ -82,117 +93,148 @@ final class LensingProjectionAccumulator {
         strength: Float = 1.0
     ) {
 
-        let safeStrength =
-            max(
-                strength.isFinite ? strength : 0.0,
-                0.0
-            )
+        // =========================================================
+        // SAFE STRENGTH
+        // =========================================================
 
-        guard safeStrength > 0.0
+        let safeStrength = max(
+            strength.isFinite
+                ? strength
+                : 0.0,
+            0.0
+        )
+
+        guard safeStrength > 0.0 else {
+            return
+        }
+
+        // =========================================================
+        // PROJECTION COORDINATES
+        //
+        // LensingProjectionHit.coordinates is now:
+        //
+        //     SIMD3<Float>?
+        //
+        // The projection plane uses X/Y.
+        // Z is retained for the physical 3D projection position.
+        // =========================================================
+
+        guard let coordinates =
+            hit.coordinates
         else {
             return
         }
 
+        // =========================================================
+        // FINITE CHECK
+        // =========================================================
 
-        // -----------------------------------------------------
-        // PROJECTION COORDINATES
+        guard
+            coordinates.x.isFinite,
+            coordinates.y.isFinite
+        else {
+            return
+        }
+
+        // =========================================================
+        // NORMALIZE
         //
-        // Coordinates are centered on zero:
+        // Physical projection coordinates:
         //
-        // -halfExtent ... 0 ... +halfExtent
-        // -----------------------------------------------------
+        //     -halfExtent ... 0 ... +halfExtent
+        //
+        // Image coordinates:
+        //
+        //      0.0 ... 0.5 ... 1.0
+        // =========================================================
+
+        guard halfExtent > 0.0,
+              halfExtent.isFinite
+        else {
+            return
+        }
 
         let normalizedX =
             (
-                hit.coordinates.x /
-                halfExtent
+                coordinates.x / halfExtent
                 + 1.0
             ) * 0.5
 
         let normalizedY =
             (
-                hit.coordinates.y /
-                halfExtent
+                coordinates.y / halfExtent
                 + 1.0
             ) * 0.5
 
+        // =========================================================
+        // VALIDATE NORMALIZED COORDINATES
+        // =========================================================
 
-        // -----------------------------------------------------
-        // VALIDATE
-        // -----------------------------------------------------
-
-        guard normalizedX.isFinite,
-              normalizedY.isFinite
+        guard
+            normalizedX.isFinite,
+            normalizedY.isFinite
         else {
             return
         }
 
-
-        // -----------------------------------------------------
+        // =========================================================
         // OUTSIDE PROJECTION PLANE
-        // -----------------------------------------------------
+        // =========================================================
 
-        guard normalizedX >= 0.0,
-              normalizedX <= 1.0,
-              normalizedY >= 0.0,
-              normalizedY <= 1.0
+        guard
+            normalizedX >= 0.0,
+            normalizedX <= 1.0,
+            normalizedY >= 0.0,
+            normalizedY <= 1.0
         else {
             return
         }
 
-
-        // -----------------------------------------------------
+        // =========================================================
         // CONVERT TO PIXELS
-        // -----------------------------------------------------
+        // =========================================================
+
+        let maxPixel =
+            Float(resolution - 1)
 
         let fx =
-            normalizedX *
-            Float(resolution - 1)
+            normalizedX * maxPixel
 
         let fy =
-            normalizedY *
-            Float(resolution - 1)
+            normalizedY * maxPixel
 
         let x =
-            Int(
-                fx.rounded()
-            )
+            Int(fx.rounded())
 
         let y =
-            Int(
-                fy.rounded()
-            )
+            Int(fy.rounded())
 
+        // =========================================================
+        // PIXEL SAFETY
+        // =========================================================
 
-        // -----------------------------------------------------
-        // SAFETY CHECK
-        // -----------------------------------------------------
-
-        guard x >= 0,
-              x < resolution,
-              y >= 0,
-              y < resolution
+        guard
+            x >= 0,
+            x < resolution,
+            y >= 0,
+            y < resolution
         else {
             return
         }
 
-
-        // -----------------------------------------------------
-        // FLATTEN 2D INDEX
-        // -----------------------------------------------------
+        // =========================================================
+        // FLATTEN 2D IMAGE INDEX
+        // =========================================================
 
         let index =
             y * resolution + x
 
+        // =========================================================
+        // ACCUMULATE PHOTON STRENGTH
+        // =========================================================
 
-        // -----------------------------------------------------
-        // ACCUMULATE
-        // -----------------------------------------------------
-
-        values[index] +=
-            safeStrength
+        values[index] += safeStrength
     }
-
 
     // =========================================================
     // ACCUMULATE COMPLETE RESULT
@@ -211,7 +253,6 @@ final class LensingProjectionAccumulator {
             )
         }
     }
-
 
     // =========================================================
     // ACCUMULATE WEIGHTED HIT
@@ -246,6 +287,9 @@ final class LensingProjectionAccumulator {
                 0.0
             )
 
+        // -----------------------------------------------------
+        // INTERACTION WEIGHT
+        // -----------------------------------------------------
 
         let interactionWeight =
             1.0 +
@@ -254,9 +298,11 @@ final class LensingProjectionAccumulator {
                     hit.interactionCount,
                     0
                 )
-            ) *
-            0.01
+            ) * 0.01
 
+        // -----------------------------------------------------
+        // FIELD WEIGHT
+        // -----------------------------------------------------
 
         let fieldWeight =
             1.0 +
@@ -264,22 +310,28 @@ final class LensingProjectionAccumulator {
             magnetic +
             magneticPhoton
 
+        // -----------------------------------------------------
+        // FINAL WEIGHT
+        // -----------------------------------------------------
+
+        let safeBaseStrength =
+            max(
+                baseStrength.isFinite
+                    ? baseStrength
+                    : 0.0,
+                0.0
+            )
 
         let strength =
-            max(
-                baseStrength,
-                0.0
-            ) *
+            safeBaseStrength *
             interactionWeight *
             fieldWeight
-
 
         accumulate(
             hit,
             strength: strength
         )
     }
-
 
     // =========================================================
     // REBUILD
@@ -298,29 +350,21 @@ final class LensingProjectionAccumulator {
         )
     }
 
-
     // =========================================================
     // MAXIMUM VALUE
     // =========================================================
 
     var maximumValue: Float {
-
         values.max() ?? 0.0
     }
-
 
     // =========================================================
     // TOTAL VALUE
     // =========================================================
 
     var totalValue: Float {
-
-        values.reduce(
-            0.0,
-            +
-        )
+        values.reduce(0.0, +)
     }
-
 
     // =========================================================
     // VALUE AT PIXEL
@@ -331,10 +375,11 @@ final class LensingProjectionAccumulator {
         y: Int
     ) -> Float {
 
-        guard x >= 0,
-              x < resolution,
-              y >= 0,
-              y < resolution
+        guard
+            x >= 0,
+            x < resolution,
+            y >= 0,
+            y < resolution
         else {
             return 0.0
         }
@@ -344,7 +389,6 @@ final class LensingProjectionAccumulator {
 
         return values[index]
     }
-
 
     // =========================================================
     // NORMALIZED VALUE
@@ -358,19 +402,18 @@ final class LensingProjectionAccumulator {
         let maximum =
             maximumValue
 
-        guard maximum > 0.0
+        guard
+            maximum.isFinite,
+            maximum > 0.0
         else {
             return 0.0
         }
 
-        return
-            value(
-                x: x,
-                y: y
-            ) /
-            maximum
+        return value(
+            x: x,
+            y: y
+        ) / maximum
     }
-
 
     // =========================================================
     // NORMALIZED ARRAY
@@ -381,7 +424,9 @@ final class LensingProjectionAccumulator {
         let maximum =
             maximumValue
 
-        guard maximum > 0.0
+        guard
+            maximum.isFinite,
+            maximum > 0.0
         else {
             return Array(
                 repeating: 0.0,
@@ -395,72 +440,3 @@ final class LensingProjectionAccumulator {
     }
 }
 
-
-// =============================================================
-// LENSING PROJECTION HIT
-// =============================================================
-
-struct LensingProjectionHit {
-
-    // =========================================================
-    // 3D PROJECTION POSITION
-    // =========================================================
-
-    let point:
-        SIMD3<Float>
-
-
-    // =========================================================
-    // 2D PROJECTION COORDINATES
-    //
-    // These are the coordinates actually accumulated into
-    // the projection image.
-    // =========================================================
-
-    let coordinates:
-        SIMD2<Float>
-
-
-    // =========================================================
-    // ORIGINAL SOURCE COORDINATES
-    // =========================================================
-
-    let sourceCoordinates:
-        SIMD2<Float>
-
-
-    // =========================================================
-    // FINAL PHOTON DIRECTION
-    // =========================================================
-
-    let direction:
-        SIMD3<Float>
-
-
-    // =========================================================
-    // DIAGNOSTICS
-    // =========================================================
-
-    let traveledDistance:
-        Float
-
-    let interactionCount:
-        Int
-
-    let maximumMagneticField:
-        Float
-
-    let maximumQRTLInfluence:
-        Float
-
-    let maximumMagneticPhotonInfluence:
-        Float
-
-
-    // =========================================================
-    // SOURCE IDENTIFIER
-    // =========================================================
-
-    let sourceID:
-        Int
-}
