@@ -4,6 +4,16 @@
 /*
  The key change is to stop making the photon follow the QRTL radial field vector. Instead, the QRTL field should behave as a central lensing potential whose transverse influence accumulates along the photon path.
  */
+
+/*
+The key change is to stop making the photon follow the QRTL radial field vector. Instead, the QRTL field should behave as a central lensing potential whose transverse influence accumulates along the photon path.
+*/
+/*
+ The key change is to stop making the photon follow the QRTL radial field vector. Instead, the QRTL field should behave as a central lensing potential whose transverse influence accumulates along the photon path.
+ */
+/*
+ The key change is to stop making the photon follow the QRTL radial field vector. Instead, the QRTL field should behave as a central lensing potential whose transverse influence accumulates along the photon path.
+ */
 //
 //  ContentView.swift
 //  QRTL Gravity Lense
@@ -83,6 +93,33 @@ struct ContentView: View {
 
 
     @State private var showComputationOverlay: Bool = true
+
+    // ============================================================
+    // MARK: - GRAVITY METRICS OVERLAY
+    // ============================================================
+    //
+    // Populated once the QRTLField exists (Stage 1 of
+    // runFullPipeline), so you can confirm the cluster mass —
+    // and the per-star mass sourcing the gravity surface — are
+    // what you expect, independent of the transient computation
+    // overlay above.
+    // ============================================================
+
+    @State private var showGravityMetrics: Bool = true
+
+    @State private var gravityRequestedMassSolar: Double = 0.0
+
+    @State private var gravityFieldMassKg: Double = 0.0
+
+    @State private var gravityRelativeMassError: Double = 0.0
+
+    @State private var gravityStarCount: Int = 0
+
+    @State private var gravityPerStarMassSolar: Double = 0.0
+
+    @State private var gravityPerStarMassKg: Double = 0.0
+
+    @State private var gravityClusterRadiusMeters: Double = 0.0
     // ============================================================
     // MARK: - SCENE CONTROLLER
     // ============================================================
@@ -114,6 +151,15 @@ struct ContentView: View {
             if showComputationOverlay {
 
                 computationOverlay
+            }
+
+            // ====================================================
+            // GRAVITY METRICS OVERLAY
+            // ====================================================
+
+            if showGravityMetrics {
+
+                gravityMetricsOverlay
             }
 
             // ====================================================
@@ -409,6 +455,142 @@ struct ContentView: View {
     }
 
     // ============================================================
+    // MARK: - GRAVITY METRICS OVERLAY
+    // ============================================================
+    //
+    // Shows the actual mass driving the cluster, so you can
+    // confirm it against what you dialed in: requested vs. field
+    // mass, the relative error between them, star count, and the
+    // per-star mass (10^6 M☉ / star count) that sources every
+    // occupied cell of the gravity surface.
+    // ============================================================
+
+    private var gravityMetricsOverlay: some View {
+
+        VStack(
+            alignment: .leading,
+            spacing: 8
+        ) {
+
+            HStack {
+
+                Image(
+                    systemName:
+                        "atom"
+                )
+
+                Text(
+                    "GRAVITY METRICS"
+                )
+                .font(.headline)
+
+                Spacer()
+
+                Button {
+
+                    showGravityMetrics =
+                        false
+
+                } label: {
+
+                    Image(
+                        systemName:
+                            "xmark.circle.fill"
+                    )
+                    .foregroundStyle(
+                        .secondary
+                    )
+                }
+            }
+
+            Divider()
+
+            computationRow(
+                "Requested mass",
+                String(
+                    format:
+                        "%.4g M☉",
+                    gravityRequestedMassSolar
+                )
+            )
+
+            computationRow(
+                "Field mass",
+                String(
+                    format:
+                        "%.4e kg",
+                    gravityFieldMassKg
+                )
+            )
+
+            computationRow(
+                "Mass error",
+                String(
+                    format:
+                        "%.4g %%",
+                    gravityRelativeMassError *
+                    100.0
+                )
+            )
+
+            Divider()
+
+            computationRow(
+                "Star count",
+                "\(gravityStarCount)"
+            )
+
+            computationRow(
+                "Mass per star",
+                String(
+                    format:
+                        "%.4g M☉",
+                    gravityPerStarMassSolar
+                )
+            )
+
+            computationRow(
+                "Mass per star (kg)",
+                String(
+                    format:
+                        "%.4e kg",
+                    gravityPerStarMassKg
+                )
+            )
+
+            Divider()
+
+            computationRow(
+                "Cluster radius",
+                String(
+                    format:
+                        "%.4e m",
+                    gravityClusterRadiusMeters
+                )
+            )
+        }
+        .padding(16)
+        .frame(
+            maxWidth: 320
+        )
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(
+                cornerRadius: 18
+            )
+        )
+        .foregroundStyle(.white)
+        .padding(.bottom, 24)
+        .padding(.horizontal, 16)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+    
+            alignment: .bottomTrailing
+        )
+    }
+
+    // ============================================================
     // MARK: - COMPUTATION ROW
     // ============================================================
 
@@ -475,6 +657,18 @@ struct ContentView: View {
 
         statusMessage =
             "Reset to QRTL gravity-only mode"
+
+        // --------------------------------------------------------
+        // RESET GRAVITY METRICS OVERLAY
+        // --------------------------------------------------------
+
+        gravityRequestedMassSolar = 0.0
+        gravityFieldMassKg = 0.0
+        gravityRelativeMassError = 0.0
+        gravityStarCount = 0
+        gravityPerStarMassSolar = 0.0
+        gravityPerStarMassKg = 0.0
+        gravityClusterRadiusMeters = 0.0
 
         // --------------------------------------------------------
         // CLEAR SCENE
@@ -749,6 +943,43 @@ struct ContentView: View {
                         ================================================
                         """
                     )
+
+                    // ====================================================
+                    // GRAVITY METRICS OVERLAY UPDATE
+                    // ====================================================
+
+                    let starCount =
+                        field.densitySource.starCount
+
+                    let perStarMassKg =
+                        Double(
+                            field.densitySource.perStarMassKg
+                        )
+
+                    DispatchQueue.main.async {
+
+                        self.gravityRequestedMassSolar =
+                            self.massSolar
+
+                        self.gravityFieldMassKg =
+                            actualMass
+
+                        self.gravityRelativeMassError =
+                            relativeMassError
+
+                        self.gravityStarCount =
+                            starCount
+
+                        self.gravityPerStarMassKg =
+                            perStarMassKg
+
+                        self.gravityPerStarMassSolar =
+                            perStarMassKg /
+                            PhysicalConstants.solarMass
+
+                        self.gravityClusterRadiusMeters =
+                            radiusMeters
+                    }
 
                     // ====================================================
                     // GRAVITATIONAL VALIDATION

@@ -1,7 +1,3 @@
-
-
-
-
 //
 //  QRTLField.swift
 //  QRTL Gravity Lense
@@ -122,48 +118,138 @@ final class QRTLField {
     //
     // Negative Y = deeper gravitational well.
     //
+    // ------------------------------------------------------------
+    // UNIT FIX — SCENE UNITS ARE NOT METERS
+    // ------------------------------------------------------------
+    //
+    // The gravity surface / heatmap sample this function using
+    // SceneKit coordinates (roughly -20...20), while
+    // gravitationalPotential() expects real meters — the cluster's
+    // physical radius is on the order of 10^10 m. Feeding scene
+    // coordinates straight in as meters put every visible sample
+    // deep inside the compactness clamp (compactness >> 1
+    // everywhere), so the bowl rendered as one flat, maximally
+    // deep plateau with no visible z-depth variation.
+    //
+    // visualClusterRadiusSceneUnits declares what scene-unit
+    // radius should visually represent the cluster's real edge
+    // (densitySource.fieldRadiusMeters). Points are rescaled into
+    // real meters before evaluating the potential, so the bowl
+    // now shows a smooth gradient from a clamped core out to a
+    // shallow rim, matching the cluster's real 1/r falloff.
+    //
+    // Only this visual helper is rescaled — gravitationalPotential,
+    // enclosedMass, and photon propagation elsewhere in this class
+    // continue to operate in real meters, unchanged.
+    // ------------------------------------------------------------
+
+    var visualClusterRadiusSceneUnits: Float = 18.0
+
+    private var sceneUnitsToMeters: Float {
+
+        let radius = max(
+            densitySource.fieldRadiusMeters,
+            1.0e-6
+        )
+
+        let sceneRadius = max(
+            visualClusterRadiusSceneUnits,
+            1.0e-6
+        )
+
+        let scale = radius / sceneRadius
+
+        guard scale.isFinite else {
+            return 1.0
+        }
+
+        return scale
+    }
 
     func spacetimeCurvatureHeight(
         atXZ point: SIMD2<Float>
     ) -> Float {
 
-        let position = SIMD3<Float>(
-            point.x,
-            0.0,
-            point.y
-        )
+        let scale =
+            sceneUnitsToMeters
+
+        let position =
+            SIMD3<Float>(
+                point.x * scale,
+                0.0,
+                point.y * scale
+            )
 
         let phi =
             gravitationalPotential(
                 at: position
             )
 
-        let compactness =
-            -2.0 *
-            phi /
-            speedOfLightSquared
+        let clusterRadius =
+            max(
+                densitySource.fieldRadiusMeters,
+                1.0
+            )
 
-        guard compactness.isFinite else {
+        let edgePosition =
+            SIMD3<Float>(
+                clusterRadius,
+                0.0,
+                0.0
+            )
+
+        let phiEdge =
+            gravitationalPotential(
+                at: edgePosition
+            )
+
+        let phiDepth =
+            phiEdge - phi
+
+        guard
+            phiDepth.isFinite,
+            phiDepth >= 0.0
+        else {
             return 0.0
         }
+
+        // --------------------------------------------------------
+        // VISUAL REFERENCE DEPTH
+        // --------------------------------------------------------
+
+        let referenceDepth =
+            max(
+                abs(phiEdge),
+                1.0
+            )
 
         let normalized =
             min(
                 max(
-                    compactness,
+                    phiDepth /
+                    referenceDepth,
                     0.0
                 ),
                 1.0
             )
 
-        // SceneKit visualization scale.
-        //
-        // This changes only the appearance of
-        // the gravity well, not the physics.
+        // --------------------------------------------------------
+        // NONLINEAR VISUAL RESPONSE
+        // --------------------------------------------------------
 
-        let visualScale: Float = 5.0
+        let shaped =
+            pow(
+                normalized,
+                0.35
+            )
 
-        return -normalized * visualScale
+        // --------------------------------------------------------
+        // SCENE DEPTH
+        // --------------------------------------------------------
+
+        let visualScale: Float = 6.0
+
+        return -shaped * visualScale
     }
     // ========================================================
     // MASS NORMALIZATION
@@ -751,6 +837,30 @@ final class QRTLField {
     // GRAVITATIONAL POTENTIAL
     // ========================================================
 
+    // ========================================================
+    // EINSTEIN GRAVITATIONAL POTENTIAL
+    // ========================================================
+    //
+    // For a spherical extended mass distribution:
+    //
+    //     Phi(r) = -G [ M(r)/r
+    //                + 4*pi * integral_r^R rho(s) * s ds ]
+    //
+    // The second term is essential.
+    //
+    // Exterior spherical shells exert zero net force inside
+    // the shell, but they DO contribute gravitational potential.
+    //
+    // Therefore the potential reaches its deepest finite value
+    // at the center of the globular cluster instead of incorrectly
+    // approaching zero there.
+    //
+    // Outside the cluster:
+    //
+    //     Phi(r) = -G Mtotal / r
+    //
+    // ========================================================
+
     func gravitationalPotential(
         at position: SIMD3<Float>
     ) -> Float {
@@ -758,41 +868,168 @@ final class QRTLField {
         let radiusSquared =
             simd_length_squared(position)
 
-        guard radiusSquared.isFinite,
-              radiusSquared > 0.000001
+        guard
+            radiusSquared.isFinite
         else {
             return 0.0
         }
 
         let radius =
-            sqrt(radiusSquared)
+            sqrt(max(radiusSquared, 0.0))
+
+        let clusterRadius =
+            max(
+                densitySource.fieldRadiusMeters,
+                0.000001
+            )
 
         // ----------------------------------------------------
-        // OUTSIDE SPHERICAL CLUSTER
+        // OUTSIDE THE CLUSTER
+        // ----------------------------------------------------
+        //
+        // Once outside a spherical distribution, the entire
+        // cluster behaves gravitationally like a point mass.
+        //
+        // Phi = -GM/r
+        //
         // ----------------------------------------------------
 
-        if radius >= densitySource.fieldRadiusMeters {
+        if radius >= clusterRadius {
 
-            return
+            guard radius > 0.000001 else {
+                return 0.0
+            }
+
+            let potential =
                 -gravitationalConstant *
                 clusterMassKg /
                 radius
+
+            guard potential.isFinite else {
+                return 0.0
+            }
+
+            return potential
         }
 
         // ----------------------------------------------------
-        // INSIDE CLUSTER
+        // INSIDE THE CLUSTER
+        // ----------------------------------------------------
+        //
+        // Phi(r) =
+        //
+        // -G [
+        //       M(<r)/r
+        //       +
+        //       4*pi * integral_r^R rho(s)s ds
+        //     ]
+        //
+        // ----------------------------------------------------
+
+        let sampleCount = 128
+
+        let dr =
+            clusterRadius /
+            Float(sampleCount)
+
+        guard
+            dr.isFinite,
+            dr > 0.0
+        else {
+            return 0.0
+        }
+
+        // ----------------------------------------------------
+        // ENCLOSED MASS
         // ----------------------------------------------------
 
         let enclosed =
             enclosedMass(
                 within: radius,
-                radialSamples: 16
+                radialSamples: 64
             )
+
+        // ----------------------------------------------------
+        // INTERIOR SHELL POTENTIAL
+        // ----------------------------------------------------
+        //
+        // Integrate:
+        //
+        //     4*pi*rho(r)*r dr
+        //
+        // from current radius to cluster radius.
+        //
+        // ----------------------------------------------------
+
+        var exteriorShellPotentialTerm: Float = 0.0
+
+        if radius < clusterRadius {
+
+            let startIndex =
+                max(
+                    Int(
+                        floor(
+                            radius / dr
+                        )
+                    ),
+                    0
+                )
+
+            if startIndex < sampleCount {
+
+                for index in startIndex..<sampleCount {
+
+                    let r =
+                        (Float(index) + 0.5) *
+                        dr
+
+                    guard
+                        r > radius,
+                        r <= clusterRadius
+                    else {
+                        continue
+                    }
+
+                    let density =
+                        physicalMassDensity(
+                            at: SIMD3<Float>(
+                                r,
+                                0.0,
+                                0.0
+                            )
+                        )
+
+                    guard
+                        density.isFinite,
+                        density >= 0.0
+                    else {
+                        continue
+                    }
+
+                    exteriorShellPotentialTerm +=
+                        density *
+                        r *
+                        dr
+                }
+            }
+        }
+
+        let shellFactor =
+            4.0 *
+            Float.pi
+
+        let enclosedPotentialTerm =
+            enclosed /
+            max(radius, 0.000001)
+
+        let totalPotentialTerm =
+            enclosedPotentialTerm +
+            shellFactor *
+            exteriorShellPotentialTerm
 
         let potential =
             -gravitationalConstant *
-            enclosed /
-            radius
+            totalPotentialTerm
 
         guard potential.isFinite else {
             return 0.0
@@ -1214,6 +1451,4 @@ final class QRTLField {
         return acceleration / length
     }
 }
-
-
 
