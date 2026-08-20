@@ -81,8 +81,8 @@ struct ContentView: View {
 
     @State private var maximumQRTLInfluence: Float = 0.0
 
-    @State private var showComputationOverlay: Bool = true
 
+    @State private var showComputationOverlay: Bool = true
     // ============================================================
     // MARK: - SCENE CONTROLLER
     // ============================================================
@@ -1139,9 +1139,28 @@ struct ContentView: View {
                             "Projection complete — " +
                             "\(photonBatch.hits.count) photon hits, " +
                             "\(photonBatch.paths.count) photon paths"
+                   
+                     
+                        self.computationDetail = """
+                        QRTL lensing simulation completed.
+                        \(photonBatch.traces.count) photons traced.
+                        \(photonBatch.paths.count) photon paths generated.
+                        \(photonBatch.hits.count) photons reached the projection plane.
+                        """
 
-                        self.isRunning =
-                            false
+                        self.computationElapsed =
+                            CFAbsoluteTimeGetCurrent()
+                            - computationStart
+
+                        self.statusMessage =
+                            "Projection complete — " +
+                            "\(photonBatch.hits.count) photon hits, " +
+                            "\(photonBatch.paths.count) photon paths"
+
+                        self.isRunning = false
+
+                        // REMOVE COMPUTATION OVERLAY
+                        self.showComputationOverlay = false
                     }
                 }
             }
