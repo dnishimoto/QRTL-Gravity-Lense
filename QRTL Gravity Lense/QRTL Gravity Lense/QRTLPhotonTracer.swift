@@ -477,26 +477,8 @@ final class QRTLPhotonTracer {
             let currentPosition =
                 position
 
-            // ====================================================
-            // QRTL FIELD SAMPLE
-            // ====================================================
-
-            let sample =
-                field.sample(
-                    at: currentPosition
-                )
-
-            let qrtlInfluence =
-                Float(
-                    sample.totalIndex
-                )
-
-            maximumQRTLInfluence =
-                max(
-                    maximumQRTLInfluence,
-                    abs(qrtlInfluence)
-                )
-
+         
+        
             // ====================================================
             // QRTL GRAVITATIONAL BENDING
             // ====================================================
