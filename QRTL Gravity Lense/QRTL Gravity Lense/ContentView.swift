@@ -11,18 +11,10 @@ import Combine
 import UIKit
 
 
-
-// ============================================================
-// MAIN CONTENT VIEW
-// ============================================================
-
 struct ContentView:
     View {
 
-    // ========================================================
-    // USER PARAMETERS
-    // ========================================================
-
+    
     @State private var massSolar:
         Double =
         1_000_000
@@ -60,10 +52,7 @@ struct ContentView:
         0.0
 
 
-    // ========================================================
-    // RESULTS
-    // ========================================================
-
+   
     @State private var result:
         QRTLExperimentResult?
 
@@ -78,10 +67,7 @@ struct ContentView:
         "Ready — source galaxy → QRTL lens → observation plane"
 
 
-    // ========================================================
-    // UI STATE
-    // ========================================================
-
+  
 
     @State private var showControls:
             Bool =
@@ -93,18 +79,12 @@ struct ContentView:
 
 
 
-    // ========================================================
-    // SCENEKIT CONTROLLER
-    // ========================================================
-
     @StateObject private var scene =
         LensingSceneController()
 
 
-    // ========================================================
-    // BODY
-    // ========================================================
-
+    var globularClusterPositions: [SIMD3<Float>] = []
+    
     var body:
         some View {
 
@@ -544,25 +524,25 @@ struct ContentView:
                                 0.15 *
                                 PhysicalConstants.solarRadius
                         )
+                    let clusterDensitySource =
+                        GlobularClusterDensityMap(
+                            positions:
+                                globularClusterPositions,
+                            radius:
+                                Float(radius),
+                            totalMass:
+                                Float(mass),
+                            cellSize:
+                                0.20
+                        )
 
                     let field =
                         QRTLField(
-                            massModel:
-                                GaussianMassModel(
-                                    totalMass:
-                                        mass,
-
-                                    characteristicRadius:
-                                        max(
-                                            radius,
-                                            0.0001
-                                        )
-                                ),
-
+                            densitySource:
+                                clusterDensitySource,
                             parameters:
                                 params
                         )
-
                     // =================================================
                     // STAGE 2 — SOURCE GALAXY PHOTONS
                     // =================================================

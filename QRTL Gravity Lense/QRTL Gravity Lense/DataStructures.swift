@@ -10,6 +10,16 @@ import simd
 import SceneKit
 import SwiftUI
 
+protocol GlobularClusterDensitySource {
+
+    func density(
+        at position: SIMD3<Float>
+    ) -> Float
+
+    var totalMass: Float { get }
+
+    var maximumDensity: Float { get }
+}
 // ============================================================
 // PHOTON TRACE BATCH
 //

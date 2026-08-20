@@ -184,109 +184,400 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // This is the exact visual you described.
     // ============================================================
 
-    private func makeSurfaceGeometry() -> SCNGeometry {
+    private func makeSurfaceGeometry()
+        -> SCNGeometry
+    {
+        let n =
+            gridSize
 
-        let n = gridSize
+        let size =
+            extent
 
-           // Make the sheet larger than the photon region
-           // so it is no longer open-ended on the source side
-           let size = extent * 1.6          // ← was just "extent"
-           let start = -size
-           let step = (2.0 * size) / Float(n - 1)
-        
-        
-      
-        var positions: [SCNVector3] = []
-        positions.reserveCapacity(n * n)
+        let start =
+            -size
 
-        var normals: [SCNVector3] = []
-        normals.reserveCapacity(n * n)
+        let step =
+            (2.0 * size) /
+            Float(n - 1)
 
-        var indices: [Int32] = []
-        indices.reserveCapacity((n - 1) * (n - 1) * 6)
+        var positions:
+            [SCNVector3] = []
 
-        var heights = [Float](repeating: 0.0, count: n * n)
+        positions.reserveCapacity(
+            n * n
+        )
 
-        // --------------------------------------------------------
-        // Classic rubber-sheet indentation
-        // --------------------------------------------------------
-        // Deep central well that looks like a bowling ball
-        // pressed into a rubber sheet.
-        // --------------------------------------------------------
+        var heights =
+            [Float](
+                repeating: 0.0,
+                count: n * n
+            )
 
-        let wellRadius = size * 0.45          // how wide the dent is
-        let wellDepth  = curvatureScale * 1.8 // how deep the dent is
+        var indices:
+            [Int32] = []
+
+        indices.reserveCapacity(
+            (n - 1) *
+            (n - 1) *
+            6
+        )
+
+        // ============================================================
+        // SAMPLE THE ACTUAL QRTL / MASS POTENTIAL
+        // ============================================================
+
+        var maximumMagnitude:
+            Double = 0.0
+
+        var potentialValues =
+            [Double](
+                repeating: 0.0,
+                count: n * n
+            )
 
         for j in 0..<n {
+
             for i in 0..<n {
-                let x = start + Float(i) * step
-                let z = start + Float(j) * step
 
-                let r = sqrt(x*x + z*z)
+                let x =
+                    start +
+                    Float(i) * step
 
-                // Smooth fall-off that looks like a real rubber sheet
-                var y: Float = 0.0
-                if r < wellRadius {
-                    let normalized = r / wellRadius
-                    // Cosine-based smooth bowl (very natural looking)
-                    y = -wellDepth * 0.5 * (1.0 + cos(Float.pi * normalized))
-                }
+                let z =
+                    start +
+                    Float(j) * step
 
-                heights[j * n + i] = y
-                positions.append(SCNVector3(x, y, z))
+                let position =
+                    SIMD3<Float>(
+                        x,
+                        0.0,
+                        z
+                    )
+
+                let effectiveEnergyDensity =
+                    field.qrtlEnergyDensity(
+                        at: position
+                    )
+
+                let potential =
+                    field.gravitationalPotential(
+                        at: position,
+                        effectiveEnergyDensity:
+                            effectiveEnergyDensity
+                    )
+
+                let safePotential =
+                    potential.isFinite
+                    ? potential
+                    : 0.0
+
+                let arrayIndex =
+                    j * n + i
+
+                potentialValues[
+                    arrayIndex
+                ] =
+                    Double(safePotential)
+
+                maximumMagnitude =
+                    max(
+                        maximumMagnitude,
+                        Double(abs(safePotential))
+                    )
+                 
             }
         }
 
-        // --------------------------------------------------------
-        // Normals
-        // --------------------------------------------------------
+        // ============================================================
+        // NORMALIZE POTENTIAL
+        // ============================================================
+
+        let normalization =
+            max(
+                maximumMagnitude,
+                1.0e-30
+            )
+
         for j in 0..<n {
+
             for i in 0..<n {
-                let left  = max(i - 1, 0)
-                let right = min(i + 1, n - 1)
-                let down  = max(j - 1, 0)
-                let up    = min(j + 1, n - 1)
 
-                let hL = heights[j * n + left]
-                let hR = heights[j * n + right]
-                let hD = heights[down * n + i]
-                let hU = heights[up * n + i]
+                let arrayIndex =
+                    j * n + i
 
-                let dx = max(step * Float(right - left), 0.000001)
-                let dz = max(step * Float(up - down), 0.000001)
+                let potential =
+                    potentialValues[
+                        arrayIndex
+                    ]
 
-                let slopeX = (hR - hL) / dx
-                let slopeZ = (hU - hD) / dz
+                // ----------------------------------------------------
+                // GRAVITATIONAL POTENTIAL IS NEGATIVE.
+                //
+                // Convert magnitude into a positive normalized
+                // curvature strength.
+                // ----------------------------------------------------
 
-                let normal = simd_normalize(SIMD3<Float>(-slopeX, 1.0, -slopeZ))
-                normals.append(SCNVector3(normal.x, normal.y, normal.z))
+                let normalized =
+                    min(
+                        max(
+                            abs(potential) /
+                            normalization,
+                            0.0
+                        ),
+                        1.0
+                    )
+
+                // ----------------------------------------------------
+                // CREATE THE BOWL.
+                //
+                // Center = negative Y
+                // Exterior = approximately zero
+                // ----------------------------------------------------
+
+                let y =
+                    -Float(normalized) *
+                    curvatureScale
+
+                heights[
+                    arrayIndex
+                ] =
+                    y
+
+                let x =
+                    start +
+                    Float(i) * step
+
+                let z =
+                    start +
+                    Float(j) * step
+
+                positions.append(
+                    SCNVector3(
+                        x,
+                        y,
+                        z
+                    )
+                )
             }
         }
 
-        // --------------------------------------------------------
-        // Triangles
-        // --------------------------------------------------------
+        // ============================================================
+        // CALCULATE VERTEX NORMALS
+        // ============================================================
+
+        var normals:
+            [SCNVector3] = []
+
+        normals.reserveCapacity(
+            n * n
+        )
+
+        for j in 0..<n {
+
+            for i in 0..<n {
+
+                let left =
+                    max(i - 1, 0)
+
+                let right =
+                    min(i + 1, n - 1)
+
+                let down =
+                    max(j - 1, 0)
+
+                let up =
+                    min(j + 1, n - 1)
+
+                let hLeft =
+                    heights[
+                        j * n + left
+                    ]
+
+                let hRight =
+                    heights[
+                        j * n + right
+                    ]
+
+                let hDown =
+                    heights[
+                        down * n + i
+                    ]
+
+                let hUp =
+                    heights[
+                        up * n + i
+                    ]
+
+                let dx =
+                    max(
+                        Float(
+                            right - left
+                        ) * step,
+                        1.0e-6
+                    )
+
+                let dz =
+                    max(
+                        Float(
+                            up - down
+                        ) * step,
+                        1.0e-6
+                    )
+
+                let slopeX =
+                    (hRight - hLeft) /
+                    dx
+
+                let slopeZ =
+                    (hUp - hDown) /
+                    dz
+
+                let normal =
+                    simd_normalize(
+                        SIMD3<Float>(
+                            -slopeX,
+                            1.0,
+                            -slopeZ
+                        )
+                    )
+
+                normals.append(
+                    SCNVector3(
+                        normal.x,
+                        normal.y,
+                        normal.z
+                    )
+                )
+            }
+        }
+
+        // ============================================================
+        // TRIANGULATE
+        // ============================================================
+        //
+        // IMPORTANT:
+        //
+        // Winding is CCW when viewed from +Y.
+        //
+        // ============================================================
+
         for j in 0..<(n - 1) {
+
             for i in 0..<(n - 1) {
-                let index = Int32(j * n + i)
-                let row = Int32(n)
 
-                indices.append(index)
-                indices.append(index + 1)
-                indices.append(index + row)
+                let index =
+                    Int32(
+                        j * n + i
+                    )
 
-                indices.append(index + 1)
-                indices.append(index + row + 1)
-                indices.append(index + row)
+                let row =
+                    Int32(n)
+
+                // ----------------------------------------------------
+                // TRIANGLE 1
+                // ----------------------------------------------------
+
+                indices.append(
+                    index
+                )
+
+                indices.append(
+                    index + row
+                )
+
+                indices.append(
+                    index + 1
+                )
+
+                // ----------------------------------------------------
+                // TRIANGLE 2
+                // ----------------------------------------------------
+
+                indices.append(
+                    index + 1
+                )
+
+                indices.append(
+                    index + row
+                )
+
+                indices.append(
+                    index + row + 1
+                )
             }
         }
 
-        let vertexSource = SCNGeometrySource(vertices: positions)
-        let normalSource = SCNGeometrySource(normals: normals)
-        let element = SCNGeometryElement(indices: indices, primitiveType: .triangles)
+        // ============================================================
+        // GEOMETRY SOURCES
+        // ============================================================
 
-        let geometry = SCNGeometry(sources: [vertexSource, normalSource], elements: [element])
-        geometry.firstMaterial = SCNMaterial()
+        let vertexSource =
+            SCNGeometrySource(
+                vertices:
+                    positions
+            )
+
+        let normalSource =
+            SCNGeometrySource(
+                normals:
+                    normals
+            )
+
+        let element =
+            SCNGeometryElement(
+                indices:
+                    indices,
+                primitiveType:
+                    .triangles
+            )
+
+        let geometry =
+            SCNGeometry(
+                sources:
+                    [
+                        vertexSource,
+                        normalSource
+                    ],
+                elements:
+                    [
+                        element
+                    ]
+            )
+
+        // ============================================================
+        // MATERIAL
+        // ============================================================
+
+        let material =
+            SCNMaterial()
+
+        material.diffuse.contents =
+            UIColor.systemTeal.withAlphaComponent(
+                0.70
+            )
+
+        material.specular.contents =
+            UIColor.white.withAlphaComponent(
+                0.35
+            )
+
+        material.emission.contents =
+            UIColor.systemTeal.withAlphaComponent(
+                0.08
+            )
+
+        material.isDoubleSided =
+            false
+
+        material.transparency =
+            0.70
+
+        material.lightingModel =
+            .physicallyBased
+
+        geometry.materials =
+            [material]
+
         return geometry
     }
     // ============================================================

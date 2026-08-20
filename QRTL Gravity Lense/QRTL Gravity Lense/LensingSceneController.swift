@@ -302,11 +302,28 @@ final class LensingSceneController:
         // path reverts to its original trajectory.
         // -------------------------------------------------------
 
-        let riding: [SIMD3<Double>] = controlPoints.map { point in
-            let surfaceY = field.spacetimeCurvatureHeight(atXZ: point)
-            let blendedY = point.y + surfaceY * curvatureRideStrength
-            return SIMD3<Double>(Double(point.x), Double(blendedY), Double(point.z))
-        }
+        let riding: [SIMD3<Double>] =
+            controlPoints.map { point in
+
+                let surfaceY =
+                    field.spacetimeCurvatureHeight(
+                        atXZ: SIMD2<Float>(
+                            point.x,
+                            point.z
+                        )
+                    )
+
+                let blendedY =
+                    point.y +
+                    surfaceY *
+                    curvatureRideStrength
+
+                return SIMD3<Double>(
+                    Double(point.x),
+                    Double(blendedY),
+                    Double(point.z)
+                )
+            }
 
         // -------------------------------------------------------
         // SMOOTH WITH CATMULL-ROM SPLINE
@@ -474,7 +491,13 @@ final class LensingSceneController:
                 let flowMag = simd_length(flow)
                 let flowNorm = flowMag.isFinite && flowMag > 0 ? min(flowMag / (flowMag + 1), 1.0) : 0.0
                 let curvature = 0.65 * density + 0.35 * Float(flowNorm)
-                let y = field.spacetimeCurvatureHeight(atXZ: base)
+                let y =
+                    field.spacetimeCurvatureHeight(
+                        atXZ: SIMD2<Float>(
+                            base.x,
+                            base.z
+                        )
+                    )
              
                 positions.append(SCNVector3(x, y, z))
                 texcoords.append(CGPoint(
