@@ -2205,10 +2205,10 @@ final class LensingSceneController:
         // STEP PARAMETERS
         // ============================================================
 
-        let stepSize = max(
-            Float(parameters.photonStepSize),
-            1.0e-6
-        )
+       let stepSize =
+            Float(parameters.photonStepSize)
+         
+        
 
         let maximumRadius = max(
             Float(parameters.maximumPropagationRadius),
@@ -2244,70 +2244,6 @@ final class LensingSceneController:
 
             let currentPosition = position
 
-            // ========================================================
-            // 1. QRTL FIELD SAMPLE
-            // ========================================================
-
-            let sample =
-                field.sample(
-                    at: currentPosition
-                )
-
-            let qrtlInfluence =
-                Float(sample.totalIndex)
-
-            if qrtlInfluence.isFinite {
-
-                maximumQRTLInfluence =
-                    max(
-                        maximumQRTLInfluence,
-                        abs(qrtlInfluence)
-                    )
-            }
-
-            // ========================================================
-            // 2. MAGNETIC FIELD
-            // ========================================================
-
-            let magneticField =
-                field.magneticField(
-                    at: currentPosition
-                )
-
-            let magneticMagnitude =
-                simd_length(magneticField)
-
-            if magneticMagnitude.isFinite {
-
-                maximumMagneticField =
-                    max(
-                        maximumMagneticField,
-                        magneticMagnitude
-                    )
-            }
-
-            // ========================================================
-            // 3. ELECTROMAGNETIC PHOTON INFLUENCE
-            // ========================================================
-
-            let electromagneticInfluence =
-                field.electromagneticInfluence(
-                    at: currentPosition
-                )
-
-            let magneticPhotonMagnitude =
-                simd_length(
-                    electromagneticInfluence
-                )
-
-            if magneticPhotonMagnitude.isFinite {
-
-                maximumMagneticPhotonInfluence =
-                    max(
-                        maximumMagneticPhotonInfluence,
-                        magneticPhotonMagnitude
-                    )
-            }
 
             // ========================================================
             // 4. QRTL LENSING ACCELERATION
