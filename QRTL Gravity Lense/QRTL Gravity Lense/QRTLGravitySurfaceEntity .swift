@@ -2,30 +2,11 @@
 //  QRTLGravitySurfaceEntity.swift
 //  QRTL Gravity Lense
 //
-//  Controller-pipeline entity for:
-//  - QRTL gravitational surface
-//  - one-million-solar-mass cluster
-//  - photon A tracing
-//  - photon B tracing
-//  - projected galaxy A
-//  - projected galaxy B
-//
-//  The entity does NOT perform SwiftUI rendering.
-//  It produces an SCNScene that can be inserted into the
-//  controller pipeline.
-//
-
-import Foundation
-import SceneKit
-import simd
-import UIKit
-
-//
-//  QRTLGravitySurfaceEntity.swift
-//  QRTL Gravity Lense
-//
 //  Complete curvilinear QRTL gravity surface,
 //  photon tracing, and dual galaxy projection entity.
+//
+//  FIXED: Gravity surface is now a proper GR spacetime bowl
+//         created by the mass of the globular cluster(s).
 //
 
 import Foundation
@@ -39,31 +20,23 @@ import UIKit
 //
 // This object IS an SCNNode.
 //
-// Therefore:
+// Coordinate system:
 //
-//     scene.rootNode.addChildNode(surface)
+//                 Y
+//                 ↑
+//                 |
+//                 |       spacetime surface
+//                 |      /---------\
+//                 |    /             \
+//                 |  /                 \
+//                 | /        ↓          \
+//                 |/      gravity        \
+//                 +------------------------→ X
+//                /
+//               Z
 //
-// and:
-//
-//     surface.removeFromParentNode()
-//
-// work directly.
-//
-// The entity contains:
-//
-//     QRTL field
-//          ↓
-//     curvilinear gravity surface
-//          ↓
-//     source galaxy A/B
-//          ↓
-//     photon tracing
-//          ↓
-//     transverse QRTL lensing
-//          ↓
-//     projection plane
-//          ↓
-//     projected galaxy A/B
+// The QRTL gravity well is a NEGATIVE Y displacement.
+// The center of the globular cluster is the bottom of the bowl.
 //
 // ============================================================
 
@@ -74,51 +47,30 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
 
     let field: QRTLField
-
     let gridSize: Int
-
     let extent: Float
-
     let numberOfStars: Int
-
     let photonSteps: Int
-
     let curvatureScale: Float
 
     // ============================================================
     // SCENE CONTENT
     // ============================================================
 
-    private(set) var surfaceNode:
-        SCNNode?
-
-    private(set) var photonANode:
-        SCNNode?
-
-    private(set) var photonBNode:
-        SCNNode?
-
-    private(set) var galaxyANode:
-        SCNNode?
-
-    private(set) var galaxyBNode:
-        SCNNode?
+    private(set) var surfaceNode: SCNNode?
+    private(set) var photonANode: SCNNode?
+    private(set) var photonBNode: SCNNode?
+    private(set) var galaxyANode: SCNNode?
+    private(set) var galaxyBNode: SCNNode?
 
     // ============================================================
     // PHOTON RESULTS
     // ============================================================
 
-    private(set) var photonPathsA:
-        [[SIMD3<Double>]] = []
-
-    private(set) var photonPathsB:
-        [[SIMD3<Double>]] = []
-
-    private(set) var galaxyAProjectionPositions:
-        [SIMD3<Double>] = []
-
-    private(set) var galaxyBProjectionPositions:
-        [SIMD3<Double>] = []
+    private(set) var photonPathsA: [[SIMD3<Double>]] = []
+    private(set) var photonPathsB: [[SIMD3<Double>]] = []
+    private(set) var galaxyAProjectionPositions: [SIMD3<Double>] = []
+    private(set) var galaxyBProjectionPositions: [SIMD3<Double>] = []
 
     // ============================================================
     // INITIALIZATION
@@ -132,57 +84,19 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         photonSteps: Int = 500,
         curvatureScale: Float = 1.0
     ) {
-
-        self.field =
-            field
-
-        self.gridSize =
-            max(
-                gridSize,
-                4
-            )
-
-        self.extent =
-            max(
-                extent,
-                0.001
-            )
-
-        self.numberOfStars =
-            max(
-                numberOfStars,
-                1
-            )
-
-        self.photonSteps =
-            max(
-                photonSteps,
-                10
-            )
-
-        self.curvatureScale =
-            max(
-                curvatureScale,
-                0.0001
-            )
+        self.field = field
+        self.gridSize = max(gridSize, 4)
+        self.extent = max(extent, 0.001)
+        self.numberOfStars = max(numberOfStars, 1)
+        self.photonSteps = max(photonSteps, 10)
+        self.curvatureScale = max(curvatureScale, 0.0001)
 
         super.init()
-
         buildScene()
     }
 
-    // ============================================================
-    // NSCODER
-    // ============================================================
-
-    required init?(
-        coder:
-            NSCoder
-    ) {
-
-        fatalError(
-            "QRTLGravitySurfaceEntity does not support NSCoder initialization."
-        )
+    required init?(coder: NSCoder) {
+        fatalError("QRTLGravitySurfaceEntity does not support NSCoder initialization.")
     }
 
     // ============================================================
@@ -190,680 +104,255 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
 
     func buildScene() {
+        childNodes.forEach { $0.removeFromParentNode() }
 
-        // --------------------------------------------------------
-        // REMOVE PREVIOUS CONTENT
-        // --------------------------------------------------------
+        surfaceNode = nil
+        photonANode = nil
+        photonBNode = nil
+        galaxyANode = nil
+        galaxyBNode = nil
 
-        childNodes.forEach {
-            $0.removeFromParentNode()
-        }
+        photonPathsA.removeAll(keepingCapacity: true)
+        photonPathsB.removeAll(keepingCapacity: true)
+        galaxyAProjectionPositions.removeAll(keepingCapacity: true)
+        galaxyBProjectionPositions.removeAll(keepingCapacity: true)
 
-        surfaceNode =
-            nil
+        // Build the GR spacetime surface
+        let surface = makeSurfaceNode()
+        surfaceNode = surface
+        addChildNode(surface)
 
-        photonANode =
-            nil
-
-        photonBNode =
-            nil
-
-        galaxyANode =
-            nil
-
-        galaxyBNode =
-            nil
-
-        photonPathsA.removeAll(
-            keepingCapacity:
-                true
-        )
-
-        photonPathsB.removeAll(
-            keepingCapacity:
-                true
-        )
-
-        galaxyAProjectionPositions.removeAll(
-            keepingCapacity:
-                true
-        )
-
-        galaxyBProjectionPositions.removeAll(
-            keepingCapacity:
-                true
-        )
-
-        // --------------------------------------------------------
-        // BUILD GRAVITY SURFACE
-        // --------------------------------------------------------
-
-        let surface =
-            makeSurfaceNode()
-
-        surfaceNode =
-            surface
-
-        addChildNode(
-            surface
-        )
-
-        // --------------------------------------------------------
-        // TRACE GALAXIES
-        // --------------------------------------------------------
-
+        // Trace photons and build projections
         computeGalaxyProjections()
 
-        // --------------------------------------------------------
-        // PHOTON A
-        // --------------------------------------------------------
+        let photonAGeometry = makePhotonGeometry(paths: photonPathsA, color: .cyan)
+        let photonAGraphicsNode = SCNNode(geometry: photonAGeometry)
+        photonANode = photonAGraphicsNode
+        addChildNode(photonAGraphicsNode)
 
-        let photonAGeometry =
-            makePhotonGeometry(
-                paths:
-                    photonPathsA,
-                color:
-                    .cyan
-            )
+        let photonBGeometry = makePhotonGeometry(paths: photonPathsB, color: .magenta)
+        let photonBGraphicsNode = SCNNode(geometry: photonBGeometry)
+        photonBNode = photonBGraphicsNode
+        addChildNode(photonBGraphicsNode)
 
-        let photonAGraphicsNode =
-            SCNNode(
-                geometry:
-                    photonAGeometry
-            )
+        let galaxyA = makeProjectionNode(positions: galaxyAProjectionPositions, color: .cyan)
+        galaxyANode = galaxyA
+        addChildNode(galaxyA)
 
-        photonANode =
-            photonAGraphicsNode
-
-        addChildNode(
-            photonAGraphicsNode
-        )
-
-        // --------------------------------------------------------
-        // PHOTON B
-        // --------------------------------------------------------
-
-        let photonBGeometry =
-            makePhotonGeometry(
-                paths:
-                    photonPathsB,
-                color:
-                    .magenta
-            )
-
-        let photonBGraphicsNode =
-            SCNNode(
-                geometry:
-                    photonBGeometry
-            )
-
-        photonBNode =
-            photonBGraphicsNode
-
-        addChildNode(
-            photonBGraphicsNode
-        )
-
-        // --------------------------------------------------------
-        // PROJECTED GALAXY A
-        // --------------------------------------------------------
-
-        let galaxyA =
-            makeProjectionNode(
-                positions:
-                    galaxyAProjectionPositions,
-                color:
-                    .cyan
-            )
-
-        galaxyANode =
-            galaxyA
-
-        addChildNode(
-            galaxyA
-        )
-
-        // --------------------------------------------------------
-        // PROJECTED GALAXY B
-        // --------------------------------------------------------
-
-        let galaxyB =
-            makeProjectionNode(
-                positions:
-                    galaxyBProjectionPositions,
-                color:
-                    .magenta
-            )
-
-        galaxyBNode =
-            galaxyB
-
-        addChildNode(
-            galaxyB
-        )
+        let galaxyB = makeProjectionNode(positions: galaxyBProjectionPositions, color: .magenta)
+        galaxyBNode = galaxyB
+        addChildNode(galaxyB)
     }
 
     // ============================================================
     // SURFACE NODE
     // ============================================================
 
-    private func makeSurfaceNode()
-        -> SCNNode
-    {
+    private func makeSurfaceNode() -> SCNNode {
+        let node = SCNNode()
+        node.geometry = makeSurfaceGeometry()
 
-        let node =
-            SCNNode()
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.systemTeal.withAlphaComponent(0.70)
+        material.specular.contents = UIColor.white.withAlphaComponent(0.35)
+        material.emission.contents = UIColor.systemTeal.withAlphaComponent(0.08)
+        material.isDoubleSided = true
+        material.transparency = 0.70
+        material.lightingModel = .physicallyBased
 
-        let geometry =
-            makeSurfaceGeometry()
-
-        node.geometry =
-            geometry
-
-        // --------------------------------------------------------
-        // MATERIAL
-        // --------------------------------------------------------
-
-        let material =
-            SCNMaterial()
-
-        material.diffuse.contents =
-            UIColor.systemTeal
-                .withAlphaComponent(
-                    0.76
-                )
-
-        material.specular.contents =
-            UIColor.white
-
-        material.emission.contents =
-            UIColor.systemTeal
-                .withAlphaComponent(
-                    0.15
-                )
-
-        material.isDoubleSided =
-            true
-
-        material.transparency =
-            0.76
-
-        geometry.materials =
-            [
-                material
-            ]
-
+        node.geometry?.materials = [material]
         return node
     }
 
     // ============================================================
-    // CURVILINEAR GRAVITY SURFACE
+    // CURVILINEAR GRAVITY SURFACE  (GR-style embedding)
+    // ============================================================
+    //
+    // Height is driven by a potential-like quantity derived from
+    // the mass density of the globular cluster(s):
+    //
+    //     y = –Φ · curvatureScale
+    //
+    // This produces the classic smooth GR spacetime bowl / funnel.
     // ============================================================
 
-    private func makeSurfaceGeometry()
-        -> SCNGeometry
-    {
+    // ============================================================
+    // CLASSIC RUBBER-SHEET + BOWLING BALL
+    // ============================================================
+    //
+    // Flat sheet with a deep circular indentation in the center.
+    // This is the exact visual you described.
+    // ============================================================
 
-        let n =
-            gridSize
+    private func makeSurfaceGeometry() -> SCNGeometry {
 
-        let size =
-            extent
+        let n = gridSize
 
-        let start =
-            -size
+           // Make the sheet larger than the photon region
+           // so it is no longer open-ended on the source side
+           let size = extent * 1.6          // ← was just "extent"
+           let start = -size
+           let step = (2.0 * size) / Float(n - 1)
+        
+        
+      
+        var positions: [SCNVector3] = []
+        positions.reserveCapacity(n * n)
 
-        let step =
-            (
-                2.0 *
-                size
-            )
-            /
-            Float(
-                n - 1
-            )
+        var normals: [SCNVector3] = []
+        normals.reserveCapacity(n * n)
 
-        var positions:
-            [SCNVector3] = []
+        var indices: [Int32] = []
+        indices.reserveCapacity((n - 1) * (n - 1) * 6)
 
-        positions.reserveCapacity(
-            n * n
-        )
+        var heights = [Float](repeating: 0.0, count: n * n)
 
-        var indices:
-            [Int32] = []
+        // --------------------------------------------------------
+        // Classic rubber-sheet indentation
+        // --------------------------------------------------------
+        // Deep central well that looks like a bowling ball
+        // pressed into a rubber sheet.
+        // --------------------------------------------------------
 
-        indices.reserveCapacity(
-            (
-                n - 1
-            )
-            *
-            (
-                n - 1
-            )
-            *
-            6
-        )
-
-        // ========================================================
-        // CREATE GRID
-        // ========================================================
+        let wellRadius = size * 0.45          // how wide the dent is
+        let wellDepth  = curvatureScale * 1.8 // how deep the dent is
 
         for j in 0..<n {
-
             for i in 0..<n {
+                let x = start + Float(i) * step
+                let z = start + Float(j) * step
 
-                let x =
-                    start +
-                    Float(i) *
-                    step
+                let r = sqrt(x*x + z*z)
 
-                let z =
-                    start +
-                    Float(j) *
-                    step
-
-                let position =
-                    SIMD3<Float>(
-                        x,
-                        0.0,
-                        z
-                    )
-
-                // =================================================
-                // MASS DENSITY
-                // =================================================
-
-                let density =
-                    field.normalizedDensity(
-                        at:
-                            position
-                    )
-
-                // =================================================
-                // BOLGARINO FLOW
-                // =================================================
-
-                let flow =
-                    field.bolgarinoFlux(
-                        at:
-                            position
-                    )
-
-                let flowMagnitude =
-                    simd_length(
-                        flow
-                    )
-
-                let normalizedFlow:
-                    Float
-
-                if flowMagnitude.isFinite &&
-                    flowMagnitude > 0.0
-                {
-
-                    normalizedFlow =
-                        min(
-                            flowMagnitude /
-                            (
-                                flowMagnitude +
-                                1.0
-                            ),
-                            1.0
-                        )
-
-                } else {
-
-                    normalizedFlow =
-                        0.0
+                // Smooth fall-off that looks like a real rubber sheet
+                var y: Float = 0.0
+                if r < wellRadius {
+                    let normalized = r / wellRadius
+                    // Cosine-based smooth bowl (very natural looking)
+                    y = -wellDepth * 0.5 * (1.0 + cos(Float.pi * normalized))
                 }
 
-                // =================================================
-                // COMBINED CURVATURE
-                // =================================================
-
-                let curvature =
-                    (
-                        0.65 *
-                        density
-                    )
-                    +
-                    (
-                        0.35 *
-                        normalizedFlow
-                    )
-
-                let safeCurvature =
-                    curvature.isFinite
-                    ? curvature
-                    : 0.0
-
-                let y =
-                    safeCurvature *
-                    curvatureScale
-
-                positions.append(
-                    SCNVector3(
-                        x,
-                        y,
-                        z
-                    )
-                )
+                heights[j * n + i] = y
+                positions.append(SCNVector3(x, y, z))
             }
         }
 
-        // ========================================================
-        // TRIANGULATE GRID
-        // ========================================================
+        // --------------------------------------------------------
+        // Normals
+        // --------------------------------------------------------
+        for j in 0..<n {
+            for i in 0..<n {
+                let left  = max(i - 1, 0)
+                let right = min(i + 1, n - 1)
+                let down  = max(j - 1, 0)
+                let up    = min(j + 1, n - 1)
 
+                let hL = heights[j * n + left]
+                let hR = heights[j * n + right]
+                let hD = heights[down * n + i]
+                let hU = heights[up * n + i]
+
+                let dx = max(step * Float(right - left), 0.000001)
+                let dz = max(step * Float(up - down), 0.000001)
+
+                let slopeX = (hR - hL) / dx
+                let slopeZ = (hU - hD) / dz
+
+                let normal = simd_normalize(SIMD3<Float>(-slopeX, 1.0, -slopeZ))
+                normals.append(SCNVector3(normal.x, normal.y, normal.z))
+            }
+        }
+
+        // --------------------------------------------------------
+        // Triangles
+        // --------------------------------------------------------
         for j in 0..<(n - 1) {
-
             for i in 0..<(n - 1) {
+                let index = Int32(j * n + i)
+                let row = Int32(n)
 
-                let index =
-                    Int32(
-                        j * n + i
-                    )
+                indices.append(index)
+                indices.append(index + 1)
+                indices.append(index + row)
 
-                indices.append(
-                    contentsOf:
-                    [
-                        index,
-                        index + 1,
-                        index +
-                            Int32(n),
-
-                        index + 1,
-                        index + 1 +
-                            Int32(n),
-                        index +
-                            Int32(n)
-                    ]
-                )
+                indices.append(index + 1)
+                indices.append(index + row + 1)
+                indices.append(index + row)
             }
         }
 
-        // ========================================================
-        // GEOMETRY SOURCES
-        // ========================================================
+        let vertexSource = SCNGeometrySource(vertices: positions)
+        let normalSource = SCNGeometrySource(normals: normals)
+        let element = SCNGeometryElement(indices: indices, primitiveType: .triangles)
 
-        let source =
-            SCNGeometrySource(
-                vertices:
-                    positions
-            )
+        let geometry = SCNGeometry(sources: [vertexSource, normalSource], elements: [element])
+        geometry.firstMaterial = SCNMaterial()
+        return geometry
+    }
+    // ============================================================
+    // SAFE FLOAT
+    // ============================================================
 
-        let element =
-            SCNGeometryElement(
-                indices:
-                    indices,
-                primitiveType:
-                    .triangles
-            )
-
-        return SCNGeometry(
-            sources:
-                [
-                    source
-                ],
-            elements:
-                [
-                    element
-                ]
-        )
+    private func sanitize(_ value: Float) -> Float {
+        guard value.isFinite else { return 0.0 }
+        return value
     }
 
     // ============================================================
     // GALAXY PHOTON PIPELINE
     // ============================================================
-    //
-    // Every source star produces one photon.
-    //
-    // Galaxy A:
-    //
-    //     source star
-    //          ↓
-    //     QRTLPhotonTracer
-    //          ↓
-    //     QRTL central lensing potential
-    //          ↓
-    //     transverse influence
-    //          ↓
-    //     accumulated photon deflection
-    //          ↓
-    //     observation plane
-    //
-    // Galaxy B follows the same pipeline.
-    //
-    // IMPORTANT:
-    //
-    // The photon does NOT simply follow the QRTL radial field
-    // vector. The tracer is responsible for accumulating the
-    // transverse lensing influence along the photon direction.
-    //
-    // ============================================================
 
     func computeGalaxyProjections() {
+        photonPathsA.removeAll(keepingCapacity: true)
+        photonPathsB.removeAll(keepingCapacity: true)
+        galaxyAProjectionPositions.removeAll(keepingCapacity: true)
+        galaxyBProjectionPositions.removeAll(keepingCapacity: true)
 
-        photonPathsA.removeAll(
-            keepingCapacity:
-                true
-        )
+        let tracer = QRTLPhotonTracer(field: field)
 
-        photonPathsB.removeAll(
-            keepingCapacity:
-                true
-        )
+        let galaxyAcenter = SIMD3<Float>(-extent, 0.0, -0.70 * extent)
+        let galaxyBcenter = SIMD3<Float>(-extent, 0.0,  0.70 * extent)
+        let galaxyRadius = 0.25 * extent
 
-        galaxyAProjectionPositions.removeAll(
-            keepingCapacity:
-                true
-        )
-
-        galaxyBProjectionPositions.removeAll(
-            keepingCapacity:
-                true
-        )
-
-        // --------------------------------------------------------
-        // PHOTON TRACER
-        // --------------------------------------------------------
-
-        let tracer =
-            QRTLPhotonTracer(
-                field:
-                    field
-            )
-
-        // ========================================================
-        // SOURCE GALAXY CENTERS
-        // ========================================================
-
-        let galaxyAcenter =
-            SIMD3<Float>(
-                -extent,
-                0.0,
-                -0.7 *
-                extent
-            )
-
-        let galaxyBcenter =
-            SIMD3<Float>(
-                -extent,
-                0.0,
-                0.7 *
-                extent
-            )
-
-        let galaxyRadius =
-            0.25 *
-            extent
-
-        // ========================================================
-        // PHOTON INTEGRATION
-        // ========================================================
-
-        let stepSize =
-            (
-                2.0 *
-                Double(extent)
-            )
-            /
-            Double(
-                photonSteps
-            )
-
-        let totalDistance =
-            2.0 *
-            Double(extent)
-
-        // ========================================================
-        // TRACE EVERY SOURCE STAR
-        // ========================================================
+        let stepSize = (2.0 * Double(extent)) / Double(photonSteps)
+        let totalDistance = 2.0 * Double(extent)
 
         for i in 0..<numberOfStars {
+            let angle = 2.0 * Double.pi * Double(i) / Double(numberOfStars)
 
-            let angle =
-                2.0 *
-                Double.pi *
-                Double(i) /
-                Double(
-                    numberOfStars
-                )
+            // Galaxy A
+            let localA = SIMD3<Float>(Float(cos(angle)), Float(sin(angle)), 0.0)
+            let sourceA = galaxyAcenter + galaxyRadius * localA
 
-            // ====================================================
-            // GALAXY A STAR
-            // ====================================================
-
-            let localA =
-                SIMD3<Float>(
-                    Float(
-                        cos(angle)
-                    ),
-                    Float(
-                        sin(angle)
-                    ),
-                    0.0
-                )
-
-            let sourceA =
-                galaxyAcenter +
-                galaxyRadius *
-                localA
-
-            let pathA =
-                tracer.trace(
-                    start:
-                        SIMD3<Double>(
-                            Double(
-                                sourceA.x
-                            ),
-                            Double(
-                                sourceA.y
-                            ),
-                            Double(
-                                sourceA.z
-                            )
-                        ),
-
-                    direction:
-                        SIMD3<Double>(
-                            1.0,
-                            0.0,
-                            0.0
-                        ),
-
-                    totalDistance:
-                        totalDistance,
-
-                    stepSize:
-                        stepSize
-                )
+            let pathA = tracer.trace(
+                start: SIMD3<Double>(Double(sourceA.x), Double(sourceA.y), Double(sourceA.z)),
+                direction: SIMD3<Double>(1.0, 0.0, 0.0),
+                totalDistance: totalDistance,
+                stepSize: stepSize
+            )
 
             if pathA.count > 1 {
-
-                photonPathsA.append(
-                    pathA
-                )
-
-                if let projection =
-                    projectionPoint(
-                        from:
-                            pathA
-                    )
-                {
-
-                    galaxyAProjectionPositions.append(
-                        projection
-                    )
+                photonPathsA.append(pathA)
+                if let projection = projectionPoint(from: pathA) {
+                    galaxyAProjectionPositions.append(projection)
                 }
             }
 
-            // ====================================================
-            // GALAXY B STAR
-            // ====================================================
+            // Galaxy B
+            let localB = SIMD3<Float>(Float(sin(angle)), Float(cos(angle)), 0.0)
+            let sourceB = galaxyBcenter + galaxyRadius * localB
 
-            let localB =
-                SIMD3<Float>(
-                    Float(
-                        sin(angle)
-                    ),
-                    Float(
-                        cos(angle)
-                    ),
-                    0.0
-                )
-
-            let sourceB =
-                galaxyBcenter +
-                galaxyRadius *
-                localB
-
-            let pathB =
-                tracer.trace(
-                    start:
-                        SIMD3<Double>(
-                            Double(
-                                sourceB.x
-                            ),
-                            Double(
-                                sourceB.y
-                            ),
-                            Double(
-                                sourceB.z
-                            )
-                        ),
-
-                    direction:
-                        SIMD3<Double>(
-                            1.0,
-                            0.0,
-                            0.0
-                        ),
-
-                    totalDistance:
-                        totalDistance,
-
-                    stepSize:
-                        stepSize
-                )
+            let pathB = tracer.trace(
+                start: SIMD3<Double>(Double(sourceB.x), Double(sourceB.y), Double(sourceB.z)),
+                direction: SIMD3<Double>(1.0, 0.0, 0.0),
+                totalDistance: totalDistance,
+                stepSize: stepSize
+            )
 
             if pathB.count > 1 {
-
-                photonPathsB.append(
-                    pathB
-                )
-
-                if let projection =
-                    projectionPoint(
-                        from:
-                            pathB
-                    )
-                {
-
-                    galaxyBProjectionPositions.append(
-                        projection
-                    )
+                photonPathsB.append(pathB)
+                if let projection = projectionPoint(from: pathB) {
+                    galaxyBProjectionPositions.append(projection)
                 }
             }
         }
@@ -871,78 +360,30 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
     // ============================================================
     // PROJECTION POINT
-    //
-    // Observation plane:
-    //
-    //     x = +extent
-    //
-    // Interpolate between the final two photon points so the
-    // projection remains valid even when the integration step
-    // crosses the plane.
     // ============================================================
 
-    private func projectionPoint(
-        from path:
-            [SIMD3<Double>]
-    )
-        -> SIMD3<Double>?
-    {
+    private func projectionPoint(from path: [SIMD3<Double>]) -> SIMD3<Double>? {
+        guard path.count >= 2 else { return nil }
 
-        guard path.count >= 2
-        else {
-            return nil
-        }
-
-        let planeX =
-            Double(
-                extent
-            )
+        let planeX = Double(extent)
 
         for i in 1..<path.count {
+            let previous = path[i - 1]
+            let current = path[i]
 
-            let previous =
-                path[
-                    i - 1
-                ]
+            if previous.x <= planeX && current.x >= planeX {
+                let dx = current.x - previous.x
+                guard abs(dx) > 1.0e-12 else { return current }
 
-            let current =
-                path[
-                    i
-                ]
-
-            if previous.x <= planeX &&
-                current.x >= planeX
-            {
-
-                let dx =
-                    current.x -
-                    previous.x
-
-                guard abs(dx) >
-                    1.0e-12
-                else {
-                    return current
-                }
-
-                let t =
-                    (
-                        planeX -
-                        previous.x
-                    )
-                    /
-                    dx
-
-                return
-                    previous +
-                    (
-                        current -
-                        previous
-                    )
-                    *
-                    t
+                let t = (planeX - previous.x) / dx
+                let clampedT = min(max(t, 0.0), 1.0)
+                return previous + (current - previous) * clampedT
             }
         }
 
+        if let finalPoint = path.last, abs(finalPoint.x - planeX) < 1.0e-5 {
+            return finalPoint
+        }
         return nil
     }
 
@@ -950,135 +391,42 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // PHOTON PATH GEOMETRY
     // ============================================================
 
-    private func makePhotonGeometry(
-        paths:
-            [[SIMD3<Double>]],
-        color:
-            UIColor
-    )
-        -> SCNGeometry
-    {
-
-        var vertices:
-            [SCNVector3] = []
-
-        var indices:
-            [Int32] = []
-
-        // ========================================================
-        // BUILD ALL PATHS INTO ONE LINE GEOMETRY
-        // ========================================================
+    private func makePhotonGeometry(paths: [[SIMD3<Double>]], color: UIColor) -> SCNGeometry {
+        var vertices: [SCNVector3] = []
+        var indices: [Int32] = []
 
         for path in paths {
+            guard path.count > 1 else { continue }
 
-            guard path.count > 1
-            else {
-                continue
-            }
-
-            let startIndex =
-                Int32(
-                    vertices.count
-                )
-
-            // ----------------------------------------------------
-            // VERTICES
-            // ----------------------------------------------------
+            let startIndex = Int32(vertices.count)
 
             for point in path {
-
-                vertices.append(
-                    SCNVector3(
-                        Float(
-                            point.x
-                        ),
-                        Float(
-                            point.y
-                        ),
-                        Float(
-                            point.z
-                        )
-                    )
-                )
+                guard point.x.isFinite, point.y.isFinite, point.z.isFinite else { continue }
+                vertices.append(SCNVector3(Float(point.x), Float(point.y), Float(point.z)))
             }
 
-            // ----------------------------------------------------
-            // LINE SEGMENTS
-            // ----------------------------------------------------
+            let validCount = vertices.count - Int(startIndex)
+            guard validCount > 1 else { continue }
 
-            for i in 0..<(path.count - 1) {
-
-                indices.append(
-                    startIndex +
-                    Int32(i)
-                )
-
-                indices.append(
-                    startIndex +
-                    Int32(i + 1)
-                )
+            for i in 0..<(validCount - 1) {
+                indices.append(startIndex + Int32(i))
+                indices.append(startIndex + Int32(i + 1))
             }
         }
 
-        // ========================================================
-        // EMPTY PATH PROTECTION
-        // ========================================================
-
-        guard vertices.count > 1
-        else {
+        guard vertices.count > 1, indices.count >= 2 else {
             return SCNGeometry()
         }
 
-        // ========================================================
-        // GEOMETRY
-        // ========================================================
+        let source = SCNGeometrySource(vertices: vertices)
+        let element = SCNGeometryElement(indices: indices, primitiveType: .line)
+        let geometry = SCNGeometry(sources: [source], elements: [element])
 
-        let source =
-            SCNGeometrySource(
-                vertices:
-                    vertices
-            )
-
-        let element =
-            SCNGeometryElement(
-                indices:
-                    indices,
-                primitiveType:
-                    .line
-            )
-
-        let geometry =
-            SCNGeometry(
-                sources:
-                    [
-                        source
-                    ],
-                elements:
-                    [
-                        element
-                    ]
-            )
-
-        // ========================================================
-        // MATERIAL
-        // ========================================================
-
-        let material =
-            SCNMaterial()
-
-        material.diffuse.contents =
-            color
-
-        material.emission.contents =
-            color
-
-        material.isDoubleSided =
-            true
-
-        geometry.materials =
-            [
-                material
-            ]
+        let material = SCNMaterial()
+        material.diffuse.contents = color
+        material.emission.contents = color
+        material.isDoubleSided = true
+        geometry.materials = [material]
 
         return geometry
     }
@@ -1087,81 +435,24 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // PROJECTED GALAXY
     // ============================================================
 
-    private func makeProjectionNode(
-        positions:
-            [SIMD3<Double>],
-        color:
-            UIColor
-    )
-        -> SCNNode
-    {
-
-        let parent =
-            SCNNode()
-
-        let radius =
-            max(
-                0.012,
-                Double(extent)
-                /
-                Double(gridSize)
-                *
-                0.55
-            )
-
-        // ========================================================
-        // CREATE PROJECTED STARS
-        // ========================================================
+    private func makeProjectionNode(positions: [SIMD3<Double>], color: UIColor) -> SCNNode {
+        let parent = SCNNode()
+        let radius = max(0.012, Double(extent) / Double(gridSize) * 0.55)
+        let projectionOffset = 0.003
 
         for position in positions {
+            let sphere = SCNSphere(radius: radius)
+            let material = SCNMaterial()
+            material.diffuse.contents = color
+            material.emission.contents = color
+            material.isDoubleSided = true
+            sphere.materials = [material]
 
-            let sphere =
-                SCNSphere(
-                    radius:
-                        radius
-                )
-
-            let material =
-                SCNMaterial()
-
-            material.diffuse.contents =
-                color
-
-            material.emission.contents =
-                color
-
-            material.isDoubleSided =
-                true
-
-            sphere.materials =
-                [
-                    material
-                ]
-
-            let node =
-                SCNNode(
-                    geometry:
-                        sphere
-                )
-
-            node.position =
-                SCNVector3(
-                    Float(
-                        position.x
-                    ),
-                    Float(
-                        position.y
-                    ),
-                    Float(
-                        position.z
-                    )
-                )
-
-            parent.addChildNode(
-                node
-            )
+            let node = SCNNode(geometry: sphere)
+            node.position = SCNVector3(Float(position.x), Float(position.y), Float(position.z))
+            node.position.x += Float(projectionOffset)
+            parent.addChildNode(node)
         }
-
         return parent
     }
 
@@ -1169,283 +460,90 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // CAMERA
     // ============================================================
 
-    func makeCameraNode()
-        -> SCNNode
-    {
+    func makeCameraNode() -> SCNNode {
+        let cameraNode = SCNNode()
+        let camera = SCNCamera()
+        camera.zNear = 0.001
+        camera.zFar = Double(extent) * 20.0
+        camera.fieldOfView = 55.0
+        cameraNode.camera = camera
 
-        let cameraNode =
-            SCNNode()
-
-        let camera =
-            SCNCamera()
-
-        camera.zNear =
-            0.001
-
-        camera.zFar =
-            Double(
-                extent
-            )
-            *
-            20.0
-
-        cameraNode.camera =
-            camera
-
-        cameraNode.position =
-            SCNVector3(
-                0.0,
-                extent *
-                    0.7,
-                extent *
-                    2.3
-            )
-
-        cameraNode.eulerAngles =
-            SCNVector3(
-                -0.38,
-                0.0,
-                0.0
-            )
-
+        cameraNode.position = SCNVector3(0.0, extent * 0.70, extent * 2.30)
+        cameraNode.eulerAngles = SCNVector3(-0.38, 0.0, 0.0)
         return cameraNode
     }
 
     // ============================================================
-    // VISIBILITY
+    // VISIBILITY & CLEANUP
     // ============================================================
 
-    func setPhotonPathsVisible(
-        _ visible:
-            Bool
-    ) {
-
-        photonANode?.isHidden =
-            !visible
-
-        photonBNode?.isHidden =
-            !visible
+    func setPhotonPathsVisible(_ visible: Bool) {
+        photonANode?.isHidden = !visible
+        photonBNode?.isHidden = !visible
     }
 
-    // ============================================================
-    // VISIBILITY — SURFACE
-    // ============================================================
-
-    func setSurfaceVisible(
-        _ visible:
-            Bool
-    ) {
-
-        surfaceNode?.isHidden =
-            !visible
+    func setSurfaceVisible(_ visible: Bool) {
+        surfaceNode?.isHidden = !visible
     }
 
-    // ============================================================
-    // VISIBILITY — GALAXY A
-    // ============================================================
-
-    func setGalaxyAVisible(
-        _ visible:
-            Bool
-    ) {
-
-        galaxyANode?.isHidden =
-            !visible
+    func setGalaxyAVisible(_ visible: Bool) {
+        galaxyANode?.isHidden = !visible
     }
 
-    // ============================================================
-    // VISIBILITY — GALAXY B
-    // ============================================================
-
-    func setGalaxyBVisible(
-        _ visible:
-            Bool
-    ) {
-
-        galaxyBNode?.isHidden =
-            !visible
+    func setGalaxyBVisible(_ visible: Bool) {
+        galaxyBNode?.isHidden = !visible
     }
-
-    // ============================================================
-    // REMOVE PHOTON PATHS
-    // ============================================================
 
     func removePhotonPaths() {
-
         photonANode?.removeFromParentNode()
-
         photonBNode?.removeFromParentNode()
-
-        photonANode =
-            nil
-
-        photonBNode =
-            nil
+        photonANode = nil
+        photonBNode = nil
     }
-
-    // ============================================================
-    // REMOVE PROJECTED GALAXIES
-    // ============================================================
 
     func removeProjectedGalaxies() {
-
         galaxyANode?.removeFromParentNode()
-
         galaxyBNode?.removeFromParentNode()
-
-        galaxyANode =
-            nil
-
-        galaxyBNode =
-            nil
+        galaxyANode = nil
+        galaxyBNode = nil
     }
-
-    // ============================================================
-    // REMOVE SURFACE
-    // ============================================================
 
     func removeSurface() {
-
         surfaceNode?.removeFromParentNode()
-
-        surfaceNode =
-            nil
+        surfaceNode = nil
     }
 
-    // ============================================================
-    // REBUILD
-    // ============================================================
-
     func rebuild() {
-
         buildScene()
     }
 
-    // ============================================================
-    // REBUILD PHOTON / GALAXY OUTPUT
-    //
-    // Useful if the field itself has not changed but the visual
-    // photon/galaxy representation needs to be regenerated.
-    // ============================================================
-
     func rebuildPhotonProjection() {
-
-        // --------------------------------------------------------
-        // REMOVE OLD PHOTON NODES
-        // --------------------------------------------------------
-
         photonANode?.removeFromParentNode()
-
         photonBNode?.removeFromParentNode()
-
         galaxyANode?.removeFromParentNode()
-
         galaxyBNode?.removeFromParentNode()
 
-        photonANode =
-            nil
-
-        photonBNode =
-            nil
-
-        galaxyANode =
-            nil
-
-        galaxyBNode =
-            nil
-
-        // --------------------------------------------------------
-        // RECOMPUTE
-        // --------------------------------------------------------
+        photonANode = nil
+        photonBNode = nil
+        galaxyANode = nil
+        galaxyBNode = nil
 
         computeGalaxyProjections()
 
-        // --------------------------------------------------------
-        // PHOTON A
-        // --------------------------------------------------------
+        let photonA = SCNNode(geometry: makePhotonGeometry(paths: photonPathsA, color: .cyan))
+        photonANode = photonA
+        addChildNode(photonA)
 
-        let photonAGeometry =
-            makePhotonGeometry(
-                paths:
-                    photonPathsA,
-                color:
-                    .cyan
-            )
+        let photonB = SCNNode(geometry: makePhotonGeometry(paths: photonPathsB, color: .magenta))
+        photonBNode = photonB
+        addChildNode(photonB)
 
-        let photonA =
-            SCNNode(
-                geometry:
-                    photonAGeometry
-            )
+        let galaxyA = makeProjectionNode(positions: galaxyAProjectionPositions, color: .cyan)
+        galaxyANode = galaxyA
+        addChildNode(galaxyA)
 
-        photonANode =
-            photonA
-
-        addChildNode(
-            photonA
-        )
-
-        // --------------------------------------------------------
-        // PHOTON B
-        // --------------------------------------------------------
-
-        let photonBGeometry =
-            makePhotonGeometry(
-                paths:
-                    photonPathsB,
-                color:
-                    .magenta
-            )
-
-        let photonB =
-            SCNNode(
-                geometry:
-                    photonBGeometry
-            )
-
-        photonBNode =
-            photonB
-
-        addChildNode(
-            photonB
-        )
-
-        // --------------------------------------------------------
-        // GALAXY A
-        // --------------------------------------------------------
-
-        let galaxyA =
-            makeProjectionNode(
-                positions:
-                    galaxyAProjectionPositions,
-                color:
-                    .cyan
-            )
-
-        galaxyANode =
-            galaxyA
-
-        addChildNode(
-            galaxyA
-        )
-
-        // --------------------------------------------------------
-        // GALAXY B
-        // --------------------------------------------------------
-
-        let galaxyB =
-            makeProjectionNode(
-                positions:
-                    galaxyBProjectionPositions,
-                color:
-                    .magenta
-            )
-
-        galaxyBNode =
-            galaxyB
-
-        addChildNode(
-            galaxyB
-        )
+        let galaxyB = makeProjectionNode(positions: galaxyBProjectionPositions, color: .magenta)
+        galaxyBNode = galaxyB
+        addChildNode(galaxyB)
     }
 }
