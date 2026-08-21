@@ -10,11 +10,69 @@ import simd
 import SceneKit
 import SwiftUI
 
-// ============================================================
-// QRTL GRAVITY SURFACE DIAGNOSTICS
-// ============================================================
+struct QRTLUnifiedSpacetimeSample {
 
+    let position: SIMD3<Float>
 
+    let potential: Float
+
+    let metric: QRTLSpacetimeMetric
+
+    let inverseMetric: QRTLSpacetimeMetric
+
+    let metricDeformation: Float
+}
+
+struct QRTLSpacetimeMetric {
+
+    // Coordinates:
+    // 0 = time
+    // 1 = x
+    // 2 = y
+    // 3 = z
+
+    var g00: Float
+    var g01: Float
+    var g02: Float
+    var g03: Float
+
+    var g10: Float
+    var g11: Float
+    var g12: Float
+    var g13: Float
+
+    var g20: Float
+    var g21: Float
+    var g22: Float
+    var g23: Float
+
+    var g30: Float
+    var g31: Float
+    var g32: Float
+    var g33: Float
+
+    static let minkowski = QRTLSpacetimeMetric(
+        g00: -1.0,
+        g01: 0.0,
+        g02: 0.0,
+        g03: 0.0,
+
+        g10: 0.0,
+        g11: 1.0,
+        g12: 0.0,
+        g13: 0.0,
+
+        g20: 0.0,
+        g21: 0.0,
+        g22: 1.0,
+        g23: 0.0,
+
+        g30: 0.0,
+        g31: 0.0,
+        g32: 0.0,
+        g33: 1.0
+    )
+}
 
 var gravitySurfaceDiagnostics =
     GravitySurfaceDiagnostics()

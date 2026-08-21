@@ -36,6 +36,8 @@ import simd
 
 final class QRTLField {
     
+    var qrtlMetricCoupling: Float = 1.0
+    
     private var spatialPotentialGrid: [Float] = []
 
     private var spatialEnergyDensityGrid: [Float] = []
@@ -82,6 +84,10 @@ final class QRTLField {
     private var speedOfLightSquared: Double {
         speedOfLight * speedOfLight
     }
+    
+    private var inverseSpeedOfLightSquared: Float {
+        1.0 / Float(speedOfLight * speedOfLight)
+    }
 
     // ========================================================
     // INITIALIZATION
@@ -114,6 +120,398 @@ final class QRTLField {
         // One-time build of all additional radial tables
         // (same radii as radialGravityTable).
         buildAdditionalRadialLookupTables()
+    }
+    func qrtlSpacetimeDeformation(
+        at position: SIMD3<Float>
+    ) -> Float {
+
+        let metric =
+            qrtlSpacetimeMetric(
+                at: position
+            )
+
+        let spatialScale =
+            (metric.g11 +
+             metric.g22 +
+             metric.g33) / 3.0
+
+        return spatialScale - 1.0
+    }
+    private func metricDerivative(
+        at position: SIMD3<Float>,
+        row: Int,
+        column: Int,
+        coordinate: Int
+    ) -> Float {
+
+        qrtlMetricDerivative(
+            at: position,
+            metricRow: row,
+            metricColumn: column,
+            coordinate: coordinate
+        )
+    }
+    func evaluateQRTLUnifiedSpacetime(
+        at position: SIMD3<Float>
+    ) -> QRTLUnifiedSpacetimeSample {
+
+        let potential =
+            gravitationalPotential(
+                at: position
+            )
+
+        let metric =
+            qrtlSpacetimeMetric(
+                at: position
+            )
+
+        let inverseMetric =
+            qrtlInverseMetric(
+                at: position
+            )
+
+        let metricDeformation =
+            (
+                metric.g11 +
+                metric.g22 +
+                metric.g33
+            ) / 3.0 - 1.0
+
+        return QRTLUnifiedSpacetimeSample(
+            position: position,
+            potential: Float(potential),
+            metric: metric,
+            inverseMetric: inverseMetric,
+            metricDeformation: metricDeformation
+        )
+    }
+    func qrtlMetricPhotonAcceleration(
+        at position: SIMD3<Float>,
+        direction: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let normalizedDirection =
+            simd_normalize(direction)
+
+        let c2 = speedOfLight * speedOfLight
+
+        var acceleration = SIMD3<Float>.zero
+
+        for i in 1...3 {
+
+            var value: Float = 0.0
+
+            for j in 1...3 {
+
+                let gamma =
+                    qrtlChristoffelSymbol(
+                        at: position,
+                        upper: i,
+                        lower1: j,
+                        lower2: j
+                    )
+
+                let component: Float
+
+                switch j {
+                case 1:
+                    component = normalizedDirection.x
+
+                case 2:
+                    component = normalizedDirection.y
+
+                case 3:
+                    component = normalizedDirection.z
+
+                default:
+                    component = 0.0
+                }
+
+                value +=
+                    gamma *
+                    component *
+                    component
+            }
+
+            switch i {
+
+            case 1:
+                acceleration.x = Float(-c2) * value
+
+            case 2:
+                acceleration.y = Float(-c2) * value
+
+            case 3:
+                acceleration.z = Float(-c2) * value
+
+            default:
+                break
+            }
+        }
+
+        return acceleration
+    }
+    func qrtlChristoffelSymbol(
+        at position: SIMD3<Float>,
+        upper: Int,
+        lower1: Int,
+        lower2: Int
+    ) -> Float {
+
+        let inverse =
+            qrtlInverseMetric(at: position)
+
+        var result: Float = 0.0
+
+        for sigma in 0..<4 {
+
+            let term1 =
+                metricDerivative(
+                    at: position,
+                    row: sigma,
+                    column: lower2,
+                    coordinate: lower1
+                )
+
+            let term2 =
+                metricDerivative(
+                    at: position,
+                    row: sigma,
+                    column: lower1,
+                    coordinate: lower2
+                )
+
+            let term3 =
+                metricDerivative(
+                    at: position,
+                    row: lower1,
+                    column: lower2,
+                    coordinate: sigma
+                )
+
+            let inverseValue =
+                metricValue(
+                    inverse,
+                    upper,
+                    sigma
+                )
+
+            result +=
+                0.5 *
+                inverseValue *
+                (term1 + term2 - term3)
+        }
+
+        return result
+    }
+    private func metricValue(
+        _ metric: QRTLSpacetimeMetric,
+        _ row: Int,
+        _ column: Int
+    ) -> Float {
+
+        switch (row, column) {
+
+        case (0, 0): return metric.g00
+        case (0, 1): return metric.g01
+        case (0, 2): return metric.g02
+        case (0, 3): return metric.g03
+
+        case (1, 0): return metric.g10
+        case (1, 1): return metric.g11
+        case (1, 2): return metric.g12
+        case (1, 3): return metric.g13
+
+        case (2, 0): return metric.g20
+        case (2, 1): return metric.g21
+        case (2, 2): return metric.g22
+        case (2, 3): return metric.g23
+
+        case (3, 0): return metric.g30
+        case (3, 1): return metric.g31
+        case (3, 2): return metric.g32
+        case (3, 3): return metric.g33
+
+        default:
+            return 0.0
+        }
+    }
+    func qrtlInverseMetric(
+        at position: SIMD3<Float>
+    ) -> QRTLSpacetimeMetric {
+
+        let metric = qrtlSpacetimeMetric(
+            at: position
+        )
+
+        return QRTLSpacetimeMetric(
+
+            g00: 1.0 / metric.g00,
+            g01: 0.0,
+            g02: 0.0,
+            g03: 0.0,
+
+            g10: 0.0,
+            g11: 1.0 / metric.g11,
+            g12: 0.0,
+            g13: 0.0,
+
+            g20: 0.0,
+            g21: 0.0,
+            g22: 1.0 / metric.g22,
+            g23: 0.0,
+
+            g30: 0.0,
+            g31: 0.0,
+            g32: 0.0,
+
+            g33: 1.0 / metric.g33
+        )
+    }
+    func qrtlMetricDerivative(
+        at position: SIMD3<Float>,
+        metricRow: Int,
+        metricColumn: Int,
+        coordinate: Int
+    ) -> Float {
+
+        let h: Float = 0.001
+
+        var plus = position
+        var minus = position
+
+        switch coordinate {
+
+        case 1:
+            plus.x += h
+            minus.x -= h
+
+        case 2:
+            plus.y += h
+            minus.y -= h
+
+        case 3:
+            plus.z += h
+            minus.z -= h
+
+        default:
+            return 0.0
+        }
+
+        let forward = qrtlMetricComponent(
+            at: plus,
+            row: metricRow,
+            column: metricColumn
+        )
+
+        let backward = qrtlMetricComponent(
+            at: minus,
+            row: metricRow,
+            column: metricColumn
+        )
+
+        return (forward - backward) / (2.0 * h)
+    }
+    func qrtlMetricComponent(
+        at position: SIMD3<Float>,
+        row: Int,
+        column: Int
+    ) -> Float {
+
+        let metric = qrtlSpacetimeMetric(
+            at: position
+        )
+
+        switch (row, column) {
+
+        case (0, 0):
+            return metric.g00
+
+        case (0, 1):
+            return metric.g01
+
+        case (0, 2):
+            return metric.g02
+
+        case (0, 3):
+            return metric.g03
+
+        case (1, 0):
+            return metric.g10
+
+        case (1, 1):
+            return metric.g11
+
+        case (1, 2):
+            return metric.g12
+
+        case (1, 3):
+            return metric.g13
+
+        case (2, 0):
+            return metric.g20
+
+        case (2, 1):
+            return metric.g21
+
+        case (2, 2):
+            return metric.g22
+
+        case (2, 3):
+            return metric.g23
+
+        case (3, 0):
+            return metric.g30
+
+        case (3, 1):
+            return metric.g31
+
+        case (3, 2):
+            return metric.g32
+
+        case (3, 3):
+            return metric.g33
+
+        default:
+            return 0.0
+        }
+    }
+    func qrtlSpacetimeMetric(
+        at position: SIMD3<Float>
+    ) -> QRTLSpacetimeMetric {
+
+        let potential = gravitationalPotential(
+            at: position
+        )
+
+        let phiOverC2 =
+            qrtlMetricCoupling * Float(potential) * inverseSpeedOfLightSquared
+
+        let temporal = -(1.0 + 2.0 * phiOverC2)
+        let spatial = 1.0 - 2.0 * phiOverC2
+
+        return QRTLSpacetimeMetric(
+
+            g00: temporal,
+            g01: 0.0,
+            g02: 0.0,
+            g03: 0.0,
+
+            g10: 0.0,
+            g11: spatial,
+            g12: 0.0,
+            g13: 0.0,
+
+            g20: 0.0,
+            g21: 0.0,
+            g22: 0.0,
+            g23: 0.0,
+
+            g30: 0.0,
+            g31: 0.0,
+            g32: 0.0,
+            g33: spatial
+        )
     }
   
     // ========================================================
