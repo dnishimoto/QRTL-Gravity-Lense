@@ -935,8 +935,8 @@ struct ContentView: View {
 
                     let starPositions =
                         self.scene.generateGlobularClusterStarPositions(
-                            count: 3000,
-                            radiusMeters: radiusMeters
+                            starCount: 3000,
+                            radiusMeters: Float(radiusMeters)
                         )
 
                     // ====================================================
@@ -961,11 +961,10 @@ struct ContentView: View {
                             clusterMassKg:
                                 mass,
                             clusterRadiusMeters:
-                                radiusMeters,
+                                Float(radiusMeters),
                             starPositions:
-                                starPositions,
-                            perStarMassKg:
-                                perStarMassKg
+                                starPositions
+                         
                         )
 
                     // ====================================================
@@ -979,8 +978,7 @@ struct ContentView: View {
                         )
 
                         self.scene.addSourceGalaxy(
-                            starPositions:
-                                starPositions
+                           
                         )
                     }
 
@@ -1025,9 +1023,7 @@ struct ContentView: View {
                             radius:
                                 radiusMeters,
                             parameters:
-                                params,
-                            densitySource:
-                                densityMap
+                                params
                         )
 
                     let field =

@@ -266,6 +266,185 @@ final class LensingSceneController:
             entity
         )
     }
+    // ============================================================
+    // GENERATE GLOBULAR CLUSTER STAR POSITIONS
+    // ============================================================
+    //
+    // Generates the physical 3D positions of the stars that make
+    // up the globular cluster.
+    //
+    // These positions are used by:
+    //   1. GlobularClusterDensityMap
+    //   2. QRTLField
+    //   3. Gravity-surface generation
+    //   4. Source-photon generation
+    //
+    // The distribution is spherical and centrally concentrated.
+    //
+    // IMPORTANT:
+    // These are REAL 3D positions. They are not a 2D visual-only
+    // distribution and they are not all placed at the origin.
+    // ============================================================
+
+    func generateGlobularClusterStarPositions(
+        starCount: Int,
+        radiusMeters: Float
+    ) -> [SIMD3<Float>] {
+
+        guard starCount > 0 else {
+            return []
+        }
+
+        guard radiusMeters.isFinite,
+              radiusMeters > 0.0 else {
+            return []
+        }
+
+        var positions:
+            [SIMD3<Float>] = []
+
+        positions.reserveCapacity(
+            starCount
+        )
+
+        // ========================================================
+        // RANDOM NUMBER GENERATOR
+        // ========================================================
+
+        var generator =
+            SystemRandomNumberGenerator()
+
+        // ========================================================
+        // HELPER — UNIFORM RANDOM NUMBER
+        // ========================================================
+
+        func randomUnit() -> Float {
+
+            return Float.random(
+                in: 0.0...1.0,
+                using: &generator
+            )
+        }
+
+        // ========================================================
+        // GENERATE SPHERICAL DIRECTION
+        // ========================================================
+        //
+        // Uses an isotropic distribution over the sphere.
+        //
+        // z = cos(theta)
+        //
+        // phi = azimuth
+        // ========================================================
+
+        func randomDirection()
+            -> SIMD3<Float> {
+
+            let z =
+                randomUnit() * 2.0 - 1.0
+
+            let phi =
+                randomUnit()
+                * 2.0
+                * Float.pi
+
+            let radial =
+                sqrt(
+                    max(
+                        0.0,
+                        1.0 - z * z
+                    )
+                )
+
+            return SIMD3<Float>(
+                radial * cos(phi),
+                radial * sin(phi),
+                z
+            )
+        }
+
+        // ========================================================
+        // PLUMMER-LIKE RADIAL DISTRIBUTION
+        // ========================================================
+        //
+        // We want substantially more stars toward the center.
+        //
+        // The inverse cumulative distribution for a Plummer model
+        // can be written:
+        //
+        //     r = a / sqrt(u^(-2/3) - 1)
+        //
+        // where:
+        //
+        //     u = uniform random number
+        //
+        // The generated distribution is then truncated at the
+        // requested cluster radius.
+        //
+        // ========================================================
+
+        let scale =
+            radiusMeters * 0.30
+
+        // ========================================================
+        // GENERATE STARS
+        // ========================================================
+
+        while positions.count < starCount {
+
+            let u =
+                max(
+                    randomUnit(),
+                    1.0e-6
+                )
+
+            let denominator =
+                pow(
+                    u,
+                    -2.0 / 3.0
+                ) - 1.0
+
+            guard denominator > 0.0,
+                  denominator.isFinite else {
+                continue
+            }
+
+            let radius =
+                scale /
+                sqrt(
+                    denominator
+                )
+
+            let maximumRadius =
+                Float(radiusMeters)
+
+            guard radius.isFinite,
+                  radius >= 0.0,
+                  radius <= maximumRadius
+            else {
+                continue
+            }
+
+            let direction =
+                randomDirection()
+
+            let position =
+                direction *
+                Float(radius)
+
+            guard position.x.isFinite,
+                  position.y.isFinite,
+                  position.z.isFinite else {
+                continue
+            }
+
+            positions.append(
+                position
+            )
+        }
+
+        return positions
+    }
     func verifyPhotonPipeline(
         photonResults: [PhotonTraceResult],
         photonsCreated: Int
