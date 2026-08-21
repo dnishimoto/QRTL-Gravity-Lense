@@ -185,43 +185,47 @@ final class GlobularClusterDensityMap:
 
     var maximumDensity: Float {
 
-        let a =
-            max(
-                plummerScaleMeters,
-                1.0
+        guard !starPositions.isEmpty else {
+            return 0.0
+        }
+
+        var maximum: Double = 0.0
+
+        let centerDensity =
+            physicalMassDensity(
+                at: .zero
             )
 
-        let mass =
-            clusterMassKg
+        if centerDensity.isFinite {
+            maximum = max(
+                maximum,
+                centerDensity
+            )
+        }
 
-        guard
-            mass.isFinite,
-            mass > 0.0
+        for star in starPositions {
+
+            let value =
+                physicalMassDensity(
+                    at: star
+                )
+
+            if value.isFinite {
+                maximum = max(
+                    maximum,
+                    value
+                )
+            }
+        }
+
+        guard maximum.isFinite,
+              maximum > 0.0
         else {
             return 0.0
         }
 
-        let value =
-            3.0 *
-            mass /
-            (
-                4.0 *
-                Double.pi *
-                a *
-                a *
-                a
-            )
-
-        guard
-            value.isFinite,
-            value >= 0.0
-        else {
-            return 0.0
-        }
-
-        return Float(value)
+        return Float(maximum)
     }
-
     // ========================================================
     // INTEGRATED DENSITY
     // ========================================================

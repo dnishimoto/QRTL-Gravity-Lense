@@ -507,9 +507,7 @@ final class QRTLExperiment {
         //
         // ====================================================
 
-        let gravityIndex =
-            field.qrtlGravityIndex
-
+      
         print("")
         print("============================================================")
         print("QRTL EXPERIMENT")
@@ -522,8 +520,7 @@ final class QRTLExperiment {
         print(starPositions.count)
         print("Per-star mass:")
         print("QRTL gravity index:")
-        print(gravityIndex)
-        print("============================================================")
+           print("============================================================")
         print("")
 
         // ====================================================

@@ -516,21 +516,17 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> SIMD3<Float> {
 
-        let x =
-            Double(position.x)
-
-        let y =
-            Double(position.y)
-
-        let z =
+        let p = SIMD3<Double>(
+            Double(position.x),
+            Double(position.y),
             Double(position.z)
+        )
 
         let rSquared =
-            x * x +
-            y * y +
-            z * z
+            simd_length_squared(p)
 
-        guard rSquared.isFinite
+        guard rSquared.isFinite,
+              rSquared > 0.0
         else {
             return .zero
         }
@@ -538,19 +534,19 @@ final class QRTLField {
         let r =
             sqrt(rSquared)
 
-        guard r > 0.0,
-              r.isFinite
+        guard r.isFinite,
+              r > 0.0
         else {
             return .zero
         }
 
-        let current =
-            qrtlCurrent(
+        let currentDensity =
+            qrtlCurrentDensity(
                 at: position
             )
 
-        guard current.isFinite,
-              current >= 0.0
+        guard currentDensity.isFinite,
+              currentDensity >= 0.0
         else {
             return .zero
         }
@@ -560,31 +556,31 @@ final class QRTLField {
             Double.pi *
             1.0e-7
 
+        /*
+         QRTL magnetic coupling.
+
+         The local current density generates
+         a circulating magnetic field around
+         the QRTL flow axis.
+        */
+
+        let magneticScale =
+            max(
+                parameters.electromagneticCoupling,
+                0.0
+            )
+
         let magnitude =
             mu0 *
-            current /
-            (
-                4.0 *
-                Double.pi *
-                r * r
-            )
+            magneticScale *
+            currentDensity *
+            r
 
         guard magnitude.isFinite,
               magnitude >= 0.0
         else {
             return .zero
         }
-
-        // ----------------------------------------------------
-        // Tangential magnetic-field direction
-        // ----------------------------------------------------
-
-        let radial =
-            SIMD3<Double>(
-                x,
-                y,
-                z
-            )
 
         let axis =
             SIMD3<Double>(
@@ -596,7 +592,7 @@ final class QRTLField {
         var tangential =
             simd_cross(
                 axis,
-                radial
+                p
             )
 
         let tangentialLength =
@@ -614,18 +610,9 @@ final class QRTLField {
             tangentialLength
 
         return SIMD3<Float>(
-            Float(
-                tangential.x *
-                magnitude
-            ),
-            Float(
-                tangential.y *
-                magnitude
-            ),
-            Float(
-                tangential.z *
-                magnitude
-            )
+            Float(tangential.x * magnitude),
+            Float(tangential.y * magnitude),
+            Float(tangential.z * magnitude)
         )
     }
 
@@ -717,47 +704,19 @@ final class QRTLField {
                 0.0
             )
 
-        let chi =
-            max(
-                parameters.chiQ,
-                0.0
-            )
-
-        let kineticFactor =
+        let kineticEnergy =
+            source *
             velocity *
-            velocity
+            velocity *
+            eta
 
-        let electromagnetic =
-            electromagneticInfluence(
-                at: position
-            )
-
-        let magnetic =
-            magneticEnergyDensity(
-                at: position
-            )
-
-        let energy =
-            (
-                source *
-                kineticFactor *
-                eta
-            )
-            +
-            (
-                electromagnetic *
-                chi
-            )
-            +
-            magnetic
-
-        guard energy.isFinite,
-              energy >= 0.0
+        guard kineticEnergy.isFinite,
+              kineticEnergy >= 0.0
         else {
             return 0.0
         }
 
-        return energy
+        return kineticEnergy
     }
 
     // ========================================================
@@ -789,187 +748,7 @@ final class QRTLField {
         return density
     }
 
-    // ========================================================
-    // QRTL GRAVITY INDEX
-    //
-    // Global calibration factor:
-    //
-    // qrtlGravityIndex =
-    //
-    //     average physical density
-    //     -------------------------
-    //     average QRTL effective density
-    //
-    // ========================================================
-
-    lazy var qrtlGravityIndex: Double = {
-
-        let radialFractions: [Double] = [
-            0.0,
-            0.125,
-            0.25,
-            0.375,
-            0.50,
-            0.625,
-            0.75,
-            0.875,
-            1.0
-        ]
-
-        let angularDirections: [SIMD3<Double>] = [
-
-            SIMD3<Double>(
-                1.0,
-                0.0,
-                0.0
-            ),
-
-            SIMD3<Double>(
-                -1.0,
-                0.0,
-                0.0
-            ),
-
-            SIMD3<Double>(
-                0.0,
-                1.0,
-                0.0
-            ),
-
-            SIMD3<Double>(
-                0.0,
-                -1.0,
-                0.0
-            ),
-
-            SIMD3<Double>(
-                0.0,
-                0.0,
-                1.0
-            ),
-
-            SIMD3<Double>(
-                0.0,
-                0.0,
-                -1.0
-            ),
-
-            simd_normalize(
-                SIMD3<Double>(
-                    1.0,
-                    1.0,
-                    1.0
-                )
-            ),
-
-            simd_normalize(
-                SIMD3<Double>(
-                    -1.0,
-                    1.0,
-                    1.0
-                )
-            )
-        ]
-
-        var physicalDensitySum =
-            0.0
-
-        var qrtlDensitySum =
-            0.0
-
-        var sampleCount =
-            0.0
-
-        for fraction in radialFractions {
-
-            let radius =
-                clusterRadiusMeters *
-                fraction
-
-            for direction in angularDirections {
-
-                let p =
-                    SIMD3<Float>(
-                        Float(
-                            direction.x *
-                            radius
-                        ),
-                        Float(
-                            direction.y *
-                            radius
-                        ),
-                        Float(
-                            direction.z *
-                            radius
-                        )
-                    )
-
-                let physical =
-                    physicalMassDensity(
-                        at: p
-                    )
-
-                let qrtl =
-                    qrtlEffectiveMassDensity(
-                        at: p
-                    )
-
-                guard physical.isFinite,
-                      qrtl.isFinite,
-                      physical >= 0.0,
-                      qrtl >= 0.0
-                else {
-                    continue
-                }
-
-                physicalDensitySum +=
-                    physical
-
-                qrtlDensitySum +=
-                    qrtl
-
-                sampleCount +=
-                    1.0
-            }
-        }
-
-        guard sampleCount > 0.0,
-              physicalDensitySum.isFinite,
-              qrtlDensitySum.isFinite,
-              qrtlDensitySum > 0.0
-        else {
-            return 0.0
-        }
-
-        let averagePhysicalDensity =
-            physicalDensitySum /
-            sampleCount
-
-        let averageQRTLMassDensity =
-            qrtlDensitySum /
-            sampleCount
-
-        guard averagePhysicalDensity.isFinite,
-              averagePhysicalDensity >= 0.0,
-              averageQRTLMassDensity.isFinite,
-              averageQRTLMassDensity > 0.0
-        else {
-            return 0.0
-        }
-
-        let index =
-            averagePhysicalDensity /
-            averageQRTLMassDensity
-
-        guard index.isFinite,
-              index >= 0.0
-        else {
-            return 0.0
-        }
-
-        return index
-    }()
-
+   
     // ========================================================
     // TOTAL CALIBRATED QRTL EFFECTIVE MASS
     //
@@ -986,21 +765,8 @@ final class QRTLField {
         let clusterRadius =
             clusterRadiusMeters
 
-        let cSquared =
-            speedOfLightSquared
-
-        guard clusterRadius > 0.0,
-              cSquared.isFinite,
-              cSquared > 0.0
-        else {
-            return 0.0
-        }
-
-        let gravityIndex =
-            qrtlGravityIndex
-
-        guard gravityIndex.isFinite,
-              gravityIndex >= 0.0
+        guard clusterRadius.isFinite,
+              clusterRadius > 0.0
         else {
             return 0.0
         }
@@ -1042,29 +808,26 @@ final class QRTLField {
                     0.0
                 )
 
-            let energyDensity =
-                qrtlEnergyDensity(
-                    at: position
-                )
-
-            guard energyDensity.isFinite,
-                  energyDensity >= 0.0
-            else {
-                continue
-            }
+            // ----------------------------------------------------
+            // LOCAL QRTL EFFECTIVE MASS DENSITY
+            //
+            // rho_Q = u_Q / c²
+            // ----------------------------------------------------
 
             let massDensity =
-                (
-                    energyDensity /
-                    cSquared
-                ) *
-                gravityIndex
+                qrtlEffectiveMassDensity(
+                    at: position
+                )
 
             guard massDensity.isFinite,
                   massDensity >= 0.0
             else {
                 continue
             }
+
+            // ----------------------------------------------------
+            // SPHERICAL SHELL VOLUME
+            // ----------------------------------------------------
 
             let shellVolume =
                 (
@@ -1083,9 +846,22 @@ final class QRTLField {
                 continue
             }
 
-            totalMass +=
+            // ----------------------------------------------------
+            // MASS CONTRIBUTION
+            // ----------------------------------------------------
+
+            let shellMass =
                 massDensity *
                 shellVolume
+
+            guard shellMass.isFinite,
+                  shellMass >= 0.0
+            else {
+                continue
+            }
+
+            totalMass +=
+                shellMass
         }
 
         guard totalMass.isFinite,
@@ -1096,7 +872,6 @@ final class QRTLField {
 
         return totalMass
     }
-
     // ========================================================
     // QRTL GRAVITATIONAL POTENTIAL
     //
@@ -1144,21 +919,25 @@ final class QRTLField {
         let clusterRadius =
             clusterRadiusMeters
 
-        let gravityIndex =
-            qrtlGravityIndex
+        let cSquared =
+            speedOfLightSquared
 
         guard G.isFinite,
               G > 0.0,
               clusterRadius.isFinite,
               clusterRadius > 0.0,
-              gravityIndex.isFinite,
-              gravityIndex >= 0.0
+              cSquared.isFinite,
+              cSquared > 0.0
         else {
             return 0.0
         }
 
+        // --------------------------------------------------------
+        // Radial integration resolution
+        // --------------------------------------------------------
+
         let sampleCount =
-            128
+            256
 
         let dr =
             clusterRadius /
@@ -1170,16 +949,126 @@ final class QRTLField {
             return 0.0
         }
 
-        // ----------------------------------------------------
-        // Outside the cluster
+        // --------------------------------------------------------
+        // QRTL effective mass density
         //
-        // Phi = -GM/r
-        // ----------------------------------------------------
+        // rho_Q(r) = u_Q(r) / c²
+        //
+        // No gravity-index calibration is applied.
+        // --------------------------------------------------------
+
+        func effectiveMassDensity(
+            at radius: Double
+        ) -> Double {
+
+            guard radius.isFinite,
+                  radius >= 0.0
+            else {
+                return 0.0
+            }
+
+            let p =
+                SIMD3<Float>(
+                    Float(radius),
+                    0.0,
+                    0.0
+                )
+
+            let energyDensity =
+                qrtlEnergyDensity(
+                    at: p
+                )
+
+            guard energyDensity.isFinite,
+                  energyDensity >= 0.0
+            else {
+                return 0.0
+            }
+
+            let density =
+                energyDensity /
+                cSquared
+
+            guard density.isFinite,
+                  density >= 0.0
+            else {
+                return 0.0
+            }
+
+            return density
+        }
+
+        // --------------------------------------------------------
+        // Outside the QRTL cluster
+        //
+        // Phi(r) = -G M / r
+        // --------------------------------------------------------
 
         if radius >= clusterRadius {
 
-            let totalMass =
-                qrtlTotalEffectiveMassKg()
+            var totalMass =
+                0.0
+
+            for index in 0..<sampleCount {
+
+                let r0 =
+                    Double(index) *
+                    dr
+
+                let r1 =
+                    Double(index + 1) *
+                    dr
+
+                guard r1 > r0
+                else {
+                    continue
+                }
+
+                let shellRadius =
+                    0.5 *
+                    (r0 + r1)
+
+                let density =
+                    effectiveMassDensity(
+                        at: shellRadius
+                    )
+
+                guard density.isFinite,
+                      density >= 0.0
+                else {
+                    continue
+                }
+
+                let shellVolume =
+                    (
+                        4.0 *
+                        Double.pi /
+                        3.0
+                    ) *
+                    (
+                        pow(r1, 3.0) -
+                        pow(r0, 3.0)
+                    )
+
+                guard shellVolume.isFinite,
+                      shellVolume > 0.0
+                else {
+                    continue
+                }
+
+                let shellMass =
+                    density *
+                    shellVolume
+
+                guard shellMass.isFinite,
+                      shellMass >= 0.0
+                else {
+                    continue
+                }
+
+                totalMass +=
+                    shellMass
+            }
 
             guard totalMass.isFinite,
                   totalMass >= 0.0
@@ -1203,129 +1092,32 @@ final class QRTLField {
                 : 0.0
         }
 
-        // ----------------------------------------------------
-        // Inside the cluster
-        // ----------------------------------------------------
-
-        let integrationRadius =
-            min(
-                radius,
-                clusterRadius
-            )
+        // --------------------------------------------------------
+        // Interior potential
+        //
+        // Phi(r) =
+        //
+        // -G [
+        //
+        //      M(<r) / r
+        //
+        //      +
+        //
+        //      integral from r to R
+        //      of dM / r'
+        //
+        // ]
+        // --------------------------------------------------------
 
         var enclosedMass =
             0.0
 
-        if integrationRadius > 0.0 {
-
-            let numberOfSamples =
-                max(
-                    1,
-                    min(
-                        sampleCount,
-                        Int(
-                            ceil(
-                                integrationRadius /
-                                dr
-                            )
-                        )
-                    )
-                )
-
-            for index in 0..<numberOfSamples {
-
-                let r0 =
-                    Double(index) *
-                    dr
-
-                let r1 =
-                    min(
-                        Double(index + 1) *
-                        dr,
-                        integrationRadius
-                    )
-
-                guard r1 > r0
-                else {
-                    continue
-                }
-
-                let shellRadius =
-                    0.5 *
-                    (r0 + r1)
-
-                let samplePosition =
-                    SIMD3<Float>(
-                        Float(shellRadius),
-                        0.0,
-                        0.0
-                    )
-
-                let energyDensity =
-                    qrtlEnergyDensity(
-                        at: samplePosition
-                    )
-
-                guard energyDensity.isFinite,
-                      energyDensity >= 0.0
-                else {
-                    continue
-                }
-
-                let rawMassDensity =
-                    energyDensity /
-                    speedOfLightSquared
-
-                guard rawMassDensity.isFinite,
-                      rawMassDensity >= 0.0
-                else {
-                    continue
-                }
-
-                let calibratedMassDensity =
-                    rawMassDensity *
-                    gravityIndex
-
-                guard calibratedMassDensity.isFinite,
-                      calibratedMassDensity >= 0.0
-                else {
-                    continue
-                }
-
-                let shellVolume =
-                    (
-                        4.0 *
-                        Double.pi /
-                        3.0
-                    ) *
-                    (
-                        pow(r1, 3.0) -
-                        pow(r0, 3.0)
-                    )
-
-                guard shellVolume.isFinite,
-                      shellVolume > 0.0
-                else {
-                    continue
-                }
-
-                enclosedMass +=
-                    calibratedMassDensity *
-                    shellVolume
-            }
-        }
-
-        // ----------------------------------------------------
-        // Exterior shell contribution
-        //
-        // For shells outside r:
-        //
-        //     dPhi = -G dM / r_shell
-        //
-        // ----------------------------------------------------
-
-        var exteriorPotentialIntegral =
+        var exteriorIntegral =
             0.0
+
+        // --------------------------------------------------------
+        // Integrate radial shells
+        // --------------------------------------------------------
 
         for index in 0..<sampleCount {
 
@@ -1337,7 +1129,7 @@ final class QRTLField {
                 Double(index + 1) *
                 dr
 
-            guard r1 > radius
+            guard r1 > r0
             else {
                 continue
             }
@@ -1346,40 +1138,13 @@ final class QRTLField {
                 0.5 *
                 (r0 + r1)
 
-            let samplePosition =
-                SIMD3<Float>(
-                    Float(shellRadius),
-                    0.0,
-                    0.0
+            let density =
+                effectiveMassDensity(
+                    at: shellRadius
                 )
 
-            let energyDensity =
-                qrtlEnergyDensity(
-                    at: samplePosition
-                )
-
-            guard energyDensity.isFinite,
-                  energyDensity >= 0.0
-            else {
-                continue
-            }
-
-            let rawMassDensity =
-                energyDensity /
-                speedOfLightSquared
-
-            guard rawMassDensity.isFinite,
-                  rawMassDensity >= 0.0
-            else {
-                continue
-            }
-
-            let calibratedMassDensity =
-                rawMassDensity *
-                gravityIndex
-
-            guard calibratedMassDensity.isFinite,
-                  calibratedMassDensity >= 0.0
+            guard density.isFinite,
+                  density >= 0.0
             else {
                 continue
             }
@@ -1402,7 +1167,7 @@ final class QRTLField {
             }
 
             let shellMass =
-                calibratedMassDensity *
+                density *
                 shellVolume
 
             guard shellMass.isFinite,
@@ -1411,17 +1176,102 @@ final class QRTLField {
                 continue
             }
 
-            exteriorPotentialIntegral +=
-                shellMass /
-                max(
-                    shellRadius,
-                    1.0e-12
-                )
+            // ----------------------------------------------------
+            // Entire shell is inside evaluation radius
+            // ----------------------------------------------------
+
+            if r1 <= radius {
+
+                enclosedMass +=
+                    shellMass
+
+            }
+
+            // ----------------------------------------------------
+            // Evaluation radius falls inside this shell
+            // ----------------------------------------------------
+
+            else if r0 < radius &&
+                    radius < r1 {
+
+                let innerVolume =
+                    (
+                        4.0 *
+                        Double.pi /
+                        3.0
+                    ) *
+                    (
+                        pow(radius, 3.0) -
+                        pow(r0, 3.0)
+                    )
+
+                let innerMass =
+                    density *
+                    max(
+                        innerVolume,
+                        0.0
+                    )
+
+                if innerMass.isFinite &&
+                    innerMass >= 0.0 {
+
+                    enclosedMass +=
+                        innerMass
+                }
+
+                // ------------------------------------------------
+                // Remaining exterior portion
+                // ------------------------------------------------
+
+                let outerVolume =
+                    (
+                        4.0 *
+                        Double.pi /
+                        3.0
+                    ) *
+                    (
+                        pow(r1, 3.0) -
+                        pow(radius, 3.0)
+                    )
+
+                let outerMass =
+                    density *
+                    max(
+                        outerVolume,
+                        0.0
+                    )
+
+                if outerMass.isFinite &&
+                    outerMass >= 0.0 {
+
+                    exteriorIntegral +=
+                        outerMass /
+                        max(
+                            shellRadius,
+                            1.0e-12
+                        )
+                }
+
+            }
+
+            // ----------------------------------------------------
+            // Entire shell is exterior to evaluation radius
+            // ----------------------------------------------------
+
+            else {
+
+                exteriorIntegral +=
+                    shellMass /
+                    max(
+                        shellRadius,
+                        1.0e-12
+                    )
+            }
         }
 
-        // ----------------------------------------------------
-        // Enclosed mass contribution
-        // ----------------------------------------------------
+        // --------------------------------------------------------
+        // Enclosed-mass potential
+        // --------------------------------------------------------
 
         let safeRadius =
             max(
@@ -1436,21 +1286,37 @@ final class QRTLField {
               safeRadius
             : 0.0
 
-        // ----------------------------------------------------
-        // Exterior shell contribution
-        // ----------------------------------------------------
+        // --------------------------------------------------------
+        // Exterior-shell potential
+        // --------------------------------------------------------
 
         let exteriorPotential =
             -G *
-            exteriorPotentialIntegral
+            exteriorIntegral
 
-        // ----------------------------------------------------
-        // Total QRTL potential
-        // ----------------------------------------------------
+        // --------------------------------------------------------
+        // Center correction
+        //
+        // At r = 0:
+        //
+        // M(<r) / r -> 0
+        //
+        // so only the exterior shells contribute.
+        // --------------------------------------------------------
 
-        let potential =
-            enclosedPotential +
-            exteriorPotential
+        let potential: Double
+
+        if radius <= 1.0e-12 {
+
+            potential =
+                exteriorPotential
+
+        } else {
+
+            potential =
+                enclosedPotential +
+                exteriorPotential
+        }
 
         guard potential.isFinite
         else {
@@ -2068,12 +1934,6 @@ final class QRTLField {
         let qrtlAcceleration:
             SIMD3<Float>
 
-        let qrtlGravityIndex:
-            Double
-
-        let gravitationalIndex:
-            Double
-
         let totalIndex:
             Double
     }
@@ -2207,12 +2067,6 @@ final class QRTLField {
             qrtlAcceleration:
                 qrtlAcceleration,
 
-            qrtlGravityIndex:
-                qrtlGravityIndex,
-
-            gravitationalIndex:
-                gravityIndex,
-
             totalIndex:
                 opticalIndex
         )
@@ -2284,12 +2138,6 @@ final class QRTLField {
 
             QRTL gravitational acceleration:
                 \(s.qrtlAcceleration)
-
-            QRTL gravity index:
-                \(s.qrtlGravityIndex)
-
-            Gravitational optical index:
-                \(s.gravitationalIndex)
 
             Total optical index:
                 \(s.totalIndex)
