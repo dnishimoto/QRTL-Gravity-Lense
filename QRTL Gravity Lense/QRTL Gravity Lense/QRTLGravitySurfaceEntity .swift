@@ -32,13 +32,12 @@ import SceneKit
 import simd
 import UIKit
 
+
 // ============================================================
 // QRTL GRAVITY SURFACE ENTITY
 // ============================================================
 //
 // This class is a CONSUMER of the QRTL physics.
-//
-// It does not create an independent gravity model.
 //
 // Physics:
 //     QRTLField
@@ -47,28 +46,37 @@ import UIKit
 // Rendering:
 //     QRTLGravitySurfaceEntity
 //
-// Coordinate system:
+// COORDINATE SYSTEM
 //
-//                 Y
-//                 ↑
-//                 |
-//                 |       spacetime surface
-//                 |      /---------\
-//                 |    /             \
-//                 |  /       ↓         \
-//                 | /      gravity       \
-//                 |/                      \
-//                 +------------------------→ X
-//                /
-//               Z
+// Physical QRTL coordinates:
 //
-// Negative Y = visual gravity-well displacement.
+//     X = photon propagation direction
+//     Y = transverse direction
+//     Z = transverse direction
 //
+// Photons travel:
+//
+//     +X
+//
+// Gravity surface:
+//
+//     physical X = 0
+//
+// Mapping:
+//
+//     physical Y -> visual X
+//     physical Z -> visual Z
+//     gravitational potential -> visual negative Y
+//
+// The QRTL field and radial lookup remain completely unchanged.
+//
+// pow(..., 0.45) and curvatureScale are visualization only.
+// ============================================================
 
 final class QRTLGravitySurfaceEntity: SCNNode {
 
     // ============================================================
-    // AUTHORITATIVE PHYSICS
+    // AUTHORITATIVE QRTL PHYSICS
     // ============================================================
 
     private let field: QRTLField
@@ -108,6 +116,18 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     private let lensingParameters = LensingParameters()
 
     // ============================================================
+    // VISUALIZATION STATE
+    // ============================================================
+
+    // Maximum absolute QRTL potential encountered while building
+    // the current surface.
+    //
+    // This is used ONLY for visualization normalization.
+    //
+    // It never modifies QRTL physics.
+    private var maximumPotential: Float = 0.0
+
+    // ============================================================
     // INITIALIZATION
     // ============================================================
 
@@ -118,11 +138,28 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         numberOfStars: Int = 220,
         curvatureScale: Float = 1.0
     ) {
+
         self.field = field
-        self.gridSize = max(gridSize, 4)
-        self.extent = max(extent, 0.001)
-        self.numberOfStars = max(numberOfStars, 1)
-        self.curvatureScale = max(curvatureScale, 0.0001)
+
+        self.gridSize = max(
+            gridSize,
+            4
+        )
+
+        self.extent = max(
+            extent,
+            0.001
+        )
+
+        self.numberOfStars = max(
+            numberOfStars,
+            1
+        )
+
+        self.curvatureScale = max(
+            curvatureScale,
+            0.0001
+        )
 
         super.init()
 
@@ -132,6 +169,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     }
 
     required init?(coder: NSCoder) {
+
         fatalError(
             "QRTLGravitySurfaceEntity does not support NSCoder initialization."
         )
@@ -144,7 +182,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     func buildScene(
         lensingParameters: LensingParameters
     ) {
+
         clearScene()
+
+        // Reset visualization state.
+        maximumPotential = 0.0
 
         // ========================================================
         // GRAVITY SURFACE
@@ -154,7 +196,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         surfaceNode = surface
 
-        addChildNode(surface)
+        addChildNode(
+            surface
+        )
 
         // ========================================================
         // PHOTON PROJECTIONS
@@ -179,7 +223,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         photonANode = photonAGraphicsNode
 
-        addChildNode(photonAGraphicsNode)
+        addChildNode(
+            photonAGraphicsNode
+        )
 
         // ========================================================
         // PHOTON B
@@ -196,7 +242,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         photonBNode = photonBGraphicsNode
 
-        addChildNode(photonBGraphicsNode)
+        addChildNode(
+            photonBGraphicsNode
+        )
 
         // ========================================================
         // PROJECTED GALAXY A
@@ -209,7 +257,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         galaxyANode = galaxyA
 
-        addChildNode(galaxyA)
+        addChildNode(
+            galaxyA
+        )
 
         // ========================================================
         // PROJECTED GALAXY B
@@ -222,7 +272,86 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         galaxyBNode = galaxyB
 
-        addChildNode(galaxyB)
+        addChildNode(
+            galaxyB
+        )
+    }
+
+    // ============================================================
+    // AUTHORITATIVE POTENTIAL SAMPLE
+    // ============================================================
+    //
+    // This is the ONLY surface potential sampling function.
+    //
+    // Visual coordinates:
+    //
+    //     x -> physical Y
+    //     z -> physical Z
+    //
+    // Physical cross-section:
+    //
+    //     physical X = 0
+    //
+    // Therefore:
+    //
+    //     r = sqrt(
+    //         X² + Y² + Z²
+    //     )
+    //
+    // with X = 0.
+    //
+    // The actual potential comes exclusively from:
+    //
+    //     field.interpolateRadialPotential(radius:)
+    //
+    // No gravity physics is performed here.
+    // ============================================================
+
+    private func samplePotentialMagnitude(
+        x: Float,
+        z: Float
+    ) -> Float {
+
+        // --------------------------------------------------------
+        // VISUAL -> PHYSICAL COORDINATE MAPPING
+        // --------------------------------------------------------
+
+        let physicalPosition = SIMD3<Float>(
+            0.0,   // Physical X = 0 cross-section
+            x,     // Visual X -> Physical Y
+            z      // Visual Z -> Physical Z
+        )
+
+        // --------------------------------------------------------
+        // TRUE 3D RADIUS
+        // --------------------------------------------------------
+
+        let radius = simd_length(
+            physicalPosition
+        )
+
+        // --------------------------------------------------------
+        // AUTHORITATIVE QRTL RADIAL LOOKUP
+        // --------------------------------------------------------
+
+        let potential = field.interpolateRadialPotential(
+            radius: Double(radius)
+        )
+
+        let magnitude = abs(
+            Float(potential)
+        )
+
+        guard magnitude.isFinite else {
+            return 0.0
+        }
+
+        maximumPotential = max(
+            maximumPotential,
+            magnitude
+        )
+
+        return magnitude
     }
 
     // ============================================================
@@ -283,7 +412,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         material.transparency = 0.82
         material.lightingModel = .physicallyBased
 
-        node.geometry?.materials = [material]
+        node.geometry?.materials = [
+            material
+        ]
 
         return node
     }
@@ -292,40 +423,65 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // GRAVITY SURFACE GEOMETRY
     // ============================================================
     //
-    // PHYSICAL QRTL COORDINATES:
+    // The surface is generated directly from the radial QRTL
+    // potential lookup.
     //
-    //       X = photon propagation direction
-    //       Y = transverse coordinate
-    //       Z = transverse coordinate
+    // Physical:
     //
-    // The surface is a cross-section at:
+    //     X = 0
+    //     Y = transverse
+    //     Z = transverse
     //
-    //       physical X = 0
+    // Visual:
     //
-    // Therefore:
+    //     X = physical Y
+    //     Z = physical Z
+    //     Y = negative normalized potential
     //
-    //       physical Y -> visual X
-    //       physical Z -> visual Z
-    //       potential  -> visual negative Y
+    // gridSize remains 64 by default.
     //
-    // The QRTL field itself remains completely unchanged.
-    //
+    // No independent gravity field is constructed here.
     // ============================================================
 
     private func makeSurfaceGeometry() -> SCNGeometry {
 
-        // Keep requested 64 resolution.
-        let radialSegments = max(gridSize / 2, 16)
-        let angularSegments = max(gridSize, 32)
+        // Reset normalization for this geometry build.
+        maximumPotential = 0.0
+
+        // ========================================================
+        // SURFACE RESOLUTION
+        // ========================================================
+
+        let radialSegments = max(
+            gridSize / 2,
+            16
+        )
+
+        let angularSegments = max(
+            gridSize,
+            32
+        )
 
         let bowlRadius = extent
 
         let rimFadeFraction: Float = 0.18
 
+        // ========================================================
+        // STORAGE
+        // ========================================================
+
         var positions: [SCNVector3] = []
+
         var indices: [Int32] = []
 
+        var potentialMagnitudes: [Float] = []
+
         positions.reserveCapacity(
+            1 +
+            radialSegments * angularSegments
+        )
+
+        potentialMagnitudes.reserveCapacity(
             1 +
             radialSegments * angularSegments
         )
@@ -338,73 +494,13 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         )
 
         // ========================================================
-        // SAMPLE PHYSICAL GRAVITY
-        // ========================================================
-        //
-        // IMPORTANT:
-        //
-        // x is ALWAYS physical X = 0.
-        //
-        // surfaceY and surfaceZ are the actual transverse
-        // coordinates of the QRTL field.
-        //
-        // ========================================================
-
-        var potentialMagnitudes: [Float] = []
-
-        potentialMagnitudes.reserveCapacity(
-            1 +
-            radialSegments * angularSegments
-        )
-
-        var maximumPotential: Float = 0.0
-
-        @inline(__always)
-        func samplePotentialMagnitude(
-            physicalY: Float,
-            physicalZ: Float
-        ) -> Float {
-
-            // -----------------------------------------------
-            // AUTHORITATIVE QRTL COORDINATE SYSTEM
-            // -----------------------------------------------
-
-            let physicalPosition =
-                SIMD3<Float>(
-                    0.0,             // physical X
-                    physicalY,       // physical Y
-                    physicalZ        // physical Z
-                )
-
-            let potential =
-                field.gravitationalPotential(
-                    at: physicalPosition
-                )
-
-            let magnitude =
-                abs(Float(potential))
-
-            guard magnitude.isFinite else {
-                return 0.0
-            }
-
-            maximumPotential =
-                max(
-                    maximumPotential,
-                    magnitude
-                )
-
-            return magnitude
-        }
-
-        // ========================================================
-        // CENTER
+        // CENTER POTENTIAL
         // ========================================================
 
         let centerPotential =
             samplePotentialMagnitude(
-                physicalY: 0.0,
-                physicalZ: 0.0
+                x: 0.0,
+                z: 0.0
             )
 
         potentialMagnitudes.append(
@@ -412,7 +508,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         )
 
         // ========================================================
-        // RADIAL RINGS
+        // RINGS
         // ========================================================
 
         for radialIndex in 1...radialSegments {
@@ -433,24 +529,29 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     Float(angularIndex) /
                     Float(angularSegments)
 
-                // =================================================
-                // PHYSICAL CROSS-SECTION
+                // ------------------------------------------------
+                // VISUAL SURFACE COORDINATES
                 //
-                // Y/Z are the radial coordinates.
-                //
-                // X remains exactly zero.
-                // =================================================
+                // visual X -> physical Y
+                // visual Z -> physical Z
+                // ------------------------------------------------
 
-                let physicalY =
-                    radius * cos(angle)
+                let x =
+                    radius *
+                    cos(angle)
 
-                let physicalZ =
-                    radius * sin(angle)
+                let z =
+                    radius *
+                    sin(angle)
+
+                // ------------------------------------------------
+                // AUTHORITATIVE QRTL POTENTIAL
+                // ------------------------------------------------
 
                 let potential =
                     samplePotentialMagnitude(
-                        physicalY: physicalY,
-                        physicalZ: physicalZ
+                        x: x,
+                        z: z
                     )
 
                 potentialMagnitudes.append(
@@ -462,12 +563,16 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         // ========================================================
         // NORMALIZATION
         // ========================================================
+        //
+        // Visualization only.
+        //
+        // Does NOT modify the QRTL potential.
+        // ========================================================
 
-        let normalization =
-            max(
-                maximumPotential,
-                1.0e-30
-            )
+        let normalization = max(
+            maximumPotential,
+            1.0e-30
+        )
 
         // ========================================================
         // CENTER VERTEX
@@ -484,15 +589,21 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             )
 
         // --------------------------------------------------------
-        // VISUALIZATION ONLY
-        //
-        // curvatureScale controls display depth.
-        //
-        // The QRTL potential itself is NOT modified.
+        // VISUALIZATION ENHANCEMENT ONLY
+        // --------------------------------------------------------
+
+        let centerVisualPotential =
+            pow(
+                centerNormalized,
+                0.45
+            )
+
+        // --------------------------------------------------------
+        // POTENTIAL -> NEGATIVE VISUAL Y
         // --------------------------------------------------------
 
         let centerDepth =
-            -centerNormalized *
+            -centerVisualPotential *
             curvatureScale
 
         positions.append(
@@ -504,7 +615,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         )
 
         // ========================================================
-        // RINGS
+        // RING VERTICES
         // ========================================================
 
         var potentialIndex = 1
@@ -520,13 +631,14 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 bowlRadius
 
             // ----------------------------------------------------
-            // RIM FADE
+            // VISUAL RIM FADE
             // ----------------------------------------------------
 
             let rimStart =
                 max(
                     0.0,
-                    1.0 - rimFadeFraction
+                    1.0 -
+                    rimFadeFraction
                 )
 
             let rimFade: Float
@@ -549,7 +661,10 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
                 let clamped =
                     min(
-                        max(t, 0.0),
+                        max(
+                            t,
+                            0.0
+                        ),
                         1.0
                     )
 
@@ -559,7 +674,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     clamped *
                     (
                         3.0 -
-                        2.0 * clamped
+                        2.0 *
+                        clamped
                     )
             }
 
@@ -571,32 +687,21 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     Float(angularIndex) /
                     Float(angularSegments)
 
-                // =================================================
-                // PHYSICAL COORDINATES
-                // =================================================
+                // ------------------------------------------------
+                // VISUAL COORDINATES
+                // ------------------------------------------------
 
-                let physicalY =
-                    radius * cos(angle)
+                let x =
+                    radius *
+                    cos(angle)
 
-                let physicalZ =
-                    radius * sin(angle)
+                let z =
+                    radius *
+                    sin(angle)
 
-                // =================================================
-                // PHYSICAL -> VISUAL MAPPING
-                //
-                // physical Y -> visual X
-                // physical Z -> visual Z
-                // =================================================
-
-                let visualX =
-                    physicalY
-
-                let visualZ =
-                    physicalZ
-
-                // =================================================
-                // POTENTIAL -> VISUAL DEPTH
-                // =================================================
+                // ------------------------------------------------
+                // NORMALIZED PHYSICAL POTENTIAL
+                // ------------------------------------------------
 
                 let normalizedPotential =
                     min(
@@ -611,29 +716,32 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     )
 
                 // ------------------------------------------------
-                // OPTIONAL NONLINEAR VISUAL ENHANCEMENT
-                //
-                // This does NOT alter QRTL physics.
-                //
-                // It only makes shallow curvature easier to see.
+                // NONLINEAR VISUALIZATION ENHANCEMENT ONLY
                 // ------------------------------------------------
 
-                let enhancedPotential =
+                let visualPotential =
                     pow(
                         normalizedPotential,
                         0.45
                     )
 
-                let visualY =
-                    -enhancedPotential *
+                // ------------------------------------------------
+                // GRAVITY -> NEGATIVE VISUAL Y
+                //
+                // curvatureScale is visual only.
+                // rimFade is visual only.
+                // ------------------------------------------------
+
+                let y =
+                    -visualPotential *
                     curvatureScale *
                     rimFade
 
                 positions.append(
                     SCNVector3(
-                        visualX,
-                        visualY,
-                        visualZ
+                        x,
+                        y,
+                        z
                     )
                 )
 
@@ -656,11 +764,15 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             indices.append(0)
 
             indices.append(
-                Int32(1 + next)
+                Int32(
+                    1 + next
+                )
             )
 
             indices.append(
-                Int32(1 + angularIndex)
+                Int32(
+                    1 + angularIndex
+                )
             )
         }
 
@@ -947,7 +1059,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 localA
 
             // ====================================================
-            // PHOTONS CONTINUE +X
+            // PHOTONS TRAVEL +X
             // ====================================================
 
             let directionA =
@@ -976,7 +1088,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                         )
                     }
 
-                photonPathsA.append(pathA)
+                photonPathsA.append(
+                    pathA
+                )
             }
 
             if
@@ -1036,7 +1150,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                         )
                     }
 
-                photonPathsB.append(pathB)
+                photonPathsB.append(
+                    pathB
+                )
             }
 
             if
@@ -1150,7 +1266,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         material.isDoubleSided = true
         material.lightingModel = .constant
 
-        geometry.materials = [material]
+        geometry.materials = [
+            material
+        ]
 
         return geometry
     }
@@ -1202,7 +1320,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             material.isDoubleSided = true
             material.lightingModel = .constant
 
-            sphere.materials = [material]
+            sphere.materials = [
+                material
+            ]
 
             let node =
                 SCNNode(
@@ -1217,9 +1337,12 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     Float(position.z)
                 )
 
-            parent.addChildNode(node)
+            parent.addChildNode(
+                node
+            )
         }
 
         return parent
     }
 }
+
