@@ -121,8 +121,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         // cell's contribution to the gravity surface below.
         // ----------------------------------------------------
 
-        print(field.gravityMeasurementReport)
-
+   
         childNodes.forEach { $0.removeFromParentNode() }
 
         surfaceNode = nil
@@ -1142,9 +1141,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
             let potential =
                 sanitize(
-                    field.gravitationalPotential(
+                    Float(field.gravitationalPotential(
                         at: position
-                    )
+                    ))
                 )
 
             let potentialMagnitude =

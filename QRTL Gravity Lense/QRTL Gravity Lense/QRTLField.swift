@@ -14,17 +14,18 @@
 //          ↓
 //  Enclosed Mass
 //          ↓
-//  Einstein Weak-Field Potential
+//  QRTL Energy Density
 //          ↓
-//  Spacetime Metric
+//  Effective QRTL Mass Density
+//          ↓
+//  QRTL Gravitational Potential
+//          ↓
+//  Spacetime / Optical Index
 //          ↓
 //  Photon Transverse Deflection
 //
-//  QRTL / EM fields remain available as additional fields,
-//  but Einstein gravity is the primary photon-lensing field.
+//  QRTL / EM fields remain available as additional fields.
 //
-
-
 
 import Foundation
 import simd
@@ -36,50 +37,25 @@ import simd
 final class QRTLField {
 
     // ========================================================
-    // PRIMARY DATA
+    // PHYSICAL INPUT
     // ========================================================
 
-    let densitySource: GlobularClusterDensitySource
+    let densitySource: GlobularClusterDensityMap
     let parameters: QRTLParameters
     let referenceDensity: Float
 
     // ========================================================
-    // PHYSICAL SCALE
+    // CONSTANTS
     // ========================================================
 
-    /// Physical radius represented by normalized SceneKit
-    /// coordinate magnitude 1.0.
-    ///
-    /// This MUST use the same radius used to construct
-    /// GlobularClusterDensitySource.
-    let physicalRadiusMeters: Double
-
-    // ========================================================
-    // PHYSICAL CONSTANTS
-    // ========================================================
-
-    private let solarMassKg: Float =
-        1.98847e30
-
-    private var clusterMassKg: Float {
-        1.0e6 * solarMassKg
-    }
-
-    private var gravitationalConstant: Float {
-        Float(PhysicalConstants.G)
-    }
+    private let gravitationalConstant: Double =
+        6.67430e-11
 
     private let speedOfLight: Double =
         299_792_458.0
 
-    private var speedOfLightSquared: Float {
-
-        let c = Float(speedOfLight)
-
-        return max(
-            c * c,
-            Float(1.0)
-        )
+    private var speedOfLightSquared: Double {
+        speedOfLight * speedOfLight
     }
 
     // ========================================================
@@ -87,9 +63,8 @@ final class QRTLField {
     // ========================================================
 
     init(
-        densitySource: GlobularClusterDensitySource,
-        parameters: QRTLParameters,
-        physicalRadiusMeters: Double
+        densitySource: GlobularClusterDensityMap,
+        parameters: QRTLParameters
     ) {
 
         self.densitySource =
@@ -98,1188 +73,413 @@ final class QRTLField {
         self.parameters =
             parameters
 
-        self.physicalRadiusMeters =
-            physicalRadiusMeters
-
         self.referenceDensity =
-            max(
-                densitySource.maximumDensity,
-                1.0e-30
+            Float(
+                densitySource.centerDensity
             )
     }
-     // ============================================================
-    // NORMALIZED → PHYSICAL POSITION
-    //
-    // normalizedPosition:
-    //     0 = center
-    //     1 = physical cluster radius
-    //
-    // IMPORTANT:
-    // There must be ONLY ONE function with this name.
-    // ============================================================
 
-    private func physicalPosition(
-        from normalizedPosition: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radius: Float = max(
-            Float(physicalRadiusMeters),
-            1.0
-        )
-
-        return SIMD3<Float>(
-            normalizedPosition.x * radius,
-            normalizedPosition.y * radius,
-            normalizedPosition.z * radius
-        )
-    }
-
-    // ============================================================
+    // ========================================================
     // PHYSICAL MASS DENSITY
-    // ============================================================
+    // ========================================================
 
     func massDensity(
-        at normalizedPosition: SIMD3<Float>
+        at position: SIMD3<Float>
     ) -> Float {
 
-        let position = physicalPosition(
-            from: normalizedPosition
-        )
-
-        let density = densitySource.density(
+        densitySource.density(
             at: position
         )
+    }
 
-        guard density.isFinite else {
+    func physicalMassDensity(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let density =
+            densitySource.physicalMassDensity(
+                at: position
+            )
+
+        guard density.isFinite,
+              density >= 0.0
+        else {
             return 0.0
         }
 
-        return max(density, 0.0)
+        return density
     }
-
-    // ============================================================
-    // NORMALIZED MASS DENSITY
-    // ============================================================
 
     func normalizedDensity(
-        at normalizedPosition: SIMD3<Float>
+        at position: SIMD3<Float>
     ) -> Float {
 
-        let density = massDensity(
-            at: normalizedPosition
+        densitySource.normalizedDensity(
+            at: position
         )
+    }
 
-        let reference = max(
-            referenceDensity,
-            Float(1.0e-30)
-        )
+    // ========================================================
+    // PHYSICAL CLUSTER RADIUS
+    // ========================================================
 
-        let value = density / reference
+    private var clusterRadiusMeters: Double {
 
-        guard value.isFinite else {
+        let radius =
+            Double(
+                densitySource.fieldRadiusMeters
+            )
+
+        guard radius.isFinite,
+              radius > 0.0
+        else {
+            return 1.0
+        }
+
+        return radius
+    }
+
+    // ========================================================
+    // PHYSICAL TOTAL MASS
+    // ========================================================
+    //
+    // This is the authoritative physical mass represented by
+    // GlobularClusterDensityMap.
+    //
+    // QRTL gravity does NOT use this directly as its potential.
+    // It is used for diagnostics and physical comparison.
+    //
+    // ========================================================
+
+    private var physicalTotalMassKg: Double {
+
+        let mass =
+            Double(
+                densitySource.totalMass
+            )
+
+        guard mass.isFinite,
+              mass >= 0.0
+        else {
             return 0.0
         }
 
-        return min(
-            max(value, 0.0),
-            1.0
-        )
+        return mass
     }
     // ============================================================
-    // QRTL SOURCE
+    // SPACETIME CURVATURE HEIGHT
+    // ============================================================
+    //
+    // QRTL GRAVITY → QRTL GRAVITATIONAL POTENTIAL
+    //              → WEAK-FIELD CURVATURE
+    //              → VISUAL SPACETIME SURFACE HEIGHT
+    //
+    // This function uses ONLY the QRTL gravitational field.
+    //
+    // It does NOT use:
+    //
+    //     physicalGravitationalPotential()
+    //     physicalGravitationalAcceleration()
+    //
+    // The physical gravitational field remains available for
+    // comparison and diagnostics.
+    //
     // ============================================================
 
-    func qrtlSource(
-        at normalizedPosition: SIMD3<Float>
+    func spacetimeCurvatureHeight(
+        at position: SIMD3<Float>
     ) -> Float {
 
-        let density = normalizedDensity(
-            at: normalizedPosition
-        )
+        // --------------------------------------------------------
+        // 1. QRTL GRAVITATIONAL POTENTIAL
+        // --------------------------------------------------------
+        //
+        // This is the authoritative QRTL gravity quantity.
+        //
+        //     Phi_QRTL < 0
+        //
+        // Stronger QRTL gravity produces a larger magnitude
+        // of negative potential.
+        //
+        // --------------------------------------------------------
 
-        let source =
-            Float(parameters.alphaQ) * density
+        let qrtlPotential =
+            qrtlGravitationalPotential(
+                at: position
+            )
 
-        guard source.isFinite else {
+        guard qrtlPotential.isFinite else {
             return 0.0
         }
 
-        return max(source, 0.0)
-    }
+        // --------------------------------------------------------
+        // 2. QRTL WEAK-FIELD CURVATURE
+        // --------------------------------------------------------
+        //
+        //     h_QRTL = -2 Phi_QRTL / c²
+        //
+        // This is dimensionless.
+        //
+        // --------------------------------------------------------
 
-    // ============================================================
-    // BOLGARINO FLUX
-    // ============================================================
+        let qrtlCurvature =
+            -2.0 *
+            qrtlPotential /
+            speedOfLightSquared
 
-    func bolgarinoFlux(
-        at normalizedPosition: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let r =
-            simd_length(
-                normalizedPosition
-            )
-
-        guard r > 1.0e-6 else {
-            return .zero
-        }
-
-        let direction =
-            normalizedPosition / r
-
-        let source =
-            qrtlSource(
-                at: normalizedPosition
-            )
-
-        let velocity =
-            max(
-                Float(parameters.qrtlVelocity),
-                1.0e-6
-            )
-
-        return direction *
-            source *
-            velocity
-    }
-    // ============================================================
-    // QRTL CURRENT DENSITY
-    // ============================================================
-
-    func qrtlEnergyDensity(
-        at normalizedPosition: SIMD3<Float>
-    ) -> Float {
-
-        let source =
-            qrtlSource(
-                at: normalizedPosition
-            )
-
-        let velocity =
-            max(
-                Float(parameters.qrtlVelocity),
-                1.0e-6
-            )
-
-        let current =
-            qrtlCurrent(
-                at: normalizedPosition
-            )
-
-        let kineticEnergy =
-            Float(0.5) *
-            source *
-            velocity *
-            velocity
-
-        let electromagneticEnergy =
-            Float(0.5) *
-            max(
-                Float(parameters.electromagneticCoupling),
-                0.0
-            ) *
-            current *
-            current
-
-        let energy =
-            kineticEnergy +
-            electromagneticEnergy
-
-        guard energy.isFinite else {
+        guard qrtlCurvature.isFinite else {
             return 0.0
         }
 
-        return max(
-            energy,
-            0.0
-        )
+        // --------------------------------------------------------
+        // 3. CONVERT QRTL CURVATURE TO SURFACE HEIGHT
+        // --------------------------------------------------------
+        //
+        // The conversion to SceneKit coordinates is a visualization
+        // scale. It does not alter the QRTL gravitational field.
+        //
+        // --------------------------------------------------------
+
+        let spacetimeHeightScale =
+            1.0e6
+
+        let height =
+            qrtlCurvature *
+            spacetimeHeightScale
+
+        guard height.isFinite else {
+            return 0.0
+        }
+
+        return Float(height)
     }
-
     // ============================================================
-    // QRTL CURRENT
+    // QRTL GRAVITY INFLUENCE
+    //
+    // Scalar visualization/diagnostic measure of the local QRTL
+    // gravitational field.
+    //
+    // This is NOT a second gravitational-potential calculation.
+    //
+    // It is derived directly from the current QRTL gravitational
+    // potential and normalized by c².
+    //
+    // Larger values indicate stronger local QRTL gravitational
+    // influence.
+    //
     // ============================================================
 
-    func qrtlCurrent(
-        at normalizedPosition: SIMD3<Float>
-    ) -> Float {
-
-        simd_length(
-            qrtlCurrentDensity(
-                at: normalizedPosition
-            )
-        )
-    }
-
-    func gravitationalPotential(
-        at normalizedPosition: SIMD3<Float>,
-        effectiveEnergyDensity: Float? = nil
-    ) -> Float {
-
-        let physical = physicalPosition(
-            from: normalizedPosition
-        )
-
-        let r = max(
-            simd_length(physical),
-            Float(1.0)
-        )
-
-        let energyDensity =
-            effectiveEnergyDensity ??
-            qrtlEnergyDensity(
-                at: normalizedPosition
-            )
-
-        let c2 = max(
-            speedOfLightSquared,
-            Float(1.0)
-        )
-
-        let massEquivalent =
-            energyDensity / c2
+    func influence(
+        at position: SIMD3<Float>
+    ) -> Double {
 
         let potential =
-            -gravitationalConstant *
-            massEquivalent /
-            r
+            qrtlGravitationalPotential(
+                at: position
+            )
 
         guard potential.isFinite else {
             return 0.0
         }
 
+        let cSquared =
+            speedOfLightSquared
+
+        guard cSquared.isFinite,
+              cSquared > 0.0
+        else {
+            return 0.0
+        }
+
+        let influence =
+            abs(potential) /
+            cSquared
+
+        guard influence.isFinite,
+              influence >= 0.0
+        else {
+            return 0.0
+        }
+
+        return influence
+    }
+    // ========================================================
+    // PHYSICAL GRAVITATIONAL POTENTIAL
+    //
+    // Reference field supplied by GlobularClusterDensityMap.
+    //
+    // ========================================================
+
+    func physicalGravitationalPotential(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let potential =
+            densitySource.gravitationalPotential(
+                at: position
+            )
+
+        guard potential.isFinite
+        else {
+            return 0.0
+        }
+
         return potential
     }
-    // ============================================================
-    // INDEX GRADIENT
-    // ============================================================
-
-    func indexGradient(
-        at normalizedPosition: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radius =
-            max(
-                simd_length(
-                    normalizedPosition
-                ),
-                1.0e-4
-            )
-
-        let h =
-            max(
-                radius * 0.0025,
-                1.0e-4
-            )
-
-        var gradient =
-            SIMD3<Float>.zero
-
-        for axis in 0..<3 {
-
-            var plus =
-                normalizedPosition
-
-            var minus =
-                normalizedPosition
-
-            plus[axis] += h
-            minus[axis] -= h
-
-            let phiPlus =
-                gravitationalPotential(
-                    at: plus
-                )
-
-            let phiMinus =
-                gravitationalPotential(
-                    at: minus
-                )
-
-            gradient[axis] =
-                (
-                    phiPlus -
-                    phiMinus
-                ) /
-                (
-                    2.0 * h
-                )
-        }
-
-        return gradient
-    }
-
-    
- 
-   
-    // ============================================================
-    // QRTL LENSING ACCELERATION
-    // ============================================================
-
-    func qrtlLensingAcceleration(
-        at normalizedPosition: SIMD3<Float>,
-        direction: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let gradient =
-            indexGradient(
-                at: normalizedPosition
-            )
-
-        let transverse =
-            gradient -
-            simd_dot(
-                gradient,
-                direction
-            ) *
-            direction
-
-        return -transverse *
-            Float(parameters.chiQ)
-    }
 
     // ========================================================
-    // GRAVITY MEASUREMENT (per-star mass)
-    // ========================================================
+    // PHYSICAL GRAVITATIONAL ACCELERATION
     //
-    // Pass-through to the density source's per-star mass
-    // measurement: 10^6 solar masses / star count. This is the
-    // figure that actually sources the gravity surface.
+    // Reference field supplied by GlobularClusterDensityMap.
+    //
     // ========================================================
 
-    var perStarMassKg: Float {
-        densitySource.perStarMassKg
-    }
-
-    var starCount: Int {
-        densitySource.starCount
-    }
-
-    var gravityMeasurementReport: String {
-        "Globular Cluster Gravity Measurement\n" +
-        "  Total mass:     \(clusterMassKg / solarMassKg) M☉  (\(clusterMassKg) kg)\n" +
-        "  Star count:     \(starCount)\n" +
-        "  Mass per star:  \(perStarMassKg / solarMassKg) M☉  (\(perStarMassKg) kg)"
-    }
-    // ============================================================
-    // EINSTEIN SPACETIME CURVATURE HEIGHT
-    // ============================================================
-    //
-    // Visualization of the Einstein gravitational potential.
-    //
-    // This is NOT used as the photon force.
-    // It only converts the gravitational potential into a
-    // SceneKit-compatible bowl/well height.
-    //
-    // Negative Y = deeper gravitational well.
-    //
-    // ------------------------------------------------------------
-    // UNIT FIX — SCENE UNITS ARE NOT METERS
-    // ------------------------------------------------------------
-    //
-    // The gravity surface / heatmap sample this function using
-    // SceneKit coordinates (roughly -20...20), while
-    // gravitationalPotential() expects real meters — the cluster's
-    // physical radius is on the order of 10^10 m. Feeding scene
-    // coordinates straight in as meters put every visible sample
-    // deep inside the compactness clamp (compactness >> 1
-    // everywhere), so the bowl rendered as one flat, maximally
-    // deep plateau with no visible z-depth variation.
-    //
-    // visualClusterRadiusSceneUnits declares what scene-unit
-    // radius should visually represent the cluster's real edge
-    // (densitySource.fieldRadiusMeters). Points are rescaled into
-    // real meters before evaluating the potential, so the bowl
-    // now shows a smooth gradient from a clamped core out to a
-    // shallow rim, matching the cluster's real 1/r falloff.
-    //
-    // Only this visual helper is rescaled — gravitationalPotential,
-    // enclosedMass, and photon propagation elsewhere in this class
-    // continue to operate in real meters, unchanged.
-    // ------------------------------------------------------------
-
-    var visualClusterRadiusSceneUnits: Float = 18.0
-
-    private var sceneUnitsToMeters: Float {
-
-        let radius = max(
-            densitySource.fieldRadiusMeters,
-            1.0e-6
-        )
-
-        let sceneRadius = max(
-            visualClusterRadiusSceneUnits,
-            1.0e-6
-        )
-
-        let scale = radius / sceneRadius
-
-        guard scale.isFinite else {
-            return 1.0
-        }
-
-        return scale
-    }
-    func qrtlCurrentDensity(
+    func physicalGravitationalAcceleration(
         at position: SIMD3<Float>
     ) -> SIMD3<Float> {
+
+        densitySource.gravitationalAcceleration(
+            at: position
+        )
+    }
+
+    // ========================================================
+    // QRTL SOURCE
+    //
+    // S_Q = alpha_Q * rho
+    //
+    // ========================================================
+
+    func qrtlSource(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let rho =
+            physicalMassDensity(
+                at: position
+            )
+
+        guard rho.isFinite,
+              rho >= 0.0
+        else {
+            return 0.0
+        }
+
+        let alpha =
+            max(
+                parameters.alphaQ,
+                0.0
+            )
+
+        let source =
+            alpha * rho
+
+        guard source.isFinite,
+              source >= 0.0
+        else {
+            return 0.0
+        }
+
+        return source
+    }
+    // ============================================================
+    // GRAVITATIONAL POTENTIAL
+    //
+    // Public compatibility interface used by the gravity-surface
+    // renderer and other visualization components.
+    //
+    // The authoritative QRTL gravity calculation remains:
+    //
+    //     qrtlGravitationalPotential(at:)
+    //
+    // This wrapper intentionally does not create a second gravity
+    // calculation.
+    // ============================================================
+
+    func gravitationalPotential(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        return qrtlGravitationalPotential(
+            at: position
+        )
+    }
+    // ========================================================
+    // BOLGARINO RADIAL FLUX
+    //
+    // J_Q = S_Q * v_Q
+    //
+    // ========================================================
+
+    func bolgarinoFlux(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let source =
+            qrtlSource(
+                at: position
+            )
+
+        let velocity =
+            max(
+                parameters.qrtlVelocity,
+                0.0
+            )
+
+        let flux =
+            source * velocity
+
+        guard flux.isFinite,
+              flux >= 0.0
+        else {
+            return 0.0
+        }
+
+        return flux
+    }
+
+    // ========================================================
+    // QRTL CURRENT DENSITY
+    //
+    // ========================================================
+
+    func qrtlCurrentDensity(
+        at position: SIMD3<Float>
+    ) -> Double {
 
         let flux =
             bolgarinoFlux(
                 at: position
             )
 
-        let velocity =
+        let interaction =
             max(
-                Float(parameters.qrtlVelocity),
-                1.0
+                parameters.interactionRate,
+                0.0
             )
-
-        return flux / velocity
-    }
-    func diagnoseQRTLField(
-        at position: SIMD3<Float>
-    ) {
-
-        print("================================================")
-        print("QRTL FIELD PIPELINE DIAGNOSTIC")
-        print("================================================")
-
-        let density =
-            massDensity(at: position)
-
-        let normalized =
-            normalizedDensity(at: position)
-
-        let influence =
-            influence(at: position)
-
-        let source =
-            qrtlSource(at: position)
-
-        let flux =
-            bolgarinoFlux(at: position)
 
         let currentDensity =
-            qrtlCurrentDensity(at: position)
+            flux * interaction
 
-        let current =
-            qrtlCurrent(at: position)
-
-        let energy =
-            qrtlEnergyDensity(at: position)
-
-        let potential =
-            gravitationalPotential(at: position)
-
-        let gradient =
-            indexGradient(at: position)
-
-        let acceleration =
-            qrtlLensingAcceleration(
-                at: position,
-                direction: SIMD3<Float>(0, 0, 1)
-            )
-
-        print("Position:", position)
-        print("Mass density:", density)
-        print("Normalized density:", normalized)
-        print("QRTL influence:", influence)
-        print("QRTL source:", source)
-        print("Bolgarino flux:", flux)
-        print("QRTL current density:", currentDensity)
-        print("QRTL current:", current)
-        print("QRTL energy density:", energy)
-        print("Gravitational potential:", potential)
-        print("Index gradient:", gradient)
-        print("QRTL lensing acceleration:", acceleration)
-    }
-  
-    func inverseSpacetimeMetric(
-        at position: SIMD3<Float>
-    ) -> simd_double4x4 {
-
-        let metric =
-            spacetimeMetric(
-                at: position
-            )
-
-        return simd_inverse(metric)
-    }
- 
-
-
-    // ============================================================
-    // MARK: - SPACETIME METRIC gμν
-    // ============================================================
-    //
-    // Coordinates:
-    //
-    //     x⁰ = ct
-    //     x¹ = x
-    //     x² = y
-    //     x³ = z
-    //
-    // Weak-field isotropic metric:
-    //
-    //     g₀₀ = -(1 + 2Φ/c²)
-    //     gᵢᵢ =  (1 - 2Φ/c²)
-    //
-    // Signature:
-    //
-    //     (-,+,+,+)
-    //
-    // The metric describes the local spacetime geometry generated
-    // by the QRTL gravitational potential.
-    //
-    // The photon should ultimately respond to this geometry through
-    // the Christoffel symbols and the null-geodesic equation.
-    //
-    // ============================================================
-
-    func spacetimeMetric(
-        at position: SIMD3<Float>
-    ) -> simd_double4x4 {
-
-        // --------------------------------------------------------
-        // GRAVITATIONAL POTENTIAL
-        // --------------------------------------------------------
-
-        let potential =
-            Double(
-                gravitationalPotential(
-                    at: position
-                )
-            )
-
-        // --------------------------------------------------------
-        // SPEED OF LIGHT
-        // --------------------------------------------------------
-
-        let c =
-            PhysicalConstants.c
-
-        let cSquared =
-            c * c
-
-        // --------------------------------------------------------
-        // WEAK-FIELD METRIC FACTOR
-        // --------------------------------------------------------
-        //
-        //     2Φ/c²
-        //
-        // This is dimensionless.
-        //
-        // --------------------------------------------------------
-
-        let twoPhiOverC2 =
-            2.0 *
-            potential /
-            cSquared
-
-        // --------------------------------------------------------
-        // TEMPORAL COMPONENT
-        // --------------------------------------------------------
-        //
-        //     g₀₀ = -(1 + 2Φ/c²)
-        //
-        // --------------------------------------------------------
-
-        let g00 =
-            -(1.0 + twoPhiOverC2)
-
-        // --------------------------------------------------------
-        // SPATIAL COMPONENTS
-        // --------------------------------------------------------
-        //
-        //     gxx = gyy = gzz
-        //
-        // --------------------------------------------------------
-
-        let spatialScale =
-            1.0 - twoPhiOverC2
-
-        // --------------------------------------------------------
-        // COLUMN 0
-        //
-        // g₀₀
-        // g₁₀
-        // g₂₀
-        // g₃₀
-        // --------------------------------------------------------
-
-        let column0 =
-            SIMD4<Double>(
-                g00,
-                0.0,
-                0.0,
-                0.0
-            )
-
-        // --------------------------------------------------------
-        // COLUMN 1
-        //
-        // g₀₁
-        // g₁₁
-        // g₂₁
-        // g₃₁
-        // --------------------------------------------------------
-
-        let column1 =
-            SIMD4<Double>(
-                0.0,
-                spatialScale,
-                0.0,
-                0.0
-            )
-
-        // --------------------------------------------------------
-        // COLUMN 2
-        //
-        // g₀₂
-        // g₁₂
-        // g₂₂
-        // g₃₂
-        // --------------------------------------------------------
-
-        let column2 =
-            SIMD4<Double>(
-                0.0,
-                0.0,
-                spatialScale,
-                0.0
-            )
-
-        // --------------------------------------------------------
-        // COLUMN 3
-        //
-        // g₀₃
-        // g₁₃
-        // g₂₃
-        // g₃₃
-        // --------------------------------------------------------
-
-        let column3 =
-            SIMD4<Double>(
-                0.0,
-                0.0,
-                0.0,
-                spatialScale
-            )
-
-        // --------------------------------------------------------
-        // BUILD METRIC
-        //
-        // simd_double4x4 is column-major.
-        // --------------------------------------------------------
-
-        return simd_double4x4(
-            columns: (
-                column0,
-                column1,
-                column2,
-                column3
-            )
-        )
-    }
-
-    // ============================================================
-    // MARK: - METRIC DERIVATIVE ∂gμν / ∂xᵃ
-    // ============================================================
-    //
-    // coordinate:
-    //
-    //     0 = ct
-    //     1 = x
-    //     2 = y
-    //     3 = z
-    //
-    // The current QRTL cluster is static, so:
-    //
-    //     ∂gμν / ∂(ct) = 0
-    //
-    // Spatial derivatives are calculated using a centered finite
-    // difference:
-    //
-    //     ∂g/∂xᵃ ≈ [g(x+h) - g(x-h)] / (2h)
-    //
-    // ============================================================
-
-    func metricDerivative(
-        at position: SIMD3<Float>,
-        coordinate: Int
-    ) -> simd_double4x4 {
-
-        // --------------------------------------------------------
-        // FINITE-DIFFERENCE STEP
-        // --------------------------------------------------------
-
-        let radius =
-            simd_length(position)
-
-        let h =
-            max(
-                1.0,
-                Double(radius) * 1.0e-5
-            )
-
-        // --------------------------------------------------------
-        // TIME COORDINATE
-        // --------------------------------------------------------
-        //
-        // Static gravitational field:
-        //
-        //     ∂gμν / ∂(ct) = 0
-        //
-        // --------------------------------------------------------
-
-        guard coordinate >= 1 && coordinate <= 3 else {
-
-            let zero0 =
-                SIMD4<Double>(
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0
-                )
-
-            let zero1 =
-                SIMD4<Double>(
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0
-                )
-
-            let zero2 =
-                SIMD4<Double>(
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0
-                )
-
-            let zero3 =
-                SIMD4<Double>(
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0
-                )
-
-            return simd_double4x4(
-                columns: (
-                    zero0,
-                    zero1,
-                    zero2,
-                    zero3
-                )
-            )
-        }
-
-        // --------------------------------------------------------
-        // OFFSET POSITIONS
-        // --------------------------------------------------------
-
-        var plus =
-            position
-
-        var minus =
-            position
-
-        switch coordinate {
-
-        case 1:
-            plus.x += Float(h)
-            minus.x -= Float(h)
-
-        case 2:
-            plus.y += Float(h)
-            minus.y -= Float(h)
-
-        case 3:
-            plus.z += Float(h)
-            minus.z -= Float(h)
-
-        default:
-            break
-        }
-
-        // --------------------------------------------------------
-        // METRIC AT x + h
-        // --------------------------------------------------------
-
-        let gPlus =
-            spacetimeMetric(
-                at: plus
-            )
-
-        // --------------------------------------------------------
-        // METRIC AT x - h
-        // --------------------------------------------------------
-
-        let gMinus =
-            spacetimeMetric(
-                at: minus
-            )
-
-        // --------------------------------------------------------
-        // CENTRAL FINITE DIFFERENCE
-        // --------------------------------------------------------
-        //
-        //     ∂g/∂xᵃ =
-        //
-        //     [g(x+h) - g(x-h)] / (2h)
-        //
-        // --------------------------------------------------------
-
-        let denominator =
-            2.0 * h
-
-        let derivativeColumn0 =
-            SIMD4<Double>(
-                (gPlus.columns.0.x - gMinus.columns.0.x) / denominator,
-                (gPlus.columns.0.y - gMinus.columns.0.y) / denominator,
-                (gPlus.columns.0.z - gMinus.columns.0.z) / denominator,
-                (gPlus.columns.0.w - gMinus.columns.0.w) / denominator
-            )
-
-        let derivativeColumn1 =
-            SIMD4<Double>(
-                (gPlus.columns.1.x - gMinus.columns.1.x) / denominator,
-                (gPlus.columns.1.y - gMinus.columns.1.y) / denominator,
-                (gPlus.columns.1.z - gMinus.columns.1.z) / denominator,
-                (gPlus.columns.1.w - gMinus.columns.1.w) / denominator
-            )
-
-        let derivativeColumn2 =
-            SIMD4<Double>(
-                (gPlus.columns.2.x - gMinus.columns.2.x) / denominator,
-                (gPlus.columns.2.y - gMinus.columns.2.y) / denominator,
-                (gPlus.columns.2.z - gMinus.columns.2.z) / denominator,
-                (gPlus.columns.2.w - gMinus.columns.2.w) / denominator
-            )
-
-        let derivativeColumn3 =
-            SIMD4<Double>(
-                (gPlus.columns.3.x - gMinus.columns.3.x) / denominator,
-                (gPlus.columns.3.y - gMinus.columns.3.y) / denominator,
-                (gPlus.columns.3.z - gMinus.columns.3.z) / denominator,
-                (gPlus.columns.3.w - gMinus.columns.3.w) / denominator
-            )
-
-        return simd_double4x4(
-            columns: (
-                derivativeColumn0,
-                derivativeColumn1,
-                derivativeColumn2,
-                derivativeColumn3
-            )
-        )
- 
-
-    }
-
-
-    func spacetimeCurvatureHeight(
-        atXZ point: SIMD2<Float>
-    ) -> Float {
-
-        let scale =
-            sceneUnitsToMeters
-
-        let position =
-            SIMD3<Float>(
-                point.x * scale,
-                0.0,
-                point.y * scale
-            )
-
-        let phi =
-            gravitationalPotential(
-                at: position
-            )
-
-        let clusterRadius =
-            max(
-                densitySource.fieldRadiusMeters,
-                1.0
-            )
-
-        let edgePosition =
-            SIMD3<Float>(
-                clusterRadius,
-                0.0,
-                0.0
-            )
-
-        let phiEdge =
-            gravitationalPotential(
-                at: edgePosition
-            )
-
-        let phiDepth =
-            phiEdge - phi
-
-        guard
-            phiDepth.isFinite,
-            phiDepth >= 0.0
+        guard currentDensity.isFinite,
+              currentDensity >= 0.0
         else {
             return 0.0
         }
 
-        // --------------------------------------------------------
-        // VISUAL REFERENCE DEPTH
-        // --------------------------------------------------------
-
-        let referenceDepth =
-            max(
-                abs(phiEdge),
-                1.0
-            )
-
-        let normalized =
-            min(
-                max(
-                    phiDepth /
-                    referenceDepth,
-                    0.0
-                ),
-                1.0
-            )
-
-        // --------------------------------------------------------
-        // NONLINEAR VISUAL RESPONSE
-        // --------------------------------------------------------
-
-        let shaped =
-            pow(
-                normalized,
-                0.35
-            )
-
-        // --------------------------------------------------------
-        // SCENE DEPTH
-        // --------------------------------------------------------
-
-        let visualScale: Float = 6.0
-
-        return -shaped * visualScale
-    }
-    // ========================================================
-    // MASS NORMALIZATION
-    // ========================================================
-
-    private var massNormalization: Float {
-
-        let integral = max(
-            densitySource.integratedDensity,
-            0.000001
-        )
-
-        let normalization =
-            clusterMassKg / integral
-
-        guard normalization.isFinite else {
-            return 0.0
-        }
-
-        return normalization
+        return currentDensity
     }
 
-    
     // ========================================================
-    // PHYSICAL MASS DENSITY
+    // QRTL CURRENT
+    //
     // ========================================================
 
-    func physicalMassDensity(
+    func qrtlCurrent(
         at position: SIMD3<Float>
-    ) -> Float {
+    ) -> Double {
 
-        let rawDensity =
-            densitySource.density(
-                at: position
-            )
-
-        guard rawDensity.isFinite else {
-            return 0.0
-        }
-
-        return max(
-            rawDensity * massNormalization,
-            0.0
-        )
-    }
-
-
-    // ========================================================
-    // NORMALIZED DENSITY
-    // ========================================================
-
-   
-
- 
-
-    // ========================================================
-    // QRTL INFLUENCE
-    // ========================================================
-
-    func influence(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radiusSquared =
-            simd_length_squared(position)
-
-        guard radiusSquared.isFinite,
-              radiusSquared > 0.000001
-        else {
-            return .zero
-        }
-
-        let radius =
-            sqrt(radiusSquared)
-
-        let direction =
-            -position / radius
-
-        let density =
-            normalizedDensity(
-                at: position
-            )
-
-        let falloff =
-            1.0 /
-            max(radiusSquared, 0.01)
-
-        let strength =
-            Float(parameters.alphaQ) *
-            density *
-            falloff
-
-        guard strength.isFinite else {
-            return .zero
-        }
-
-        return direction * strength
-    }
-
-
-
-    // ========================================================
-    // MAGNETIC FIELD
-    // ========================================================
-
-    func magneticField(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radiusSquared =
-            simd_length_squared(position)
-
-        guard radiusSquared.isFinite,
-              radiusSquared > 0.000001
-        else {
-            return .zero
-        }
-
-        let radius =
-            sqrt(radiusSquared)
-
-        let currentDensity =
-            qrtlCurrentDensity(
-                at: position
-            )
-
-        let current =
-            simd_length(
-                currentDensity
-            )
-
-        guard current.isFinite,
-              current > 0.0
-        else {
-            return .zero
-        }
-
-        let radial =
-            position / radius
-
-        let referenceAxis =
-            SIMD3<Float>(
-                0.0,
-                1.0,
-                0.0
-            )
-
-        var tangent =
-            simd_cross(
-                referenceAxis,
-                radial
-            )
-
-        if simd_length_squared(tangent) < 0.000001 {
-
-            tangent =
-                simd_cross(
-                    SIMD3<Float>(
-                        1.0,
-                        0.0,
-                        0.0
-                    ),
-                    radial
-                )
-        }
-
-        let tangentLength =
-            simd_length(tangent)
-
-        guard tangentLength > 0.000001 else {
-            return .zero
-        }
-
-        tangent /= tangentLength
-
-        let coupling =
-            Float(
-                parameters.electromagneticCoupling
-            )
-
-        let fieldStrength =
-            coupling *
-            current /
-            max(radius, 0.01)
-
-        guard fieldStrength.isFinite else {
-            return .zero
-        }
-
-        return tangent * fieldStrength
-    }
-
-    // ========================================================
-    // MAGNETIC FIELD MAGNITUDE
-    // ========================================================
-
-    func magneticFieldMagnitude(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        simd_length(
-            magneticField(
-                at: position
-            )
-        )
-    }
-
-    // ========================================================
-    // ELECTROMAGNETIC FIELD
-    // ========================================================
-
-    func electromagneticField(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        magneticField(
+        qrtlCurrentDensity(
             at: position
         )
     }
@@ -1290,74 +490,1282 @@ final class QRTLField {
 
     func electromagneticInfluence(
         at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
+    ) -> Double {
 
-        // Photon EM influence has been disabled.
-        return .zero
-    }
-
-    // ========================================================
-    // ELECTROMAGNETIC INFLUENCE MAGNITUDE
-    // ========================================================
-
-    func electromagneticInfluenceMagnitude(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        0.0
-    }
-
-    // ========================================================
-    // MAGNETIC ENERGY DENSITY
-    // ========================================================
-
-    func magneticEnergyDensity(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        let field =
-            magneticField(
+        let current =
+            qrtlCurrent(
                 at: position
             )
 
-        let bSquared =
-            simd_length_squared(field)
-
-        let mu0 =
-            Float(
-                PhysicalConstants.mu0
+        let coupling =
+            max(
+                parameters.electromagneticCoupling,
+                0.0
             )
 
-        guard bSquared.isFinite,
-              mu0 > 0.0
+        let influence =
+            current * coupling
+
+        guard influence.isFinite,
+              influence >= 0.0
         else {
             return 0.0
         }
 
-        return max(
-            bSquared /
-            (2.0 * mu0),
-            0.0
+        return influence
+    }
+
+    // ========================================================
+    // MAGNETIC FIELD
+    // ========================================================
+
+    func magneticField(
+        at position: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let x =
+            Double(position.x)
+
+        let y =
+            Double(position.y)
+
+        let z =
+            Double(position.z)
+
+        let rSquared =
+            x * x +
+            y * y +
+            z * z
+
+        guard rSquared.isFinite
+        else {
+            return .zero
+        }
+
+        let r =
+            sqrt(rSquared)
+
+        guard r > 0.0,
+              r.isFinite
+        else {
+            return .zero
+        }
+
+        let current =
+            qrtlCurrent(
+                at: position
+            )
+
+        guard current.isFinite,
+              current >= 0.0
+        else {
+            return .zero
+        }
+
+        let mu0 =
+            4.0 *
+            Double.pi *
+            1.0e-7
+
+        let magnitude =
+            mu0 *
+            current /
+            (
+                4.0 *
+                Double.pi *
+                r * r
+            )
+
+        guard magnitude.isFinite,
+              magnitude >= 0.0
+        else {
+            return .zero
+        }
+
+        // ----------------------------------------------------
+        // Tangential magnetic-field direction
+        // ----------------------------------------------------
+
+        let radial =
+            SIMD3<Double>(
+                x,
+                y,
+                z
+            )
+
+        let axis =
+            SIMD3<Double>(
+                0.0,
+                1.0,
+                0.0
+            )
+
+        var tangential =
+            simd_cross(
+                axis,
+                radial
+            )
+
+        let tangentialLength =
+            simd_length(
+                tangential
+            )
+
+        guard tangentialLength.isFinite,
+              tangentialLength > 0.0
+        else {
+            return .zero
+        }
+
+        tangential /=
+            tangentialLength
+
+        return SIMD3<Float>(
+            Float(
+                tangential.x *
+                magnitude
+            ),
+            Float(
+                tangential.y *
+                magnitude
+            ),
+            Float(
+                tangential.z *
+                magnitude
+            )
         )
     }
 
- 
-
     // ========================================================
-    // EFFECTIVE ENERGY DENSITY
+    // MAGNETIC ENERGY DENSITY
+    //
+    // u_B = B² / (2 * mu_0)
+    //
     // ========================================================
 
-    func effectiveEnergyDensity(
+    func magneticEnergyDensity(
         at position: SIMD3<Float>
-    ) -> Float {
+    ) -> Double {
 
-        qrtlEnergyDensity(
-            at: position
-        )
-        +
-        magneticEnergyDensity(
-            at: position
-        )
+        let B =
+            magneticField(
+                at: position
+            )
+
+        let magnitudeSquared =
+            Double(B.x) * Double(B.x) +
+            Double(B.y) * Double(B.y) +
+            Double(B.z) * Double(B.z)
+
+        guard magnitudeSquared.isFinite,
+              magnitudeSquared >= 0.0
+        else {
+            return 0.0
+        }
+
+        let mu0 =
+            4.0 *
+            Double.pi *
+            1.0e-7
+
+        let energy =
+            magnitudeSquared /
+            (
+                2.0 *
+                mu0
+            )
+
+        guard energy.isFinite,
+              energy >= 0.0
+        else {
+            return 0.0
+        }
+
+        return energy
+    }
+
+    // ========================================================
+    // QRTL ENERGY DENSITY
+    //
+    // This is the independent QRTL energy field.
+    //
+    // u_Q =
+    //
+    //     S_Q * v_Q² * eta_Q
+    //
+    //     +
+    //
+    //     electromagneticInfluence * chi_Q
+    //
+    //     +
+    //
+    //     magnetic energy density
+    //
+    // ========================================================
+
+    func qrtlEnergyDensity(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let source =
+            qrtlSource(
+                at: position
+            )
+
+        let velocity =
+            max(
+                parameters.qrtlVelocity,
+                0.0
+            )
+
+        let eta =
+            max(
+                parameters.etaQ,
+                0.0
+            )
+
+        let chi =
+            max(
+                parameters.chiQ,
+                0.0
+            )
+
+        let kineticFactor =
+            velocity *
+            velocity
+
+        let electromagnetic =
+            electromagneticInfluence(
+                at: position
+            )
+
+        let magnetic =
+            magneticEnergyDensity(
+                at: position
+            )
+
+        let energy =
+            (
+                source *
+                kineticFactor *
+                eta
+            )
+            +
+            (
+                electromagnetic *
+                chi
+            )
+            +
+            magnetic
+
+        guard energy.isFinite,
+              energy >= 0.0
+        else {
+            return 0.0
+        }
+
+        return energy
+    }
+
+    // ========================================================
+    // EFFECTIVE QRTL MASS DENSITY
+    //
+    // rho_Q = u_Q / c²
+    //
+    // ========================================================
+
+    func qrtlEffectiveMassDensity(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let energy =
+            qrtlEnergyDensity(
+                at: position
+            )
+
+        let density =
+            energy /
+            speedOfLightSquared
+
+        guard density.isFinite,
+              density >= 0.0
+        else {
+            return 0.0
+        }
+
+        return density
+    }
+
+    // ========================================================
+    // QRTL GRAVITY INDEX
+    //
+    // Global calibration factor:
+    //
+    // qrtlGravityIndex =
+    //
+    //     average physical density
+    //     -------------------------
+    //     average QRTL effective density
+    //
+    // ========================================================
+
+    lazy var qrtlGravityIndex: Double = {
+
+        let radialFractions: [Double] = [
+            0.0,
+            0.125,
+            0.25,
+            0.375,
+            0.50,
+            0.625,
+            0.75,
+            0.875,
+            1.0
+        ]
+
+        let angularDirections: [SIMD3<Double>] = [
+
+            SIMD3<Double>(
+                1.0,
+                0.0,
+                0.0
+            ),
+
+            SIMD3<Double>(
+                -1.0,
+                0.0,
+                0.0
+            ),
+
+            SIMD3<Double>(
+                0.0,
+                1.0,
+                0.0
+            ),
+
+            SIMD3<Double>(
+                0.0,
+                -1.0,
+                0.0
+            ),
+
+            SIMD3<Double>(
+                0.0,
+                0.0,
+                1.0
+            ),
+
+            SIMD3<Double>(
+                0.0,
+                0.0,
+                -1.0
+            ),
+
+            simd_normalize(
+                SIMD3<Double>(
+                    1.0,
+                    1.0,
+                    1.0
+                )
+            ),
+
+            simd_normalize(
+                SIMD3<Double>(
+                    -1.0,
+                    1.0,
+                    1.0
+                )
+            )
+        ]
+
+        var physicalDensitySum =
+            0.0
+
+        var qrtlDensitySum =
+            0.0
+
+        var sampleCount =
+            0.0
+
+        for fraction in radialFractions {
+
+            let radius =
+                clusterRadiusMeters *
+                fraction
+
+            for direction in angularDirections {
+
+                let p =
+                    SIMD3<Float>(
+                        Float(
+                            direction.x *
+                            radius
+                        ),
+                        Float(
+                            direction.y *
+                            radius
+                        ),
+                        Float(
+                            direction.z *
+                            radius
+                        )
+                    )
+
+                let physical =
+                    physicalMassDensity(
+                        at: p
+                    )
+
+                let qrtl =
+                    qrtlEffectiveMassDensity(
+                        at: p
+                    )
+
+                guard physical.isFinite,
+                      qrtl.isFinite,
+                      physical >= 0.0,
+                      qrtl >= 0.0
+                else {
+                    continue
+                }
+
+                physicalDensitySum +=
+                    physical
+
+                qrtlDensitySum +=
+                    qrtl
+
+                sampleCount +=
+                    1.0
+            }
+        }
+
+        guard sampleCount > 0.0,
+              physicalDensitySum.isFinite,
+              qrtlDensitySum.isFinite,
+              qrtlDensitySum > 0.0
+        else {
+            return 0.0
+        }
+
+        let averagePhysicalDensity =
+            physicalDensitySum /
+            sampleCount
+
+        let averageQRTLMassDensity =
+            qrtlDensitySum /
+            sampleCount
+
+        guard averagePhysicalDensity.isFinite,
+              averagePhysicalDensity >= 0.0,
+              averageQRTLMassDensity.isFinite,
+              averageQRTLMassDensity > 0.0
+        else {
+            return 0.0
+        }
+
+        let index =
+            averagePhysicalDensity /
+            averageQRTLMassDensity
+
+        guard index.isFinite,
+              index >= 0.0
+        else {
+            return 0.0
+        }
+
+        return index
+    }()
+
+    // ========================================================
+    // TOTAL CALIBRATED QRTL EFFECTIVE MASS
+    //
+    // M_Q =
+    //
+    // integral rho_Q(r) dV
+    //
+    // with global QRTL gravity calibration applied.
+    //
+    // ========================================================
+
+    func qrtlTotalEffectiveMassKg() -> Double {
+
+        let clusterRadius =
+            clusterRadiusMeters
+
+        let cSquared =
+            speedOfLightSquared
+
+        guard clusterRadius > 0.0,
+              cSquared.isFinite,
+              cSquared > 0.0
+        else {
+            return 0.0
+        }
+
+        let gravityIndex =
+            qrtlGravityIndex
+
+        guard gravityIndex.isFinite,
+              gravityIndex >= 0.0
+        else {
+            return 0.0
+        }
+
+        let sampleCount =
+            128
+
+        let dr =
+            clusterRadius /
+            Double(sampleCount)
+
+        guard dr.isFinite,
+              dr > 0.0
+        else {
+            return 0.0
+        }
+
+        var totalMass =
+            0.0
+
+        for index in 0..<sampleCount {
+
+            let r0 =
+                Double(index) *
+                dr
+
+            let r1 =
+                Double(index + 1) *
+                dr
+
+            let shellRadius =
+                0.5 *
+                (r0 + r1)
+
+            let position =
+                SIMD3<Float>(
+                    Float(shellRadius),
+                    0.0,
+                    0.0
+                )
+
+            let energyDensity =
+                qrtlEnergyDensity(
+                    at: position
+                )
+
+            guard energyDensity.isFinite,
+                  energyDensity >= 0.0
+            else {
+                continue
+            }
+
+            let massDensity =
+                (
+                    energyDensity /
+                    cSquared
+                ) *
+                gravityIndex
+
+            guard massDensity.isFinite,
+                  massDensity >= 0.0
+            else {
+                continue
+            }
+
+            let shellVolume =
+                (
+                    4.0 *
+                    Double.pi /
+                    3.0
+                ) *
+                (
+                    pow(r1, 3.0) -
+                    pow(r0, 3.0)
+                )
+
+            guard shellVolume.isFinite,
+                  shellVolume > 0.0
+            else {
+                continue
+            }
+
+            totalMass +=
+                massDensity *
+                shellVolume
+        }
+
+        guard totalMass.isFinite,
+              totalMass >= 0.0
+        else {
+            return 0.0
+        }
+
+        return totalMass
+    }
+
+    // ========================================================
+    // QRTL GRAVITATIONAL POTENTIAL
+    //
+    // Physical interpretation:
+    //
+    //     rho_Q = u_Q / c²
+    //
+    //     rho_calibrated =
+    //         rho_Q * qrtlGravityIndex
+    //
+    //     Phi_Q =
+    //         -G * integral(rho_calibrated / distance) dV
+    //
+    // For a spherical distribution:
+    //
+    //     Phi(r) =
+    //
+    //         -G M(<r) / r
+    //
+    //         -
+    //
+    //         G integral_r^R
+    //         [dM(r') / r']
+    //
+    // ========================================================
+
+    func qrtlGravitationalPotential(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let radius =
+            Double(
+                simd_length(position)
+            )
+
+        guard radius.isFinite,
+              radius >= 0.0
+        else {
+            return 0.0
+        }
+
+        let G =
+            gravitationalConstant
+
+        let clusterRadius =
+            clusterRadiusMeters
+
+        let gravityIndex =
+            qrtlGravityIndex
+
+        guard G.isFinite,
+              G > 0.0,
+              clusterRadius.isFinite,
+              clusterRadius > 0.0,
+              gravityIndex.isFinite,
+              gravityIndex >= 0.0
+        else {
+            return 0.0
+        }
+
+        let sampleCount =
+            128
+
+        let dr =
+            clusterRadius /
+            Double(sampleCount)
+
+        guard dr.isFinite,
+              dr > 0.0
+        else {
+            return 0.0
+        }
+
+        // ----------------------------------------------------
+        // Outside the cluster
+        //
+        // Phi = -GM/r
+        // ----------------------------------------------------
+
+        if radius >= clusterRadius {
+
+            let totalMass =
+                qrtlTotalEffectiveMassKg()
+
+            guard totalMass.isFinite,
+                  totalMass >= 0.0
+            else {
+                return 0.0
+            }
+
+            let safeRadius =
+                max(
+                    radius,
+                    1.0e-12
+                )
+
+            let potential =
+                -G *
+                totalMass /
+                safeRadius
+
+            return potential.isFinite
+                ? potential
+                : 0.0
+        }
+
+        // ----------------------------------------------------
+        // Inside the cluster
+        // ----------------------------------------------------
+
+        let integrationRadius =
+            min(
+                radius,
+                clusterRadius
+            )
+
+        var enclosedMass =
+            0.0
+
+        if integrationRadius > 0.0 {
+
+            let numberOfSamples =
+                max(
+                    1,
+                    min(
+                        sampleCount,
+                        Int(
+                            ceil(
+                                integrationRadius /
+                                dr
+                            )
+                        )
+                    )
+                )
+
+            for index in 0..<numberOfSamples {
+
+                let r0 =
+                    Double(index) *
+                    dr
+
+                let r1 =
+                    min(
+                        Double(index + 1) *
+                        dr,
+                        integrationRadius
+                    )
+
+                guard r1 > r0
+                else {
+                    continue
+                }
+
+                let shellRadius =
+                    0.5 *
+                    (r0 + r1)
+
+                let samplePosition =
+                    SIMD3<Float>(
+                        Float(shellRadius),
+                        0.0,
+                        0.0
+                    )
+
+                let energyDensity =
+                    qrtlEnergyDensity(
+                        at: samplePosition
+                    )
+
+                guard energyDensity.isFinite,
+                      energyDensity >= 0.0
+                else {
+                    continue
+                }
+
+                let rawMassDensity =
+                    energyDensity /
+                    speedOfLightSquared
+
+                guard rawMassDensity.isFinite,
+                      rawMassDensity >= 0.0
+                else {
+                    continue
+                }
+
+                let calibratedMassDensity =
+                    rawMassDensity *
+                    gravityIndex
+
+                guard calibratedMassDensity.isFinite,
+                      calibratedMassDensity >= 0.0
+                else {
+                    continue
+                }
+
+                let shellVolume =
+                    (
+                        4.0 *
+                        Double.pi /
+                        3.0
+                    ) *
+                    (
+                        pow(r1, 3.0) -
+                        pow(r0, 3.0)
+                    )
+
+                guard shellVolume.isFinite,
+                      shellVolume > 0.0
+                else {
+                    continue
+                }
+
+                enclosedMass +=
+                    calibratedMassDensity *
+                    shellVolume
+            }
+        }
+
+        // ----------------------------------------------------
+        // Exterior shell contribution
+        //
+        // For shells outside r:
+        //
+        //     dPhi = -G dM / r_shell
+        //
+        // ----------------------------------------------------
+
+        var exteriorPotentialIntegral =
+            0.0
+
+        for index in 0..<sampleCount {
+
+            let r0 =
+                Double(index) *
+                dr
+
+            let r1 =
+                Double(index + 1) *
+                dr
+
+            guard r1 > radius
+            else {
+                continue
+            }
+
+            let shellRadius =
+                0.5 *
+                (r0 + r1)
+
+            let samplePosition =
+                SIMD3<Float>(
+                    Float(shellRadius),
+                    0.0,
+                    0.0
+                )
+
+            let energyDensity =
+                qrtlEnergyDensity(
+                    at: samplePosition
+                )
+
+            guard energyDensity.isFinite,
+                  energyDensity >= 0.0
+            else {
+                continue
+            }
+
+            let rawMassDensity =
+                energyDensity /
+                speedOfLightSquared
+
+            guard rawMassDensity.isFinite,
+                  rawMassDensity >= 0.0
+            else {
+                continue
+            }
+
+            let calibratedMassDensity =
+                rawMassDensity *
+                gravityIndex
+
+            guard calibratedMassDensity.isFinite,
+                  calibratedMassDensity >= 0.0
+            else {
+                continue
+            }
+
+            let shellVolume =
+                (
+                    4.0 *
+                    Double.pi /
+                    3.0
+                ) *
+                (
+                    pow(r1, 3.0) -
+                    pow(r0, 3.0)
+                )
+
+            guard shellVolume.isFinite,
+                  shellVolume > 0.0
+            else {
+                continue
+            }
+
+            let shellMass =
+                calibratedMassDensity *
+                shellVolume
+
+            guard shellMass.isFinite,
+                  shellMass >= 0.0
+            else {
+                continue
+            }
+
+            exteriorPotentialIntegral +=
+                shellMass /
+                max(
+                    shellRadius,
+                    1.0e-12
+                )
+        }
+
+        // ----------------------------------------------------
+        // Enclosed mass contribution
+        // ----------------------------------------------------
+
+        let safeRadius =
+            max(
+                radius,
+                1.0e-12
+            )
+
+        let enclosedPotential =
+            enclosedMass > 0.0
+            ? -G *
+              enclosedMass /
+              safeRadius
+            : 0.0
+
+        // ----------------------------------------------------
+        // Exterior shell contribution
+        // ----------------------------------------------------
+
+        let exteriorPotential =
+            -G *
+            exteriorPotentialIntegral
+
+        // ----------------------------------------------------
+        // Total QRTL potential
+        // ----------------------------------------------------
+
+        let potential =
+            enclosedPotential +
+            exteriorPotential
+
+        guard potential.isFinite
+        else {
+            return 0.0
+        }
+
+        return potential
+    }
+
+    // ========================================================
+    // QRTL GRAVITATIONAL ACCELERATION
+    //
+    // The acceleration is derived numerically from the QRTL
+    // gravitational potential:
+    //
+    //     g = -grad(Phi_Q)
+    //
+    // This keeps the acceleration and potential mathematically
+    // consistent.
+    // ========================================================
+
+    func qrtlGravitationalAcceleration(
+        at position: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let radius =
+            Double(
+                simd_length(position)
+            )
+
+        guard radius.isFinite
+        else {
+            return .zero
+        }
+
+        let h =
+            max(
+                radius * 1.0e-3,
+                1.0
+            )
+
+        let step =
+            Float(h)
+
+        guard step.isFinite,
+              step > 0.0
+        else {
+            return .zero
+        }
+
+        let dx =
+            SIMD3<Float>(
+                step,
+                0.0,
+                0.0
+            )
+
+        let dy =
+            SIMD3<Float>(
+                0.0,
+                step,
+                0.0
+            )
+
+        let dz =
+            SIMD3<Float>(
+                0.0,
+                0.0,
+                step
+            )
+
+        let potentialXPlus =
+            qrtlGravitationalPotential(
+                at:
+                    position + dx
+            )
+
+        let potentialXMinus =
+            qrtlGravitationalPotential(
+                at:
+                    position - dx
+            )
+
+        let potentialYPlus =
+            qrtlGravitationalPotential(
+                at:
+                    position + dy
+            )
+
+        let potentialYMinus =
+            qrtlGravitationalPotential(
+                at:
+                    position - dy
+            )
+
+        let potentialZPlus =
+            qrtlGravitationalPotential(
+                at:
+                    position + dz
+            )
+
+        let potentialZMinus =
+            qrtlGravitationalPotential(
+                at:
+                    position - dz
+            )
+
+        guard potentialXPlus.isFinite,
+              potentialXMinus.isFinite,
+              potentialYPlus.isFinite,
+              potentialYMinus.isFinite,
+              potentialZPlus.isFinite,
+              potentialZMinus.isFinite
+        else {
+            return .zero
+        }
+
+        let denominator =
+            2.0 *
+            Double(step)
+
+        guard denominator.isFinite,
+              denominator > 0.0
+        else {
+            return .zero
+        }
+
+        let dPhiDx =
+            (
+                potentialXPlus -
+                potentialXMinus
+            ) /
+            denominator
+
+        let dPhiDy =
+            (
+                potentialYPlus -
+                potentialYMinus
+            ) /
+            denominator
+
+        let dPhiDz =
+            (
+                potentialZPlus -
+                potentialZMinus
+            ) /
+            denominator
+
+        let acceleration =
+            SIMD3<Float>(
+                Float(-dPhiDx),
+                Float(-dPhiDy),
+                Float(-dPhiDz)
+            )
+
+        guard acceleration.x.isFinite,
+              acceleration.y.isFinite,
+              acceleration.z.isFinite
+        else {
+            return .zero
+        }
+
+        return acceleration
+    }
+
+    // ========================================================
+    // TRANSVERSE QRTL GRAVITY
+    //
+    // Only the component perpendicular to the photon direction
+    // changes the direction of propagation.
+    // ========================================================
+
+    func qrtlTransverseGravity(
+        at position: SIMD3<Float>,
+        photonDirection: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let gravity =
+            qrtlGravitationalAcceleration(
+                at: position
+            )
+
+        let directionLength =
+            simd_length(
+                photonDirection
+            )
+
+        guard directionLength.isFinite,
+              directionLength > 0.0
+        else {
+            return .zero
+        }
+
+        let direction =
+            photonDirection /
+            directionLength
+
+        let parallel =
+            simd_dot(
+                gravity,
+                direction
+            )
+
+        return gravity -
+            direction *
+            parallel
+    }
+
+    // ========================================================
+    // EINSTEIN-STYLE PHOTON CURVATURE
+    //
+    // kappa =
+    //
+    //     -2 g_perpendicular / c²
+    //
+    // ========================================================
+
+    func qrtlPhotonCurvature(
+        at position: SIMD3<Float>,
+        direction: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let transverseGravity =
+            qrtlTransverseGravity(
+                at: position,
+                photonDirection: direction
+            )
+
+        let magnitude =
+            simd_length(
+                transverseGravity
+            )
+
+        guard magnitude.isFinite,
+              magnitude > 0.0
+        else {
+            return .zero
+        }
+
+        let curvatureMagnitude =
+            -2.0 *
+            Double(magnitude) /
+            speedOfLightSquared
+
+        guard curvatureMagnitude.isFinite
+        else {
+            return .zero
+        }
+
+        let curvatureDirection =
+            transverseGravity /
+            magnitude
+
+        let curvature =
+            curvatureDirection *
+            Float(
+                curvatureMagnitude
+            )
+
+        guard curvature.x.isFinite,
+              curvature.y.isFinite,
+              curvature.z.isFinite
+        else {
+            return .zero
+        }
+
+        return curvature
+    }
+
+    // ========================================================
+    // GRAVITATIONAL OPTICAL INDEX
+    //
+    // n_G = 1 - 2 Phi / c²
+    //
+    // Since Phi is negative, n_G > 1 near the mass.
+    //
+    // ========================================================
+
+    func gravitationalIndex(
+        at position: SIMD3<Float>
+    ) -> Double {
+
+        let potential =
+            qrtlGravitationalPotential(
+                at: position
+            )
+
+        guard potential.isFinite
+        else {
+            return 1.0
+        }
+
+        let normalized =
+            -2.0 *
+            potential /
+            speedOfLightSquared
+
+        let index =
+            1.0 +
+            normalized
+
+        guard index.isFinite,
+              index > 0.0
+        else {
+            return 1.0
+        }
+
+        return index
     }
 
     // ========================================================
@@ -1366,675 +1774,535 @@ final class QRTLField {
 
     func electromagneticOpticalContribution(
         at position: SIMD3<Float>
-    ) -> Float {
+    ) -> Double {
 
-        0.0
-    }
-
-    // ========================================================
-    // FAST ENCLOSED MASS
-    // ========================================================
-    //
-    // IMPORTANT:
-    //
-    // Outside a spherical globular cluster:
-    //
-    //     M(<r) = Mtotal
-    //
-    // Therefore no radial integration is necessary.
-    //
-    // ========================================================
-
-    func enclosedMass(
-        within radius: Float,
-        radialSamples: Int = 32
-    ) -> Float {
-
-        guard radius.isFinite,
-              radius > 0.0
-        else {
-            return 0.0
-        }
-
-        let clusterRadius =
-            max(
-                densitySource.fieldRadiusMeters,
-                0.000001
-            )
-
-        // ----------------------------------------------------
-        // MOST PHOTON STEPS WILL BE OUTSIDE THE CLUSTER.
-        // ----------------------------------------------------
-
-        if radius >= clusterRadius {
-            return clusterMassKg
-        }
-
-        // ----------------------------------------------------
-        // Interior mass calculation.
-        //
-        // This is used only while the photon is physically
-        // inside the cluster.
-        // ----------------------------------------------------
-
-        let sampleCount =
-            max(
-                min(radialSamples, 32),
-                8
-            )
-
-        let integrationRadius =
-            min(
-                radius,
-                clusterRadius
-            )
-
-        let dr =
-            integrationRadius /
-            Float(sampleCount)
-
-        guard dr.isFinite,
-              dr > 0.0
-        else {
-            return 0.0
-        }
-
-        var mass: Float = 0.0
-
-        for index in 0..<sampleCount {
-
-            let r =
-                (Float(index) + 0.5) *
-                dr
-
-            let position =
-                SIMD3<Float>(
-                    r,
-                    0.0,
-                    0.0
-                )
-
-            let density =
-                physicalMassDensity(
-                    at: position
-                )
-
-            let shellVolume =
-                4.0 *
-                Float.pi *
-                r *
-                r *
-                dr
-
-            mass +=
-                density *
-                shellVolume
-        }
-
-        guard mass.isFinite else {
-            return 0.0
-        }
-
-        return min(
-            max(mass, 0.0),
-            clusterMassKg
-        )
-    }
-
-    // ========================================================
-    // GRAVITATIONAL POTENTIAL
-    // ========================================================
-
-    // ========================================================
-    // EINSTEIN GRAVITATIONAL POTENTIAL
-    // ========================================================
-    //
-    // For a spherical extended mass distribution:
-    //
-    //     Phi(r) = -G [ M(r)/r
-    //                + 4*pi * integral_r^R rho(s) * s ds ]
-    //
-    // The second term is essential.
-    //
-    // Exterior spherical shells exert zero net force inside
-    // the shell, but they DO contribute gravitational potential.
-    //
-    // Therefore the potential reaches its deepest finite value
-    // at the center of the globular cluster instead of incorrectly
-    // approaching zero there.
-    //
-    // Outside the cluster:
-    //
-    //     Phi(r) = -G Mtotal / r
-    //
-    // ========================================================
-
-    func gravitationalPotential(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        let radiusSquared =
-            simd_length_squared(position)
-
-        guard
-            radiusSquared.isFinite
-        else {
-            return 0.0
-        }
-
-        let radius =
-            sqrt(max(radiusSquared, 0.0))
-
-        let clusterRadius =
-            max(
-                densitySource.fieldRadiusMeters,
-                0.000001
-            )
-
-        // ----------------------------------------------------
-        // OUTSIDE THE CLUSTER
-        // ----------------------------------------------------
-        //
-        // Once outside a spherical distribution, the entire
-        // cluster behaves gravitationally like a point mass.
-        //
-        // Phi = -GM/r
-        //
-        // ----------------------------------------------------
-
-        if radius >= clusterRadius {
-
-            guard radius > 0.000001 else {
-                return 0.0
-            }
-
-            let potential =
-                -gravitationalConstant *
-                clusterMassKg /
-                radius
-
-            guard potential.isFinite else {
-                return 0.0
-            }
-
-            return potential
-        }
-
-        // ----------------------------------------------------
-        // INSIDE THE CLUSTER
-        // ----------------------------------------------------
-        //
-        // Phi(r) =
-        //
-        // -G [
-        //       M(<r)/r
-        //       +
-        //       4*pi * integral_r^R rho(s)s ds
-        //     ]
-        //
-        // ----------------------------------------------------
-
-        let sampleCount = 128
-
-        let dr =
-            clusterRadius /
-            Float(sampleCount)
-
-        guard
-            dr.isFinite,
-            dr > 0.0
-        else {
-            return 0.0
-        }
-
-        // ----------------------------------------------------
-        // ENCLOSED MASS
-        // ----------------------------------------------------
-
-        let enclosed =
-            enclosedMass(
-                within: radius,
-                radialSamples: 64
-            )
-
-        // ----------------------------------------------------
-        // INTERIOR SHELL POTENTIAL
-        // ----------------------------------------------------
-        //
-        // Integrate:
-        //
-        //     4*pi*rho(r)*r dr
-        //
-        // from current radius to cluster radius.
-        //
-        // ----------------------------------------------------
-
-        var exteriorShellPotentialTerm: Float = 0.0
-
-        if radius < clusterRadius {
-
-            let startIndex =
-                max(
-                    Int(
-                        floor(
-                            radius / dr
-                        )
-                    ),
-                    0
-                )
-
-            if startIndex < sampleCount {
-
-                for index in startIndex..<sampleCount {
-
-                    let r =
-                        (Float(index) + 0.5) *
-                        dr
-
-                    guard
-                        r > radius,
-                        r <= clusterRadius
-                    else {
-                        continue
-                    }
-
-                    let density =
-                        physicalMassDensity(
-                            at: SIMD3<Float>(
-                                r,
-                                0.0,
-                                0.0
-                            )
-                        )
-
-                    guard
-                        density.isFinite,
-                        density >= 0.0
-                    else {
-                        continue
-                    }
-
-                    exteriorShellPotentialTerm +=
-                        density *
-                        r *
-                        dr
-                }
-            }
-        }
-
-        let shellFactor =
-            4.0 *
-            Float.pi
-
-        let enclosedPotentialTerm =
-            enclosed /
-            max(radius, 0.000001)
-
-        let totalPotentialTerm =
-            enclosedPotentialTerm +
-            shellFactor *
-            exteriorShellPotentialTerm
-
-        let potential =
-            -gravitationalConstant *
-            totalPotentialTerm
-
-        guard potential.isFinite else {
-            return 0.0
-        }
-
-        return potential
-    }
-
-    // ========================================================
-    // FAST GRAVITATIONAL GRADIENT
-    // ========================================================
-    //
-    // For a spherical mass distribution:
-    //
-    //     Phi = -GM/r
-    //
-    // therefore:
-    //
-    //     grad(Phi) = GM/r^3 * position
-    //
-    // This replaces SIX gravitationalPotential() calls.
-    //
-    // ========================================================
-
-    func gravitationalPotentialGradient(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radiusSquared =
-            simd_length_squared(position)
-
-        guard radiusSquared.isFinite,
-              radiusSquared > 0.000001
-        else {
-            return .zero
-        }
-
-        let radius =
-            sqrt(radiusSquared)
-
-        // ----------------------------------------------------
-        // OUTSIDE CLUSTER
-        // ----------------------------------------------------
-
-        if radius >= densitySource.fieldRadiusMeters {
-
-            let inverseRadius =
-                1.0 / radius
-
-            let inverseRadiusCubed =
-                inverseRadius *
-                inverseRadius *
-                inverseRadius
-
-            let coefficient =
-                gravitationalConstant *
-                clusterMassKg *
-                inverseRadiusCubed
-
-            let gradient =
-                position *
-                coefficient
-
-            guard gradient.x.isFinite,
-                  gradient.y.isFinite,
-                  gradient.z.isFinite
-            else {
-                return .zero
-            }
-
-            return gradient
-        }
-
-        // ----------------------------------------------------
-        // INSIDE CLUSTER
-        // ----------------------------------------------------
-
-        let enclosed =
-            enclosedMass(
-                within: radius,
-                radialSamples: 16
-            )
-
-        let coefficient =
-            gravitationalConstant *
-            enclosed /
-            max(
-                radiusSquared * radius,
-                0.000001
-            )
-
-        let gradient =
-            position *
-            coefficient
-
-        guard gradient.x.isFinite,
-              gradient.y.isFinite,
-              gradient.z.isFinite
-        else {
-            return .zero
-        }
-
-        return gradient
-    }
-
-    // ========================================================
-    // EINSTEIN PHOTON BENDING
-    // ========================================================
-
-    func einsteinPhotonBendingAcceleration(
-        at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let directionLength =
-            simd_length(
-                photonDirection
-            )
-
-        guard directionLength.isFinite,
-              directionLength > 0.000001
-        else {
-            return .zero
-        }
-
-        let direction =
-            photonDirection /
-            directionLength
-
-        // ----------------------------------------------------
-        // ONE FAST FIELD EVALUATION
-        // ----------------------------------------------------
-
-        let gradient =
-            gravitationalPotentialGradient(
+        let influence =
+            electromagneticInfluence(
                 at: position
             )
 
-        // ----------------------------------------------------
-        // REMOVE LONGITUDINAL COMPONENT
-        // ----------------------------------------------------
-
-        let longitudinal =
-            direction *
-            simd_dot(
-                gradient,
-                direction
+        let coupling =
+            max(
+                parameters.photonEMCoupling,
+                0.0
             )
 
-        let transverseGradient =
-            gradient -
-            longitudinal
+        let contribution =
+            coupling *
+            influence
 
-        // ----------------------------------------------------
-        // EINSTEIN WEAK-FIELD BENDING
-        // ----------------------------------------------------
-
-        let bending =
-            -2.0 *
-            transverseGradient /
-            speedOfLightSquared
-
-        guard bending.x.isFinite,
-              bending.y.isFinite,
-              bending.z.isFinite
+        guard contribution.isFinite,
+              contribution >= 0.0
         else {
-            return .zero
+            return 0.0
         }
 
-        return bending
+        return contribution
     }
 
     // ========================================================
-    // CURVILINEAR PHOTON DIRECTION
+    // TOTAL OPTICAL INDEX
+    //
+    // n_total =
+    //
+    //     n_G * (1 + n_EM)
+    //
     // ========================================================
 
-    func einsteinCurvilinearDirection(
-        at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>,
-        stepSize: Float
-    ) -> SIMD3<Float> {
-
-        let directionLength =
-            simd_length(
-                photonDirection
-            )
-
-        guard directionLength.isFinite,
-              directionLength > 0.000001,
-              stepSize.isFinite,
-              stepSize > 0.0
-        else {
-            return photonDirection
-        }
-
-        let direction =
-            photonDirection /
-            directionLength
-
-        let bending =
-            einsteinPhotonBendingAcceleration(
-                at: position,
-                direction: direction
-            )
-
-        let newDirection =
-            direction +
-            bending * stepSize
-
-        let newLength =
-            simd_length(
-                newDirection
-            )
-
-        guard newLength.isFinite,
-              newLength > 0.000001
-        else {
-            return direction
-        }
-
-        return newDirection / newLength
-    }
-
-    // ========================================================
-    // GRAVITATIONAL OPTICAL INDEX
-    // ========================================================
-
-    func gravitationalOpticalIndex(
+    func totalIndex(
         at position: SIMD3<Float>
-    ) -> Float {
+    ) -> Double {
 
-        let phi =
-            gravitationalPotential(
+        let gravitational =
+            gravitationalIndex(
+                at: position
+            )
+
+        let electromagnetic =
+            electromagneticOpticalContribution(
                 at: position
             )
 
         let index =
-            1.0 -
-            2.0 *
-            phi /
-            speedOfLightSquared
+            gravitational *
+            (
+                1.0 +
+                electromagnetic
+            )
 
-        guard index.isFinite else {
+        guard index.isFinite,
+              index > 0.0
+        else {
             return 1.0
         }
 
-        return max(
-            index,
-            1.0
-        )
+        return index
     }
 
-
-
     // ========================================================
-    // COMPATIBILITY WRAPPER
+    // INDEX GRADIENT
+    //
+    // Numerical gradient of the total optical index.
     // ========================================================
 
-    func qrtlCurvilinearDirection(
-        at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>,
-        stepSize: Float
+    func indexGradient(
+        at position: SIMD3<Float>
     ) -> SIMD3<Float> {
 
-        einsteinCurvilinearDirection(
-            at: position,
-            direction: photonDirection,
-            stepSize: stepSize
+        let radius =
+            max(
+                simd_length(position),
+                1.0
+            )
+
+        let h =
+            Float(
+                max(
+                    radius * 1.0e-3,
+                    1.0
+                )
+            )
+
+        let dx =
+            SIMD3<Float>(
+                h,
+                0.0,
+                0.0
+            )
+
+        let dy =
+            SIMD3<Float>(
+                0.0,
+                h,
+                0.0
+            )
+
+        let dz =
+            SIMD3<Float>(
+                0.0,
+                0.0,
+                h
+            )
+
+        let xGradient =
+            (
+                totalIndex(
+                    at:
+                        position + dx
+                )
+                -
+                totalIndex(
+                    at:
+                        position - dx
+                )
+            )
+            /
+            Double(
+                2.0 * h
+            )
+
+        let yGradient =
+            (
+                totalIndex(
+                    at:
+                        position + dy
+                )
+                -
+                totalIndex(
+                    at:
+                        position - dy
+                )
+            )
+            /
+            Double(
+                2.0 * h
+            )
+
+        let zGradient =
+            (
+                totalIndex(
+                    at:
+                        position + dz
+                )
+                -
+                totalIndex(
+                    at:
+                        position - dz
+                )
+            )
+            /
+            Double(
+                2.0 * h
+            )
+
+        guard xGradient.isFinite,
+              yGradient.isFinite,
+              zGradient.isFinite
+        else {
+            return .zero
+        }
+
+        return SIMD3<Float>(
+            Float(xGradient),
+            Float(yGradient),
+            Float(zGradient)
         )
     }
 
-  
-
     // ========================================================
-    // IMPACT PARAMETER
+    // QRTL LENSING ACCELERATION
+    //
+    // Combines:
+    //
+    // 1. Einstein-style gravitational curvature
+    // 2. Transverse optical-index gradient
+    //
     // ========================================================
 
-    func qrtlImpactParameter(
+    func qrtlLensingAcceleration(
         at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
-    ) -> Float {
+        direction: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let gravitationalCurvature =
+            qrtlPhotonCurvature(
+                at: position,
+                direction: direction
+            )
+
+        let gradient =
+            indexGradient(
+                at: position
+            )
 
         let directionLength =
             simd_length(
-                photonDirection
-            )
-
-        guard directionLength > 0.000001 else {
-            return simd_length(position)
-        }
-
-        let direction =
-            photonDirection /
-            directionLength
-
-        let longitudinal =
-            simd_dot(
-                position,
                 direction
             )
 
-        let closestPoint =
-            position -
-            direction *
-            longitudinal
+        guard directionLength.isFinite,
+              directionLength > 0.0
+        else {
+            return gravitationalCurvature
+        }
 
-        return simd_length(
-            closestPoint
-        )
+        let normalizedDirection =
+            direction /
+            directionLength
+
+        let gradientParallel =
+            simd_dot(
+                gradient,
+                normalizedDirection
+            )
+
+        let transverseGradient =
+            gradient -
+            normalizedDirection *
+            gradientParallel
+
+        let electromagneticScale =
+            Float(
+                max(
+                    parameters.photonEMCoupling,
+                    0.0
+                )
+            )
+
+        let opticalCurvature =
+            -transverseGradient *
+            electromagneticScale
+
+        let result =
+            gravitationalCurvature +
+            opticalCurvature
+
+        guard result.x.isFinite,
+              result.y.isFinite,
+              result.z.isFinite
+        else {
+            return .zero
+        }
+
+        return result
     }
 
     // ========================================================
-    // OUTWARD FIELD
+    // COMPLETE FIELD SAMPLE
     // ========================================================
 
-    func qrtlOutwardField(
+    struct Sample {
+
+        let position:
+            SIMD3<Float>
+
+        let massDensity:
+            Double
+
+        let normalizedDensity:
+            Double
+
+        let qrtlSource:
+            Double
+
+        let bolgarinoFlux:
+            Double
+
+        let qrtlCurrent:
+            Double
+
+        let electromagneticInfluence:
+            Double
+
+        let magneticEnergyDensity:
+            Double
+
+        let qrtlEnergyDensity:
+            Double
+
+        let qrtlEffectiveMassDensity:
+            Double
+
+        let physicalPotential:
+            Double
+
+        let qrtlPotential:
+            Double
+
+        let physicalAcceleration:
+            SIMD3<Float>
+
+        let qrtlAcceleration:
+            SIMD3<Float>
+
+        let qrtlGravityIndex:
+            Double
+
+        let gravitationalIndex:
+            Double
+
+        let totalIndex:
+            Double
+    }
+
+    // ========================================================
+    // SAMPLE
+    // ========================================================
+
+    func sample(
         at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
+    ) -> Sample {
+
+        let physicalDensity =
+            physicalMassDensity(
+                at: position
+            )
+
+        let normalized =
+            Double(
+                normalizedDensity(
+                    at: position
+                )
+            )
+
+        let source =
+            qrtlSource(
+                at: position
+            )
 
         let flux =
             bolgarinoFlux(
                 at: position
             )
 
-        let length =
-            simd_length(flux)
-
-        guard length > 0.000001 else {
-            return .zero
-        }
-
-        return flux / length
-    }
-
-    // ========================================================
-    // PHOTON BEND DIRECTION
-    // ========================================================
-
-    func qrtlPhotonBendDirection(
-        at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let acceleration =
-            einsteinPhotonBendingAcceleration(
-                at: position,
-                direction: photonDirection
+        let current =
+            qrtlCurrent(
+                at: position
             )
 
-        let length =
-            simd_length(acceleration)
+        let electromagnetic =
+            electromagneticInfluence(
+                at: position
+            )
 
-        guard length > 0.000001 else {
-            return .zero
-        }
+        let magneticEnergy =
+            magneticEnergyDensity(
+                at: position
+            )
 
-        return acceleration / length
+        let qrtlEnergy =
+            qrtlEnergyDensity(
+                at: position
+            )
+
+        let qrtlMass =
+            qrtlEffectiveMassDensity(
+                at: position
+            )
+
+        let physicalPotential =
+            physicalGravitationalPotential(
+                at: position
+            )
+
+        let qrtlPotential =
+            qrtlGravitationalPotential(
+                at: position
+            )
+
+        let physicalAcceleration =
+            physicalGravitationalAcceleration(
+                at: position
+            )
+
+        let qrtlAcceleration =
+            qrtlGravitationalAcceleration(
+                at: position
+            )
+
+        let gravityIndex =
+            gravitationalIndex(
+                at: position
+            )
+
+        let opticalIndex =
+            totalIndex(
+                at: position
+            )
+
+        return Sample(
+
+            position:
+                position,
+
+            massDensity:
+                physicalDensity,
+
+            normalizedDensity:
+                normalized,
+
+            qrtlSource:
+                source,
+
+            bolgarinoFlux:
+                flux,
+
+            qrtlCurrent:
+                current,
+
+            electromagneticInfluence:
+                electromagnetic,
+
+            magneticEnergyDensity:
+                magneticEnergy,
+
+            qrtlEnergyDensity:
+                qrtlEnergy,
+
+            qrtlEffectiveMassDensity:
+                qrtlMass,
+
+            physicalPotential:
+                physicalPotential,
+
+            qrtlPotential:
+                qrtlPotential,
+
+            physicalAcceleration:
+                physicalAcceleration,
+
+            qrtlAcceleration:
+                qrtlAcceleration,
+
+            qrtlGravityIndex:
+                qrtlGravityIndex,
+
+            gravitationalIndex:
+                gravityIndex,
+
+            totalIndex:
+                opticalIndex
+        )
+    }
+
+    // ========================================================
+    // DIAGNOSTIC
+    // ========================================================
+
+    func diagnoseQRTLField(
+        at position: SIMD3<Float>
+    ) {
+
+        let s =
+            sample(
+                at: position
+            )
+
+        print(
+            """
+            ============================================================
+            QRTL FIELD DIAGNOSTIC
+            ============================================================
+
+            Position:
+                \(position)
+
+            Physical total mass:
+                \(physicalTotalMassKg)
+
+            Physical mass density:
+                \(s.massDensity)
+
+            Normalized density:
+                \(s.normalizedDensity)
+
+            QRTL source:
+                \(s.qrtlSource)
+
+            Bolgarino flux:
+                \(s.bolgarinoFlux)
+
+            QRTL current:
+                \(s.qrtlCurrent)
+
+            Electromagnetic influence:
+                \(s.electromagneticInfluence)
+
+            Magnetic energy density:
+                \(s.magneticEnergyDensity)
+
+            QRTL energy density:
+                \(s.qrtlEnergyDensity)
+
+            QRTL effective mass density:
+                \(s.qrtlEffectiveMassDensity)
+
+            QRTL total effective mass:
+                \(qrtlTotalEffectiveMassKg())
+
+            Physical gravitational potential:
+                \(s.physicalPotential)
+
+            QRTL gravitational potential:
+                \(s.qrtlPotential)
+
+            Physical gravitational acceleration:
+                \(s.physicalAcceleration)
+
+            QRTL gravitational acceleration:
+                \(s.qrtlAcceleration)
+
+            QRTL gravity index:
+                \(s.qrtlGravityIndex)
+
+            Gravitational optical index:
+                \(s.gravitationalIndex)
+
+            Total optical index:
+                \(s.totalIndex)
+
+            ============================================================
+            """
+        )
     }
 }
-

@@ -16,6 +16,7 @@ import Foundation
 import SwiftUI
 import SceneKit
 import Combine
+import simd
 
 final class LensingSceneController:
     ObservableObject {
@@ -685,9 +686,14 @@ final class LensingSceneController:
         pointsPerSegment: Int = 6,
         curvatureRideStrength: Float = 1.0
     ) -> [SIMD3<Float>] {
+
         guard rawPath.count >= 2 else {
             return rawPath
         }
+
+        // ========================================================
+        // REDUCE RAW PHOTON PATH TO CONTROL POINTS
+        // ========================================================
 
         let stride = max(
             1,
@@ -695,8 +701,13 @@ final class LensingSceneController:
         )
 
         var controlPoints: [SIMD3<Float>] =
-            rawPath.enumerated().compactMap { index, point in
-                index % stride == 0 ? point : nil
+            rawPath.enumerated().compactMap {
+                index,
+                point in
+
+                index % stride == 0
+                    ? point
+                    : nil
             }
 
         if controlPoints.last != rawPath.last {
@@ -711,6 +722,10 @@ final class LensingSceneController:
             return rawPath
         }
 
+        // ========================================================
+        // RIDE THE QRTL SPACETIME CURVATURE
+        // ========================================================
+
         let lastControlPointIndex =
             controlPoints.count - 1
 
@@ -723,20 +738,46 @@ final class LensingSceneController:
                     index == 0 ||
                     index == lastControlPointIndex
 
-                let surfaceY: Float
+                // ------------------------------------------------
+                // Preserve the actual photon endpoints.
+                //
+                // The source star and projection hit must remain
+                // at their physically calculated positions.
+                // ------------------------------------------------
 
                 if isEndpoint {
-                    // Preserve actual source and detector endpoints.
-                    surfaceY = 0.0
-                } else {
-                    surfaceY =
-                        field.spacetimeCurvatureHeight(
-                            atXZ: SIMD2<Float>(
-                                point.x,
-                                point.z
-                            )
-                        )
+
+                    return SIMD3<Double>(
+                        Double(point.x),
+                        Double(point.y),
+                        Double(point.z)
+                    )
                 }
+
+                // ------------------------------------------------
+                // Query the QRTL spacetime gravitational surface.
+                //
+                // The QRTLField calculates:
+                //
+                // QRTL mass distribution
+                //       ↓
+                // QRTL energy density
+                //       ↓
+                // QRTL effective mass
+                //       ↓
+                // QRTL gravitational potential
+                //       ↓
+                // spacetime curvature height
+                // ------------------------------------------------
+
+                let surfaceY =
+                    field.spacetimeCurvatureHeight(
+                        at: SIMD3<Float>(
+                            point.x,
+                            0.0,
+                            point.z
+                        )
+                    )
 
                 let displayedY =
                     point.y +
@@ -750,24 +791,41 @@ final class LensingSceneController:
                 )
             }
 
+        // ========================================================
+        // CATMULL-ROM SMOOTHING
+        // ========================================================
+
         let smoothed =
             CatmullRomSpline.interpolate(
                 points: riding,
                 pointsPerSegment: pointsPerSegment
             )
 
-        var result = smoothed.map {
-            SIMD3<Float>(
-                Float($0.x),
-                Float($0.y),
-                Float($0.z)
-            )
-        }
+        var result =
+            smoothed.map {
+                SIMD3<Float>(
+                    Float($0.x),
+                    Float($0.y),
+                    Float($0.z)
+                )
+            }
 
-        // Catmull–Rom interpolation may slightly shift end points.
-        // Restore the exact raw source-star and projection-hit positions.
+        // ========================================================
+        // RESTORE EXACT PHOTON ENDPOINTS
+        // ========================================================
+        //
+        // Catmull-Rom interpolation can slightly move the first
+        // and last points.
+        //
+        // Never alter the actual source-star position or the
+        // calculated projection-hit position.
+        //
+        // ========================================================
+
         if !result.isEmpty {
-            result[0] = rawPath[0]
+
+            result[0] =
+                rawPath[0]
 
             result[
                 result.count - 1
@@ -779,24 +837,6 @@ final class LensingSceneController:
 
         return result
     }
-
-  
- 
-
-
-
-
-
-    // ========================================================
-    // DEFORMED SPACETIME SURFACE
-    //
-    // Replaces the flat SCNPlane bottom placeholder with an
-    // actual curved-sheet mesh, ported from
-    // QRTLGravitySurfaceView.makeSurfaceGeometry(). Vertex height
-    // (y) is driven by mass density + QRTL/Bolgarino flux, so the
-    // surface visibly deforms under the globular cluster mass and
-    // the QRTL field's own gravity-like force.
-    // ========================================================
 
     func addDeformedSpacetimeSurface(
         field: QRTLField,
@@ -813,57 +853,60 @@ final class LensingSceneController:
         // GRID RESOLUTION
         // =========================================================
 
-        let n =
+        let n: Int =
             resolution > 4
             ? min(resolution, 96)
             : 48
 
-        let extent =
+        let extent: Float =
             heatmapHalfExtent
 
-        var positions:
-            [SCNVector3] = []
-
-        var colors:
-            [SIMD4<Float>] = []
-
-        var texcoords:
-            [CGPoint] = []
-
-        var indices:
-            [Int32] = []
+        var positions: [SCNVector3] = []
+        var colors: [SIMD4<Float>] = []
+        var texcoords: [CGPoint] = []
+        var indices: [Int32] = []
 
         positions.reserveCapacity(n * n)
         colors.reserveCapacity(n * n)
         texcoords.reserveCapacity(n * n)
 
-        let start =
+        let start: Float =
             -extent
 
-        let step =
+        let step: Float =
             (2.0 * extent) /
             Float(n - 1)
 
         // =========================================================
-        // FIND MAXIMUM FIELD INTENSITY
+        // FIND MAXIMUM QRTL GRAVITY INTENSITY
         //
-        // This gives us a common normalization for the entire
-        // surface so the color represents relative gravity
-        // intensity across the complete 360-degree field.
+        // This pass is ONLY for color normalization.
+        //
+        // It does NOT determine surface height.
+        //
+        // Surface height comes directly from:
+        //
+        //     QRTLField
+        //         ↓
+        //     gravitationalPotential(at:)
+        //         ↓
+        //     spacetimeCurvatureHeight(at:)
+        //         ↓
+        //     surfaceY
+        //
         // =========================================================
 
-        var maximumIntensity:
-            Float = 0.000001
+        var maximumIntensity: Float = 0.000001
 
         for j in 0..<n {
 
             for i in 0..<n {
 
-                let x =
+                let x: Float =
                     start +
                     Float(i) * step
 
-                let z =
+                let z: Float =
                     start +
                     Float(j) * step
 
@@ -874,83 +917,175 @@ final class LensingSceneController:
                         z
                     )
 
-                let density =
+                // -------------------------------------------------
+                // QRTL MASS DENSITY
+                // -------------------------------------------------
+
+                let density: Float =
                     field.normalizedDensity(
                         at: position
                     )
 
-                let qrtlSource =
+                // -------------------------------------------------
+                // QRTL SOURCE
+                // -------------------------------------------------
+
+                let qrtlSource : Double =
                     field.qrtlSource(
                         at: position
                     )
+
+                // -------------------------------------------------
+                // BOLGARINO FLOW
+                // -------------------------------------------------
 
                 let flow =
                     field.bolgarinoFlux(
                         at: position
                     )
 
-                let flowMagnitude =
-                    simd_length(flow)
+                let flowMagnitude: Float =
+                    flow.isFinite
+                    ? Float(abs(flow))
+                    : 0.0
+                // -------------------------------------------------
+                // MAGNETIC FIELD
+                // -------------------------------------------------
 
                 let magnetic =
                     field.magneticField(
                         at: position
                     )
 
-                let magneticMagnitude =
-                    simd_length(magnetic)
-
-                // -------------------------------------------------
-                // Combined QRTL gravity intensity
-                // -------------------------------------------------
-
-                let densityTerm =
-                    min(
+                let magneticMagnitude: Float =
+                    sqrt(
                         max(
+                            0.0,
+                            dot(magnetic, magnetic)
+                        )
+                    )
+
+                // -------------------------------------------------
+                // NORMALIZED DENSITY
+                // -------------------------------------------------
+
+                let densityClamped: Float =
+                    max(
+                        0.0,
+                        min(
                             density,
-                            0.0
-                        ),
-                        1.0
+                            1.0
+                        )
                     )
 
-                let sourceTerm =
-                    min(
+                // -------------------------------------------------
+                // NORMALIZED QRTL SOURCE
+                // -------------------------------------------------
+
+                let sourceClamped: Float =
+                    Float(
                         max(
-                            qrtlSource,
-                            0.0
-                        ),
-                        1.0
+                            0.0,
+                            min(
+                                qrtlSource,
+                                1.0
+                            )
+                        )
                     )
 
-                let flowTerm =
-                    flowMagnitude.isFinite
-                    ? min(
-                        max(
-                            flowMagnitude /
-                            (flowMagnitude + 1.0),
-                            0.0
-                        ),
-                        1.0
-                    )
-                    : 0.0
+                // -------------------------------------------------
+                // NORMALIZED FLOW
+                // -------------------------------------------------
 
-                let magneticTerm =
-                    magneticMagnitude.isFinite
-                    ? min(
-                        max(
-                            magneticMagnitude /
-                            (magneticMagnitude + 1.0),
-                            0.0
-                        ),
-                        1.0
-                    )
-                    : 0.0
+                let flowTerm: Float
 
-                let intensity =
-                    0.55 * densityTerm +
-                    0.25 * sourceTerm +
-                    0.15 * flowTerm +
-                    0.05 * magneticTerm
+                if flowMagnitude.isFinite {
+
+                    let denominator =
+                        flowMagnitude + 1.0
+
+                    if denominator > 0.0 {
+
+                        flowTerm =
+                            max(
+                                0.0,
+                                min(
+                                    flowMagnitude /
+                                    denominator,
+                                    1.0
+                                )
+                            )
+
+                    } else {
+
+                        flowTerm = 0.0
+                    }
+
+                } else {
+
+                    flowTerm = 0.0
+                }
+
+                // -------------------------------------------------
+                // NORMALIZED MAGNETIC FIELD
+                // -------------------------------------------------
+
+                let magneticTerm: Float
+
+                if magneticMagnitude.isFinite {
+
+                    let denominator =
+                        magneticMagnitude + 1.0
+
+                    if denominator > 0.0 {
+
+                        magneticTerm =
+                            max(
+                                0.0,
+                                min(
+                                    magneticMagnitude /
+                                    denominator,
+                                    1.0
+                                )
+                            )
+
+                    } else {
+
+                        magneticTerm = 0.0
+                    }
+
+                } else {
+
+                    magneticTerm = 0.0
+                }
+
+                // -------------------------------------------------
+                // QRTL VISUALIZATION INTENSITY
+                //
+                // COLOR ONLY.
+                // -------------------------------------------------
+
+                let densityContribution: Float =
+                    0.55 *
+                    densityClamped
+
+                let sourceContribution: Float =
+                    0.25 *
+                    sourceClamped
+
+                let flowContribution: Float =
+                    0.15 *
+                    flowTerm
+
+                let magneticContribution: Float =
+                    0.05 *
+                    magneticTerm
+
+                let intensity: Float =
+                    densityContribution +
+                    sourceContribution +
+                    flowContribution +
+                    magneticContribution
 
                 if intensity.isFinite {
 
@@ -964,18 +1099,18 @@ final class LensingSceneController:
         }
 
         // =========================================================
-        // BUILD THE 3D CURVATURE SURFACE
+        // BUILD QRTL SPACETIME CURVATURE SURFACE
         // =========================================================
 
         for j in 0..<n {
 
             for i in 0..<n {
 
-                let x =
+                let x: Float =
                     start +
                     Float(i) * step
 
-                let z =
+                let z: Float =
                     start +
                     Float(j) * step
 
@@ -986,142 +1121,232 @@ final class LensingSceneController:
                         z
                     )
 
-                // -------------------------------------------------
-                // CELLULAR-AUTOMATA MASS DENSITY
-                // -------------------------------------------------
+                // =================================================
+                // QRTL MASS DENSITY
+                // =================================================
 
-                let density =
+                let density: Float =
                     field.normalizedDensity(
                         at: base
                     )
 
-                // -------------------------------------------------
+                // =================================================
                 // QRTL SOURCE
-                // -------------------------------------------------
+                // =================================================
 
-                let source =
-                    field.qrtlSource(
-                        at: base
+                let source: Float =
+                    Float(
+                        field.qrtlSource(
+                            at: base
+                        )
                     )
 
-                // -------------------------------------------------
+                // =================================================
                 // BOLGARINO FLOW
-                // -------------------------------------------------
+                // =================================================
 
                 let flow =
                     field.bolgarinoFlux(
                         at: base
                     )
 
-                let flowMagnitude =
-                    simd_length(flow)
-
-                let flowTerm =
-                    flowMagnitude.isFinite
-                    ? min(
-                        max(
-                            flowMagnitude /
-                            (flowMagnitude + 1.0),
-                            0.0
-                        ),
-                        1.0
-                    )
+                let flowMagnitude: Float =
+                    flow.isFinite
+                    ? Float(abs(flow))
                     : 0.0
 
-                // -------------------------------------------------
+                let flowTerm: Float
+
+                if flowMagnitude.isFinite {
+
+                    let denominator =
+                        flowMagnitude + 1.0
+
+                    if denominator > 0.0 {
+
+                        flowTerm =
+                            max(
+                                0.0,
+                                min(
+                                    flowMagnitude /
+                                    denominator,
+                                    1.0
+                                )
+                            )
+
+                    } else {
+
+                        flowTerm = 0.0
+                    }
+
+                } else {
+
+                    flowTerm = 0.0
+                }
+
+                // =================================================
                 // MAGNETIC FIELD
-                // -------------------------------------------------
+                // =================================================
 
                 let magnetic =
                     field.magneticField(
                         at: base
                     )
 
-                let magneticMagnitude =
-                    simd_length(magnetic)
-
-                let magneticTerm =
-                    magneticMagnitude.isFinite
-                    ? min(
+                let magneticMagnitude: Float =
+                    sqrt(
                         max(
-                            magneticMagnitude /
-                            (magneticMagnitude + 1.0),
-                            0.0
-                        ),
-                        1.0
-                    )
-                    : 0.0
-
-                // -------------------------------------------------
-                // COMBINED GRAVITY INTENSITY
-                // -------------------------------------------------
-
-                let densityTerm =
-                    min(
-                        max(
-                            density,
-                            0.0
-                        ),
-                        1.0
+                            0.0,
+                            dot(magnetic, magnetic)
+                        )
                     )
 
-                let sourceTerm =
-                    min(
-                        max(
-                            source,
-                            0.0
-                        ),
-                        1.0
-                    )
+                let magneticTerm: Float
 
-                let intensity =
-                    0.55 * densityTerm +
-                    0.25 * sourceTerm +
-                    0.15 * flowTerm +
-                    0.05 * magneticTerm
+                if magneticMagnitude.isFinite {
 
-                // -------------------------------------------------
-                // NORMALIZED INTENSITY
-                // -------------------------------------------------
+                    let denominator =
+                        magneticMagnitude + 1.0
 
-                let normalizedIntensity =
-                    min(
-                        max(
-                            intensity /
-                            maximumIntensity,
-                            0.0
-                        ),
-                        1.0
-                    )
+                    if denominator > 0.0 {
 
-                // -------------------------------------------------
-                // QRTL SPACETIME CURVATURE
-                //
-                // This is the actual vertical deformation.
-                //
-                // The field determines the shape.
-                // The color independently shows its intensity.
-                // -------------------------------------------------
-
-                let surfaceY =
-                    field.spacetimeCurvatureHeight(
-                        atXZ:
-                            SIMD2<Float>(
-                                base.x,
-                                base.z
+                        magneticTerm =
+                            max(
+                                0.0,
+                                min(
+                                    magneticMagnitude /
+                                    denominator,
+                                    1.0
+                                )
                             )
+
+                    } else {
+
+                        magneticTerm = 0.0
+                    }
+
+                } else {
+
+                    magneticTerm = 0.0
+                }
+
+                // =================================================
+                // CLAMP DENSITY
+                // =================================================
+
+                let densityTerm: Float =
+                    max(
+                        0.0,
+                        min(
+                            density,
+                            1.0
+                        )
                     )
 
-                // -------------------------------------------------
-                // OPTIONAL INTENSITY MODULATION
-                //
-                // Keeps the visual surface tied to the same
-                // density field without changing the actual
-                // QRTL curvature calculation.
-                // -------------------------------------------------
+                // =================================================
+                // CLAMP QRTL SOURCE
+                // =================================================
 
-                let y =
-                    surfaceY
+                let sourceTerm: Float =
+                    max(
+                        0.0,
+                        min(
+                            source,
+                            1.0
+                        )
+                    )
+
+                // =================================================
+                // COLOR INTENSITY
+                // =================================================
+
+                let densityContribution: Float =
+                    0.55 *
+                    densityTerm
+
+                let sourceContribution: Float =
+                    0.25 *
+                    sourceTerm
+
+                let flowContribution: Float =
+                    0.15 *
+                    flowTerm
+
+                let magneticContribution: Float =
+                    0.05 *
+                    magneticTerm
+
+                let intensity: Float =
+                    densityContribution +
+                    sourceContribution +
+                    flowContribution +
+                    magneticContribution
+
+                // =================================================
+                // NORMALIZED COLOR INTENSITY
+                // =================================================
+
+                let normalizedIntensity: Float
+
+                if maximumIntensity > 0.0 {
+
+                    normalizedIntensity =
+                        max(
+                            0.0,
+                            min(
+                                intensity /
+                                maximumIntensity,
+                                1.0
+                            )
+                        )
+
+                } else {
+
+                    normalizedIntensity = 0.0
+                }
+
+                // =================================================
+                // ACTUAL QRTL SPACETIME CURVATURE
+                //
+                // IMPORTANT:
+                //
+                // DO NOT use density/source/flow/magnetic values
+                // to construct the Y coordinate.
+                //
+                // The QRTL gravitational potential determines
+                // the curvature.
+                //
+                // Current QRTLField API:
+                //
+                //     spacetimeCurvatureHeight(at:)
+                //
+                // with a full SIMD3<Float> position.
+                //
+                // =================================================
+
+                let curvatureHeight: Float =
+                    field.spacetimeCurvatureHeight(
+                        at: base
+                    )
+
+                // =================================================
+                // SANITIZE HEIGHT
+                // =================================================
+
+                let y: Float
+
+                if curvatureHeight.isFinite {
+
+                    y = curvatureHeight
+
+                } else {
+
+                    y = 0.0
+                }
+
+                // =================================================
+                // STORE VERTEX
+                // =================================================
 
                 positions.append(
                     SCNVector3(
@@ -1131,25 +1356,9 @@ final class LensingSceneController:
                     )
                 )
 
-                // -------------------------------------------------
+                // =================================================
                 // GRAVITY COLOR
-                //
-                // 0.0 = weak field
-                // 1.0 = strongest field
-                //
-                // Color progression:
-                //
-                // dark blue
-                //     ↓
-                // cyan
-                //     ↓
-                // green
-                //     ↓
-                // yellow
-                //     ↓
-                // red
-                //
-                // -------------------------------------------------
+                // =================================================
 
                 let color =
                     gravityIntensityColor(
@@ -1158,22 +1367,26 @@ final class LensingSceneController:
 
                 colors.append(color)
 
-                // -------------------------------------------------
+                // =================================================
                 // TEXTURE COORDINATES
-                // -------------------------------------------------
+                // =================================================
+
+                let u: CGFloat =
+                    CGFloat(
+                        Float(i) /
+                        Float(n - 1)
+                    )
+
+                let v: CGFloat =
+                    CGFloat(
+                        Float(j) /
+                        Float(n - 1)
+                    )
 
                 texcoords.append(
                     CGPoint(
-                        x:
-                            CGFloat(
-                                Float(i) /
-                                Float(n - 1)
-                            ),
-                        y:
-                            CGFloat(
-                                Float(j) /
-                                Float(n - 1)
-                            )
+                        x: u,
+                        y: v
                     )
                 )
             }
@@ -1187,56 +1400,99 @@ final class LensingSceneController:
 
             for i in 0..<(n - 1) {
 
-                let idx =
+                let baseIndex: Int32 =
                     Int32(
                         j * n + i
                     )
 
-                indices.append(
-                    contentsOf: [
-                        idx,
-                        idx + 1,
-                        idx + Int32(n),
+                let rightIndex: Int32 =
+                    baseIndex + 1
 
-                        idx + 1,
-                        idx + 1 + Int32(n),
-                        idx + Int32(n)
-                    ]
+                let bottomIndex: Int32 =
+                    baseIndex + Int32(n)
+
+                let bottomRightIndex: Int32 =
+                    bottomIndex + 1
+
+                indices.append(
+                    baseIndex
+                )
+
+                indices.append(
+                    rightIndex
+                )
+
+                indices.append(
+                    bottomIndex
+                )
+
+                indices.append(
+                    rightIndex
+                )
+
+                indices.append(
+                    bottomRightIndex
+                )
+
+                indices.append(
+                    bottomIndex
                 )
             }
         }
 
         // =========================================================
-        // GEOMETRY SOURCES
+        // POSITION SOURCE
         // =========================================================
 
-        let posSource =
+        let positionSource =
             SCNGeometrySource(
                 vertices:
                     positions
             )
 
-        let colorData: Data = colors.withUnsafeBytes { buffer in
-            Data(buffer)
-        }
+        // =========================================================
+        // COLOR SOURCE
+        // =========================================================
+
+        let colorData: Data =
+            colors.withUnsafeBytes { buffer in
+
+                Data(buffer)
+            }
 
         let colorSource =
             SCNGeometrySource(
-                data: colorData,
-                semantic: .color,
-                vectorCount: colors.count,
-                usesFloatComponents: true,
-                componentsPerVector: 4,
-                bytesPerComponent: MemoryLayout<Float>.size,
-                dataOffset: 0,
-                dataStride: MemoryLayout<SIMD4<Float>>.stride
+                data:
+                    colorData,
+                semantic:
+                    .color,
+                vectorCount:
+                    colors.count,
+                usesFloatComponents:
+                    true,
+                componentsPerVector:
+                    4,
+                bytesPerComponent:
+                    MemoryLayout<Float>.size,
+                dataOffset:
+                    0,
+                dataStride:
+                    MemoryLayout<SIMD4<Float>>.stride
             )
+
+        // =========================================================
+        // UV SOURCE
+        // =========================================================
 
         let uvSource =
             SCNGeometrySource(
                 textureCoordinates:
                     texcoords
             )
+
+        // =========================================================
+        // ELEMENT
+        // =========================================================
 
         let element =
             SCNGeometryElement(
@@ -1247,13 +1503,13 @@ final class LensingSceneController:
             )
 
         // =========================================================
-        // CREATE GEOMETRY
+        // GEOMETRY
         // =========================================================
 
         let geometry =
             SCNGeometry(
                 sources: [
-                    posSource,
+                    positionSource,
                     colorSource,
                     uvSource
                 ],
@@ -1275,10 +1531,9 @@ final class LensingSceneController:
         material.lightingModel =
             .constant
 
-        // ---------------------------------------------------------
-        // If a heatmap is supplied, use it as the surface texture.
-        // Otherwise use the vertex gravity colors.
-        // ---------------------------------------------------------
+        // =========================================================
+        // HEATMAP MATERIAL
+        // =========================================================
 
         if let heatmap {
 
@@ -1293,17 +1548,35 @@ final class LensingSceneController:
 
         } else {
 
+            // =====================================================
+            // VERTEX-COLOR MATERIAL
+            //
+            // SCNMaterial does NOT have:
+            //
+            //     material.vertexColor
+            //
+            // Vertex colors are supplied through SCNGeometrySource
+            // and read by the shader modifier.
+            // =====================================================
+
             material.diffuse.contents =
                 UIColor.white
 
-            material.shaderModifiers = [
-                .surface: """
-                _surface.diffuse = vec4(_geometry.color.rgb, 1.0);
-                _surface.emission = vec4(_geometry.color.rgb, 1.0);
-                """
-            ]
             material.emission.contents =
                 UIColor.white
+
+            material.shaderModifiers = [
+
+                .surface: """
+
+                _surface.diffuse =
+                    vec4(_geometry.color.rgb, 1.0);
+
+                _surface.emission =
+                    vec4(_geometry.color.rgb, 1.0);
+
+                """
+            ]
 
             material.lightingModel =
                 .constant
@@ -1339,6 +1612,22 @@ final class LensingSceneController:
         bottomPlaneNode =
             node
     }
+
+
+
+
+
+    // ========================================================
+    // DEFORMED SPACETIME SURFACE
+    //
+    // Replaces the flat SCNPlane bottom placeholder with an
+    // actual curved-sheet mesh, ported from
+    // QRTLGravitySurfaceView.makeSurfaceGeometry(). Vertex height
+    // (y) is driven by mass density + QRTL/Bolgarino flux, so the
+    // surface visibly deforms under the globular cluster mass and
+    // the QRTL field's own gravity-like force.
+    // ========================================================
+
 
     // =============================================================
     // GRAVITY INTENSITY COLOR

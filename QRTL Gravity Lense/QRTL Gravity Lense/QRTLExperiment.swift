@@ -14,25 +14,39 @@ import simd
 //
 // Authoritative physics experiment.
 //
-// Pipeline:
+// Physical pipeline:
 //
 // BARYONIC MASS
 //      ↓
-// GLOBULAR CLUSTER DENSITY
+// GLOBULAR CLUSTER STAR POSITIONS
 //      ↓
-// CONTINUOUS MASS PROFILE
+// GLOBULAR CLUSTER DENSITY MAP
+//      ↓
+// PHYSICAL MASS DENSITY
+//      ↓
+// STELLAR GRAVITATIONAL POTENTIAL
+//      ↓
+// STELLAR GRAVITATIONAL ACCELERATION
 //      ↓
 // QRTL FIELD
 //      ↓
-// GRAVITATIONAL POTENTIAL
+// QRTL ENERGY DENSITY
 //      ↓
-// SPACETIME METRIC
+// QRTL GRAVITY INDEX
+//      ↓
+// QRTL GRAVITATIONAL POTENTIAL
+//      ↓
+// QRTL GRAVITATIONAL ACCELERATION
+//      ↓
+// TRANSVERSE GRAVITY
+//      ↓
+// EINSTEIN-STYLE PHOTON CURVATURE
 //      ↓
 // PHOTON TRACER
 //      ↓
 // PHOTON TRACE RESULT
 //      ↓
-// MEASURED PHOTON DEFLECTION
+// MEASURED QRTL PHOTON DEFLECTION
 //      ↓
 // GENERAL RELATIVITY REFERENCE
 //      ↓
@@ -69,8 +83,20 @@ final class QRTLExperiment {
     // ========================================================
 
     private let clusterMassKg: Double
+
     private let clusterRadiusMeters: Double
+
     private let starCount: Int = 3000
+
+    // ========================================================
+    // STAR POSITIONS
+    // ========================================================
+
+    //
+    // These positions are retained so the experiment and
+    // density map use the SAME physical stellar distribution.
+    //
+    let starPositions: [SIMD3<Float>]
 
     // ========================================================
     // INITIALIZATION
@@ -91,8 +117,11 @@ final class QRTLExperiment {
         let resolvedClusterMassKg: Double
 
         if mass.isFinite && mass > 0.0 {
+
             resolvedClusterMassKg = mass
+
         } else {
+
             resolvedClusterMassKg =
                 Self.defaultClusterMassKg
         }
@@ -104,11 +133,10 @@ final class QRTLExperiment {
         // CLUSTER RADIUS
         // ====================================================
 
-        let resolvedRadius =
-            max(
-                radius,
-                1.0e-6
-            )
+        let resolvedRadius: Double =
+            radius.isFinite && radius > 0.0
+            ? radius
+            : 1.0e-6
 
         self.clusterRadiusMeters =
             resolvedRadius
@@ -120,46 +148,40 @@ final class QRTLExperiment {
         // STAR DISTRIBUTION
         // ====================================================
         //
-        // Stars are retained for:
+        // Generate the physical 3D stellar distribution.
         //
-        // • source galaxy visualization
-        // • photon source generation
-        // • projection rendering
+        // The same positions are passed directly into
+        // GlobularClusterDensityMap.
         //
-        // The continuous density source supplies the
-        // gravitational field.
+        // Therefore:
+        //
+        //     stars
+        //       ↓
+        //     density map
+        //       ↓
+        //     QRTLField
+        //
+        // all describe the same lens.
         //
         // ====================================================
 
-        var positions: [SIMD3<Float>] = []
+        var positions:
+            [SIMD3<Float>] = []
 
         positions.reserveCapacity(
             starCount
         )
-        // ====================================================
-        // SPHERICAL STAR DISTRIBUTION
-        // ====================================================
 
         for _ in 0..<starCount {
 
-            let thetaRange =
-                ClosedRange<Float>(
-                    uncheckedBounds:
-                        (
-                            lower: 0.0,
-                            upper: 2.0 * Float.pi
-                        )
-                )
-
             let theta =
                 Float.random(
-                    in: thetaRange
+                    in: 0.0...(2.0 * Float.pi)
                 )
 
             let zDirection =
                 Float.random(
-                    in:
-                        -1.0...1.0
+                    in: -1.0...1.0
                 )
 
             let radialXY =
@@ -174,8 +196,7 @@ final class QRTLExperiment {
 
             let randomUnit =
                 Float.random(
-                    in:
-                        0.0...1.0
+                    in: 0.0...1.0
                 )
 
             // Uniform spherical-volume distribution.
@@ -211,14 +232,26 @@ final class QRTLExperiment {
                 )
             )
         }
+
+        self.starPositions =
+            positions
+
         // ====================================================
-        // CONTINUOUS GLOBULAR CLUSTER DENSITY SOURCE
+        // GLOBULAR CLUSTER DENSITY MAP
         // ====================================================
         //
-        // The density source is continuous.
+        // This is the physical source of the lens.
         //
-        // The individual star positions are NOT used as a
-        // sparse gravitational grid.
+        // It contains:
+        //
+        // • total cluster mass
+        // • cluster radius
+        // • 3,000 stars
+        // • per-star mass
+        // • actual 3D star positions
+        // • physical mass density
+        // • stellar gravitational potential
+        // • stellar gravitational acceleration
         //
         // ====================================================
 
@@ -226,26 +259,54 @@ final class QRTLExperiment {
             GlobularClusterDensityMap(
                 clusterMassKg:
                     resolvedClusterMassKg,
+
                 clusterRadiusMeters:
                     clusterRadiusFloat,
+
                 starPositions:
                     positions,
+
                 plummerScaleFraction:
                     0.30
             )
 
         // ====================================================
-        // QRTL FIELD
+        // AUTHORITATIVE QRTL FIELD
+        // ====================================================
+        //
+        // IMPORTANT:
+        //
+        // Current QRTLField owns the QRTL gravity model.
+        //
+        // The field receives the actual 3D stellar mass model.
+        //
+        // It then calculates:
+        //
+        // physical density
+        //       ↓
+        // QRTL source
+        //       ↓
+        // Bolgarino flux
+        //       ↓
+        // QRTL current
+        //       ↓
+        // QRTL energy density
+        //       ↓
+        // QRTL gravity index
+        //       ↓
+        // QRTL gravitational acceleration
+        //       ↓
+        // photon curvature
+        //
         // ====================================================
 
         self.field =
             QRTLField(
                 densitySource:
                     densityMap,
+
                 parameters:
-                    parameters,
-                physicalRadiusMeters:
-                    resolvedRadius
+                    parameters
             )
     }
 
@@ -292,13 +353,13 @@ final class QRTLExperiment {
         // PHOTON ORIGIN
         // ====================================================
         //
-        // The experiment uses PHYSICAL METERS.
+        // Physical coordinates:
         //
-        // Photon:
+        //     X = photon propagation direction
+        //     Y = impact parameter
+        //     Z = transverse direction
         //
-        //     starts at -X
-        //     travels toward +X
-        //     has Y impact parameter
+        // Photon starts at -X and travels toward +X.
         //
         // ====================================================
 
@@ -343,22 +404,30 @@ final class QRTLExperiment {
         // CURRENT LENSING PARAMETERS
         // ====================================================
         //
-        // IMPORTANT:
+        // The photon tracer queries the current QRTLField.
         //
-        // The QRTLField currently provides:
+        // In particular, QRTLField supplies:
         //
-        //     qrtlLensingAcceleration(...)
+        //     qrtlGravitationalAcceleration(at:)
         //
-        // and
+        //     qrtlTransverseGravity(
+        //         at:photonDirection:
+        //     )
         //
-        //     einsteinPhotonBendingAcceleration(...)
+        //     qrtlPhotonCurvature(
+        //         at:direction:
+        //     )
         //
-        // Electromagnetic photon bending is currently
-        // disabled in QRTLField:
+        //     qrtlLensingAcceleration(
+        //         at:direction:
+        //     )
         //
-        //     electromagneticInfluence = .zero
+        // The QRTL gravity index is therefore part of the
+        // actual photon-curvature calculation.
         //
-        // Therefore EM photon coupling remains ZERO here.
+        // Electromagnetic photon bending remains disabled
+        // here so the gravitational QRTL prediction can be
+        // compared independently with GR.
         //
         // ====================================================
 
@@ -423,6 +492,41 @@ final class QRTLExperiment {
             )
 
         // ====================================================
+        // QRTL GRAVITY INDEX DIAGNOSTIC
+        // ====================================================
+        //
+        // The QRTLField now contains a global calibration
+        // relationship between the physical stellar mass
+        // density and the QRTL effective energy density.
+        //
+        // This is NOT a GR value.
+        //
+        // It is a QRTL calibration quantity used to put the
+        // QRTL gravitational prediction onto the physical
+        // mass scale.
+        //
+        // ====================================================
+
+        let gravityIndex =
+            field.qrtlGravityIndex
+
+        print("")
+        print("============================================================")
+        print("QRTL EXPERIMENT")
+        print("============================================================")
+        print("Cluster mass:")
+        print(clusterMassKg)
+        print("Cluster radius:")
+        print(clusterRadiusMeters)
+        print("Star count:")
+        print(starPositions.count)
+        print("Per-star mass:")
+        print("QRTL gravity index:")
+        print(gravityIndex)
+        print("============================================================")
+        print("")
+
+        // ====================================================
         // PHOTON TRACER
         // ====================================================
 
@@ -436,8 +540,10 @@ final class QRTLExperiment {
             tracer.tracePhoton(
                 origin:
                     origin,
+
                 direction:
                     direction,
+
                 parameters:
                     lensingParameters
             )
@@ -449,6 +555,7 @@ final class QRTLExperiment {
         guard
             trace.positions.count >= 2
         else {
+
             return zeroResult()
         }
 
@@ -476,6 +583,7 @@ final class QRTLExperiment {
             incomingLength.isFinite,
             incomingLength > 0.000001
         else {
+
             return zeroResult()
         }
 
@@ -516,6 +624,7 @@ final class QRTLExperiment {
                 fallbackLength.isFinite,
                 fallbackLength > 0.000001
             else {
+
                 return zeroResult()
             }
 
@@ -531,6 +640,11 @@ final class QRTLExperiment {
 
         // ====================================================
         // DEFLECTION ANGLE
+        // ====================================================
+        //
+        // This is the measured deflection produced by the
+        // QRTLField-driven photon integration.
+        //
         // ====================================================
 
         let dotProduct =
@@ -556,6 +670,7 @@ final class QRTLExperiment {
         guard
             qrtlAngleFloat.isFinite
         else {
+
             return zeroResult()
         }
 
@@ -567,6 +682,7 @@ final class QRTLExperiment {
         guard
             qrtlAngle.isFinite
         else {
+
             return zeroResult()
         }
 
@@ -574,12 +690,16 @@ final class QRTLExperiment {
         // GENERAL RELATIVITY REFERENCE
         // ====================================================
         //
-        // Weak-field point-mass approximation:
+        // Weak-field point-mass reference:
         //
-        //     alpha_GR = 4GM / (bc²)
+        //     alpha_GR = 4GM / (b c²)
         //
-        // The impact parameter and cluster mass are both
-        // physical quantities in this experiment.
+        // This is intentionally independent of the QRTL
+        // calculation.
+        //
+        // QRTL predicts its own deflection.
+        //
+        // GR supplies the reference prediction.
         //
         // ====================================================
 
@@ -604,6 +724,7 @@ final class QRTLExperiment {
             denominator.isFinite,
             denominator > 0.0
         else {
+
             return zeroResult()
         }
 
@@ -616,6 +737,7 @@ final class QRTLExperiment {
         guard
             grAngle.isFinite
         else {
+
             return zeroResult()
         }
 
@@ -660,7 +782,7 @@ final class QRTLExperiment {
             radiansToArcseconds
 
         // ====================================================
-        // RESULT
+        // FINAL RESULT
         // ====================================================
 
         return QRTLExperimentResult(

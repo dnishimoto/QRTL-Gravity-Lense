@@ -62,21 +62,51 @@
  */
 
 
+
 import Foundation
 import SwiftUI
+import UIKit
 import simd
+
+// ============================================================
+// QRTL HEATMAP GENERATOR
+// ============================================================
+//
+// The heatmap is a diagnostic visualization of the SAME
+// QRTL gravitational field used by photon tracing.
+//
+// Coordinate convention:
+//
+//     X = photon propagation direction
+//     Y = transverse lensing coordinate
+//     Z = transverse lensing coordinate
+//
+// The displayed heatmap is the X = 0 lens plane.
+//
+// The field being visualized is:
+//
+//     QRTLField
+//          ↓
+//     qrtlGravitationalAcceleration
+//          ↓
+//     qrtlGravityIndex calibrated gravity
+//          ↓
+//     transverse gravitational magnitude
+//
+// This is NOT a separate gravity calculation.
+//
+// Therefore:
+//
+//     HEATMAP GRAVITY
+//          =
+//     PHOTON-TRACING QRTL GRAVITY
+//
+// ============================================================
 
 final class QRTLHeatmapGenerator {
 
     // ============================================================
-    // MAKE QRTL LENSING HEATMAP
-    //
-    // The heatmap now visualizes the same QRTL lensing-strength
-    // calculation used by photon tracing.
-    //
-    // IMPORTANT:
-    // The heatmap is a visual diagnostic of the lensing field.
-    // It is NOT a separate gravitational-density calculation.
+    // MAKE QRTL GRAVITY HEATMAP
     // ============================================================
 
     static func makeHeatmapImage(
@@ -85,44 +115,86 @@ final class QRTLHeatmapGenerator {
         halfExtent: Double
     ) -> UIImage {
 
-        let resolution =
-            max(
-                size,
-                64
-            )
+        // --------------------------------------------------------
+        // SAFE RESOLUTION
+        // --------------------------------------------------------
 
-        var samples =
-            Array(
-                repeating:
-                    Array(
-                        repeating: 0.0,
-                        count: resolution
-                    ),
+        let resolution = max(
+            size,
+            64
+        )
+
+        // --------------------------------------------------------
+        // SAFE EXTENT
+        // --------------------------------------------------------
+
+        guard halfExtent.isFinite,
+              halfExtent > 0.0
+        else {
+            return makeEmptyHeatmap(
+                resolution: resolution
+            )
+        }
+
+        // --------------------------------------------------------
+        // SAMPLE STORAGE
+        // --------------------------------------------------------
+
+        var samples = Array(
+            repeating: Array(
+                repeating: 0.0,
                 count: resolution
-            )
+            ),
+            count: resolution
+        )
 
-        var maximum =
-            0.0
+        var maximum = 0.0
 
-        // --------------------------------------------------------
-        // CURRENT-DENSITY HEATMAP SAMPLING
-        // --------------------------------------------------------
+        // ========================================================
+        // SAMPLE QRTL GRAVITY FIELD
+        // ========================================================
+        //
+        // The heatmap lies on:
+        //
+        //     X = 0
+        //
+        // while Y/Z span the lens.
+        //
+        // ========================================================
 
         for j in 0..<resolution {
 
             for i in 0..<resolution {
 
+                let normalizedX =
+                    (Double(i) + 0.5)
+                    / Double(resolution)
+
+                let normalizedZ =
+                    (Double(j) + 0.5)
+                    / Double(resolution)
+
                 let y =
-                    -halfExtent +
-                    (Double(i) + 0.5) *
-                    (2.0 * halfExtent /
-                     Double(resolution))
+                    -halfExtent
+                    +
+                    normalizedX
+                    *
+                    (
+                        2.0
+                        *
+                        halfExtent
+                    )
 
                 let z =
-                    -halfExtent +
-                    (Double(j) + 0.5) *
-                    (2.0 * halfExtent /
-                     Double(resolution))
+                    -halfExtent
+                    +
+                    normalizedZ
+                    *
+                    (
+                        2.0
+                        *
+                        halfExtent
+                    )
 
                 let position =
                     SIMD3<Float>(
@@ -131,60 +203,66 @@ final class QRTLHeatmapGenerator {
                         Float(z)
                     )
 
-                let currentDensity =
-                    field.qrtlCurrentDensity(
+                // ------------------------------------------------
+                // QRTL GRAVITATIONAL ACCELERATION
+                // ------------------------------------------------
+
+                let gravity =
+                    field.qrtlGravitationalAcceleration(
                         at: position
                     )
 
-                let currentMagnitude =
-                    Double(
-                        simd_length(
-                            currentDensity
-                        )
-                    )
+                // ------------------------------------------------
+                // GRAVITY MAGNITUDE
+                // ------------------------------------------------
 
-                let safeValue =
-                    currentMagnitude.isFinite
-                    ? max(
-                        currentMagnitude,
-                        0.0
-                    )
-                    : 0.0
+                let magnitude =
+                    simd_length(gravity)
+
+                let safeMagnitude: Double
+
+                if magnitude.isFinite,
+                   magnitude >= 0.0 {
+
+                    safeMagnitude =
+                        Double(magnitude)
+
+                } else {
+
+                    safeMagnitude = 0.0
+                }
 
                 samples[j][i] =
-                    safeValue
+                    safeMagnitude
 
                 maximum =
                     max(
                         maximum,
-                        safeValue
+                        safeMagnitude
                     )
             }
         }
 
-        // --------------------------------------------------------
-        // PROTECT AGAINST EMPTY / ZERO FIELD
-        // --------------------------------------------------------
+        // ========================================================
+        // EMPTY / INVALID FIELD
+        // ========================================================
 
         guard maximum.isFinite,
               maximum > 0.0
         else {
             return makeEmptyHeatmap(
-                resolution:
-                    resolution
+                resolution: resolution
             )
         }
 
-        // --------------------------------------------------------
-        // CREATE IMAGE
-        // --------------------------------------------------------
+        // ========================================================
+        // CREATE IMAGE CONTEXT
+        // ========================================================
 
         UIGraphicsBeginImageContextWithOptions(
             CGSize(
-                width:
-                    resolution,
-                height:
-                    resolution
+                width: resolution,
+                height: resolution
             ),
             true,
             1.0
@@ -193,13 +271,15 @@ final class QRTLHeatmapGenerator {
         guard let context =
                 UIGraphicsGetCurrentContext()
         else {
+
             UIGraphicsEndImageContext()
+
             return UIImage()
         }
 
-        // --------------------------------------------------------
-        // DRAW CURRENT-DENSITY FIELD
-        // --------------------------------------------------------
+        // ========================================================
+        // DRAW GRAVITY FIELD
+        // ========================================================
 
         for j in 0..<resolution {
 
@@ -208,9 +288,19 @@ final class QRTLHeatmapGenerator {
                 let raw =
                     samples[j][i]
 
+                guard raw.isFinite,
+                      maximum.isFinite,
+                      maximum > 0.0
+                else {
+                    continue
+                }
+
+                // ------------------------------------------------
+                // NORMALIZE
+                // ------------------------------------------------
+
                 var normalized =
-                    raw /
-                    maximum
+                    raw / maximum
 
                 guard normalized.isFinite
                 else {
@@ -226,15 +316,324 @@ final class QRTLHeatmapGenerator {
                         1.0
                     )
 
+                // ------------------------------------------------
+                // LOG CONTRAST
+                // ------------------------------------------------
+                //
+                // Gravity varies enormously across the lens.
+                //
+                // Logarithmic contrast prevents the center from
+                // becoming the only visible feature.
+                //
+                // ------------------------------------------------
+
                 let contrast =
                     log10(
-                        1.0 +
-                        99.0 *
+                        1.0
+                        +
+                        99.0
+                        *
                         normalized
-                    ) /
-                    log10(
-                        100.0
                     )
+                    /
+                    log10(100.0)
+
+                let t =
+                    min(
+                        max(
+                            contrast,
+                            0.0
+                        ),
+                        1.0
+                    )
+
+                // ------------------------------------------------
+                // COLOR
+                // ------------------------------------------------
+
+                let color =
+                    colorForHeatmapValue(
+                        t
+                    )
+
+                context.setFillColor(
+                    color.cgColor
+                )
+
+                // ------------------------------------------------
+                // IMAGE Y FLIP
+                // ------------------------------------------------
+
+                context.fill(
+                    CGRect(
+                        x: i,
+                        y:
+                            resolution
+                            -
+                            1
+                            -
+                            j,
+                        width: 1,
+                        height: 1
+                    )
+                )
+            }
+        }
+
+        // ========================================================
+        // FINAL IMAGE
+        // ========================================================
+
+        let image =
+            UIGraphicsGetImageFromCurrentImageContext()
+            ?? UIImage()
+
+        UIGraphicsEndImageContext()
+
+        return image
+    }
+
+    // ============================================================
+    // GRAVITY-MAGNITUDE HEATMAP DIRECTLY
+    // ============================================================
+    //
+    // Optional diagnostic helper.
+    //
+    // This returns the numerical gravity magnitude at a point
+    // rather than creating an image.
+    //
+    // It is useful when debugging individual pixels or comparing
+    // the heatmap with photon-tracer samples.
+    //
+    // ============================================================
+
+    static func gravityMagnitude(
+        field: QRTLField,
+        at position: SIMD3<Float>
+    ) -> Float {
+
+        let gravity =
+            field.qrtlGravitationalAcceleration(
+                at: position
+            )
+
+        let magnitude =
+            simd_length(gravity)
+
+        guard magnitude.isFinite,
+              magnitude >= 0.0
+        else {
+            return 0.0
+        }
+
+        return magnitude
+    }
+
+    // ============================================================
+    // TRANSVERSE QRTL GRAVITY HEATMAP
+    // ============================================================
+    //
+    // This version visualizes only the gravity perpendicular to
+    // the photon propagation direction.
+    //
+    // For a photon traveling along +X:
+    //
+    //     direction = (1,0,0)
+    //
+    // the displayed value is the transverse gravitational
+    // magnitude responsible for photon bending.
+    //
+    // This is the most directly comparable diagnostic to the
+    // photon-curvature calculation.
+    //
+    // ============================================================
+
+    static func makePhotonCurvatureHeatmapImage(
+        field: QRTLField,
+        size: Int = 256,
+        halfExtent: Double
+    ) -> UIImage {
+
+        let resolution = max(
+            size,
+            64
+        )
+
+        guard halfExtent.isFinite,
+              halfExtent > 0.0
+        else {
+            return makeEmptyHeatmap(
+                resolution: resolution
+            )
+        }
+
+        var samples = Array(
+            repeating: Array(
+                repeating: 0.0,
+                count: resolution
+            ),
+            count: resolution
+        )
+
+        var maximum = 0.0
+
+        // Photon travels along +X.
+        let photonDirection =
+            SIMD3<Float>(
+                1.0,
+                0.0,
+                0.0
+            )
+
+        // ========================================================
+        // SAMPLE TRANSVERSE GRAVITY
+        // ========================================================
+
+        for j in 0..<resolution {
+
+            for i in 0..<resolution {
+
+                let y =
+                    -halfExtent
+                    +
+                    (
+                        Double(i) + 0.5
+                    )
+                    *
+                    (
+                        2.0
+                        *
+                        halfExtent
+                        /
+                        Double(resolution)
+                    )
+
+                let z =
+                    -halfExtent
+                    +
+                    (
+                        Double(j) + 0.5
+                    )
+                    *
+                    (
+                        2.0
+                        *
+                        halfExtent
+                        /
+                        Double(resolution)
+                    )
+
+                let position =
+                    SIMD3<Float>(
+                        0.0,
+                        Float(y),
+                        Float(z)
+                    )
+
+                let transverseGravity =
+                    field.qrtlTransverseGravity(
+                        at: position,
+                        photonDirection:
+                            photonDirection
+                    )
+
+                let magnitude =
+                    simd_length(
+                        transverseGravity
+                    )
+
+                let safeMagnitude: Double
+
+                if magnitude.isFinite,
+                   magnitude >= 0.0 {
+
+                    safeMagnitude =
+                        Double(magnitude)
+
+                } else {
+
+                    safeMagnitude = 0.0
+                }
+
+                samples[j][i] =
+                    safeMagnitude
+
+                maximum =
+                    max(
+                        maximum,
+                        safeMagnitude
+                    )
+            }
+        }
+
+        guard maximum.isFinite,
+              maximum > 0.0
+        else {
+            return makeEmptyHeatmap(
+                resolution: resolution
+            )
+        }
+
+        // ========================================================
+        // CREATE IMAGE
+        // ========================================================
+
+        UIGraphicsBeginImageContextWithOptions(
+            CGSize(
+                width: resolution,
+                height: resolution
+            ),
+            true,
+            1.0
+        )
+
+        guard let context =
+                UIGraphicsGetCurrentContext()
+        else {
+
+            UIGraphicsEndImageContext()
+
+            return UIImage()
+        }
+
+        // ========================================================
+        // DRAW
+        // ========================================================
+
+        for j in 0..<resolution {
+
+            for i in 0..<resolution {
+
+                let raw =
+                    samples[j][i]
+
+                guard raw.isFinite
+                else {
+                    continue
+                }
+
+                var normalized =
+                    raw / maximum
+
+                normalized =
+                    min(
+                        max(
+                            normalized,
+                            0.0
+                        ),
+                        1.0
+                    )
+
+                let contrast =
+                    log10(
+                        1.0
+                        +
+                        99.0
+                        *
+                        normalized
+                    )
+                    /
+                    log10(100.0)
 
                 let t =
                     min(
@@ -256,16 +655,15 @@ final class QRTLHeatmapGenerator {
 
                 context.fill(
                     CGRect(
-                        x:
-                            i,
+                        x: i,
                         y:
-                            resolution -
-                            1 -
-                            j,
-                        width:
-                            1,
-                        height:
+                            resolution
+                            -
                             1
+                            -
+                            j,
+                        width: 1,
+                        height: 1
                     )
                 )
             }
@@ -297,115 +695,158 @@ final class QRTLHeatmapGenerator {
                 1.0
             )
 
+        // --------------------------------------------------------
+        // LOW FIELD
+        // --------------------------------------------------------
+
         if t < 0.20 {
 
             let local =
                 t / 0.20
 
             return UIColor(
-                red:
-                    0.0,
-                green:
-                    0.0,
+                red: 0.0,
+                green: 0.0,
                 blue:
                     CGFloat(
-                        0.08 +
-                        0.45 * local
+                        0.08
+                        +
+                        0.45
+                        *
+                        local
                     ),
-                alpha:
-                    1.0
+                alpha: 1.0
             )
         }
+
+        // --------------------------------------------------------
+        // LOW-MEDIUM FIELD
+        // --------------------------------------------------------
 
         if t < 0.40 {
 
             let local =
-                (t - 0.20) /
+                (t - 0.20)
+                /
                 0.20
 
             return UIColor(
-                red:
-                    0.0,
+                red: 0.0,
                 green:
                     CGFloat(
-                        0.15 +
-                        0.55 * local
+                        0.15
+                        +
+                        0.55
+                        *
+                        local
                     ),
                 blue:
                     CGFloat(
-                        0.55 +
-                        0.35 * local
+                        0.55
+                        +
+                        0.35
+                        *
+                        local
                     ),
-                alpha:
-                    1.0
+                alpha: 1.0
             )
         }
+
+        // --------------------------------------------------------
+        // MEDIUM FIELD
+        // --------------------------------------------------------
 
         if t < 0.60 {
 
             let local =
-                (t - 0.40) /
+                (t - 0.40)
+                /
                 0.20
 
             return UIColor(
                 red:
                     CGFloat(
-                        0.05 +
-                        0.75 * local
+                        0.05
+                        +
+                        0.75
+                        *
+                        local
                     ),
                 green:
                     CGFloat(
-                        0.70 +
-                        0.30 * local
+                        0.70
+                        +
+                        0.30
+                        *
+                        local
                     ),
                 blue:
                     CGFloat(
-                        0.90 -
-                        0.70 * local
+                        0.90
+                        -
+                        0.70
+                        *
+                        local
                     ),
-                alpha:
-                    1.0
+                alpha: 1.0
             )
         }
+
+        // --------------------------------------------------------
+        // HIGH FIELD
+        // --------------------------------------------------------
 
         if t < 0.80 {
 
             let local =
-                (t - 0.60) /
+                (t - 0.60)
+                /
                 0.20
 
             return UIColor(
                 red:
-                    0.80 +
-                    0.20 * CGFloat(local),
+                    0.80
+                    +
+                    0.20
+                    *
+                    CGFloat(local),
                 green:
-                    1.0 -
-                    0.35 * CGFloat(local),
-                blue:
-                    0.20 -
-                    0.20 * CGFloat(local),
-                alpha:
                     1.0
+                    -
+                    0.35
+                    *
+                    CGFloat(local),
+                blue:
+                    0.20
+                    -
+                    0.20
+                    *
+                    CGFloat(local),
+                alpha: 1.0
             )
         }
 
+        // --------------------------------------------------------
+        // EXTREME FIELD
+        // --------------------------------------------------------
+
         let local =
-            (t - 0.80) /
+            (t - 0.80)
+            /
             0.20
 
         return UIColor(
-            red:
-                1.0,
+            red: 1.0,
             green:
-                0.65 -
-                0.65 * CGFloat(local),
-            blue:
-                0.0,
-            alpha:
-                1.0
+                0.65
+                -
+                0.65
+                *
+                CGFloat(local),
+            blue: 0.0,
+            alpha: 1.0
         )
     }
-
 
     // ============================================================
     // EMPTY HEATMAP
@@ -417,10 +858,8 @@ final class QRTLHeatmapGenerator {
 
         UIGraphicsBeginImageContextWithOptions(
             CGSize(
-                width:
-                    resolution,
-                height:
-                    resolution
+                width: resolution,
+                height: resolution
             ),
             true,
             1.0
@@ -429,7 +868,9 @@ final class QRTLHeatmapGenerator {
         guard let context =
                 UIGraphicsGetCurrentContext()
         else {
+
             UIGraphicsEndImageContext()
+
             return UIImage()
         }
 
