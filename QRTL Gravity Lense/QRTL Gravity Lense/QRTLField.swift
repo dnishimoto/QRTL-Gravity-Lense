@@ -804,8 +804,79 @@ final class QRTLField {
             return 0.0
         }
 
+        debugQRTLEnergyDensity(at: position)
+ 
+        
         return referenceEnergyDensity *
                spatialWeight
+    }
+    // ============================================================
+    // MARK: - QRTL ENERGY DENSITY DEBUG
+    // ============================================================
+
+    private func debugQRTLEnergyDensity(
+        at position: SIMD3<Float>
+    ) {
+
+        let radius = Double(simd_length(position))
+
+        let massDensityValue = massDensity(
+            at: position
+        )
+
+        let sourceValue = qrtlSource(
+            at: position
+        )
+
+        let fluxValue = bolgarinoFlux(
+            at: position
+        )
+
+        let currentDensityValue = qrtlCurrentDensity(
+            at: position
+        )
+
+        let currentValue = qrtlCurrent(
+            at: position
+        )
+
+        let electromagneticValue =
+            electromagneticInfluence(
+                at: position
+            )
+
+
+#if DEBUG
+
+
+
+    print("""
+    
+    ============================================================
+    QRTL ENERGY DENSITY TRACE
+    ============================================================
+    
+    position        = \(position)
+    radius          = \(simd_length(position))
+    
+    qrtlSource      = \(qrtlSource(at: position))
+    
+    bolgarinoFlux   = \(bolgarinoFlux(at: position))
+    
+    currentDensity  = \(qrtlCurrentDensity(at: position))
+    
+    current         = \(qrtlCurrent(at: position))
+    
+    electromagneticInfluence =
+        \(electromagneticInfluence(at: position))
+    
+    magneticEnergyDensity =
+        \(magneticEnergyDensity(at: position))
+    
+    ============================================================
+    """)
+
+#endif
     }
     private func qrtlEnergyDensityFromClusterDensity(
         at position: SIMD3<Float>
@@ -1150,13 +1221,20 @@ final class QRTLField {
 
         let count = max(sampleCount, 2)
 
-        let clusterRadius =
+        // ------------------------------------------------------------
+        // PHYSICAL CLUSTER RADIUS
+        //
+        // This is used ONLY for the gravitational integration.
+        // ------------------------------------------------------------
+
+        let clusterRadiusMeters =
             QRTLUnits.parsecsToMeters(
                 parameters.clusterRadiusParsecs
             )
 
-        guard clusterRadius.isFinite,
-              clusterRadius > 0.0
+        guard
+            clusterRadiusMeters.isFinite,
+            clusterRadiusMeters > 0.0
         else {
             return [
                 RadialGravitySample(
@@ -1170,24 +1248,28 @@ final class QRTLField {
         }
 
         let dr =
-            clusterRadius /
+            clusterRadiusMeters /
             Double(count - 1)
 
-        // ============================================================
-        // STEP 1
+        // ------------------------------------------------------------
+        // FIELD-SPACE RADIUS
         //
-        // Sample the QRTL field radially.
+        // IMPORTANT:
         //
-        // These arrays are the authoritative cached radial samples.
+        // qrtlEnergyDensity(at:) receives QRTL/Scene field
+        // coordinates, NOT the physical radius in meters.
         //
-        // energyDensities
-        //      ↓
-        // effectiveMassDensity
-        //      ↓
-        // enclosedMass
-        //      ↓
-        // potential
-        // ============================================================
+        // The field is sampled from 0 ... 1.
+        //
+        // Physical radius is maintained separately in meters.
+        // ------------------------------------------------------------
+
+        let fieldMin: Float = 0.0
+        let fieldMax: Float = 1.0
+
+        // ------------------------------------------------------------
+        // RADIAL ARRAYS
+        // ------------------------------------------------------------
 
         var radii =
             [Double](
@@ -1207,24 +1289,65 @@ final class QRTLField {
                 count: count
             )
 
+        // ============================================================
+        // STEP 1
+        //
+        // Sample the QRTL energy density.
+        //
+        // IMPORTANT:
+        //
+        // physicalRadiusMeters
+        // and
+        // fieldRadius
+        // are deliberately different quantities.
+        // ============================================================
+
         for i in 0..<count {
 
-            let radius =
+            // Physical radius used by gravity.
+            let physicalRadius =
                 Double(i) * dr
 
-            radii[i] = radius
+            radii[i] =
+                physicalRadius
+
+            // Normalized QRTL field coordinate.
+            let normalizedRadius =
+                Float(i) /
+                Float(count - 1)
+
+            let fieldRadius =
+                fieldMin +
+                (fieldMax - fieldMin) *
+                normalizedRadius
+
+            guard
+                fieldRadius.isFinite
+            else {
+                energyDensities[i] = 0.0
+                densities[i] = 0.0
+                continue
+            }
+
+            // --------------------------------------------------------
+            // QRTL FIELD POSITION
+            //
+            // This is intentionally NOT:
+            //
+            // SIMD3<Float>(Float(physicalRadius), 0, 0)
+            //
+            // because physicalRadius is measured in meters.
+            // --------------------------------------------------------
 
             let position =
                 SIMD3<Float>(
-                    Float(radius),
+                    fieldRadius,
                     0.0,
                     0.0
                 )
 
             // --------------------------------------------------------
             // QRTL ENERGY DENSITY
-            //
-            // Calculate this ONCE for this radial sample.
             // --------------------------------------------------------
 
             let rawEnergyDensity =
@@ -1238,7 +1361,6 @@ final class QRTLField {
                 ? Double(rawEnergyDensity)
                 : 0.0
 
-            // Store the QRTL energy density.
             energyDensities[i] =
                 energyDensity
 
@@ -1265,11 +1387,11 @@ final class QRTLField {
         // ============================================================
         // STEP 2
         //
-        // Calculate cumulative enclosed mass.
+        // Calculate enclosed mass.
         //
-        // dM = 4πr²ρdr
+        // M(r) = ∫ 4πr²ρ(r) dr
         //
-        // Trapezoidal integration.
+        // The radius here is PHYSICAL METERS.
         // ============================================================
 
         var enclosedMass =
@@ -1299,12 +1421,14 @@ final class QRTLField {
 
                 let shell0 =
                     fourPi *
-                    r0 * r0 *
+                    r0 *
+                    r0 *
                     rho0
 
                 let shell1 =
                     fourPi *
-                    r1 * r1 *
+                    r1 *
+                    r1 *
                     rho1
 
                 let shellMass =
@@ -1324,10 +1448,79 @@ final class QRTLField {
         // ============================================================
         // STEP 3
         //
-        // Calculate gravitational potential.
+        // Exterior-shell contribution.
         //
-        // Φ(r) = -G M(r) / r
+        // Φ(r) = -G[
         //
+        //      M(r)/r
+        //
+        //      +
+        //
+        //      ∫r^R 4πsρ(s)ds
+        //
+        // ]
+        //
+        // This gives the correct potential inside a spherical mass
+        // distribution.
+        // ============================================================
+
+        var exteriorShellIntegral =
+            [Double](
+                repeating: 0.0,
+                count: count
+            )
+
+        if count > 1 {
+
+            exteriorShellIntegral[count - 1] =
+                0.0
+
+            for i in stride(
+                from: count - 2,
+                through: 0,
+                by: -1
+            ) {
+
+                let r0 =
+                    radii[i]
+
+                let r1 =
+                    radii[i + 1]
+
+                let rho0 =
+                    densities[i]
+
+                let rho1 =
+                    densities[i + 1]
+
+                let integrand0 =
+                    fourPi *
+                    r0 *
+                    rho0
+
+                let integrand1 =
+                    fourPi *
+                    r1 *
+                    rho1
+
+                let shellContribution =
+                    0.5 *
+                    (integrand0 + integrand1) *
+                    (r1 - r0)
+
+                exteriorShellIntegral[i] =
+                    exteriorShellIntegral[i + 1] +
+                    max(
+                        shellContribution,
+                        0.0
+                    )
+            }
+        }
+
+        // ============================================================
+        // STEP 4
+        //
+        // Calculate complete gravitational potential.
         // ============================================================
 
         var samples =
@@ -1348,28 +1541,39 @@ final class QRTLField {
             let mass =
                 enclosedMass[i]
 
-            let potential: Double
+            let exteriorContribution =
+                exteriorShellIntegral[i]
+
+            let enclosedContribution: Double
 
             if radius > 0.0 {
 
-                potential =
-                    -gravitationalConstant *
+                enclosedContribution =
                     mass /
                     radius
 
             } else {
 
-                potential = 0.0
+                // At the center:
+                //
+                // M(r)/r -> 0
+                //
+                // so the potential comes from the
+                // exterior shells.
+
+                enclosedContribution =
+                    0.0
             }
 
-            // ========================================================
-            // STORE ALL RADIAL QRTL INFORMATION TOGETHER
-            // ========================================================
+            let potential =
+                -gravitationalConstant *
+                (
+                    enclosedContribution +
+                    exteriorContribution
+                )
 
             samples.append(
-
                 RadialGravitySample(
-
                     radius:
                         radius,
 
@@ -1387,6 +1591,66 @@ final class QRTLField {
                 )
             )
         }
+
+        // ============================================================
+        // DEBUG
+        // ============================================================
+
+        #if DEBUG
+
+        let debugIndices = [
+            0,
+            count / 4,
+            count / 2,
+            (count * 3) / 4,
+            count - 1
+        ]
+
+        print("""
+        
+        ============================================================
+        QRTL RADIAL FIELD DEBUG
+        ============================================================
+        """)
+
+        for index in debugIndices {
+
+            let physicalRadius =
+                radii[index]
+
+            let normalizedRadius =
+                Float(index) /
+                Float(count - 1)
+
+            print("""
+            
+            Radius \(index)
+
+                normalizedFieldRadius = \(normalizedRadius)
+
+                physicalRadiusMeters  = \(physicalRadius)
+
+                energyDensity          = \(energyDensities[index])
+
+                effectiveDensity       = \(densities[index])
+
+                enclosedMass           = \(enclosedMass[index])
+
+                exteriorContribution   = \(exteriorShellIntegral[index])
+
+                potential              = \(samples[index].potential)
+
+            """)
+        }
+
+        print("""
+        
+        ============================================================
+        QRTL RADIAL FIELD DEBUG COMPLETE
+        ============================================================
+        """)
+
+        #endif
 
         return samples
     }
@@ -1834,19 +2098,97 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> Double {
 
-        let flux =
-            bolgarinoFlux(
-                at: position
+        // ------------------------------------------------------------
+        // QRTL / BOLGARINO FLUX
+        // ------------------------------------------------------------
+
+        let flux = bolgarinoFlux(
+            at: position
+        )
+
+        guard flux.isFinite,
+              flux > 0.0
+        else {
+            return 0.0
+        }
+
+        // ------------------------------------------------------------
+        // QRTL TRANSPORT VELOCITY
+        // ------------------------------------------------------------
+
+        let velocity = max(
+            parameters.qrtlVelocity,
+            0.0
+        )
+
+        guard velocity.isFinite,
+              velocity > 0.0
+        else {
+            return 0.0
+        }
+
+        // ------------------------------------------------------------
+        // CHARACTERISTIC QRTL INTERACTION LENGTH
+        //
+        // This must be a physical length in meters.
+        // ------------------------------------------------------------
+
+        let interactionLength =
+            QRTLUnits.parsecsToMeters(
+                parameters.clusterRadiusParsecs
             )
 
-        let interaction =
+        guard interactionLength.isFinite,
+              interactionLength > 0.0
+        else {
+            return 0.0
+        }
+
+        // ------------------------------------------------------------
+        // QRTL INTERACTION RATE
+        //
+        // ΓQ = vQ / LQ
+        //
+        // Units:
+        //
+        // (meters / second) / meter
+        // = 1 / second
+        // ------------------------------------------------------------
+
+        let interactionRate =
+            velocity /
+            interactionLength
+
+        guard interactionRate.isFinite,
+              interactionRate > 0.0
+        else {
+            return 0.0
+        }
+
+        // ------------------------------------------------------------
+        // QRTL COUPLING EFFICIENCY
+        // ------------------------------------------------------------
+
+        let coupling =
             max(
-                parameters.interactionRate,
+                parameters.etaQ,
                 0.0
             )
 
+        // ------------------------------------------------------------
+        // QRTL CURRENT DENSITY
+        //
+        // JQ = ηQ × ΦQ × ΓQ
+        //
+        // therefore:
+        //
+        // JQ = ηQ × ΦQ × vQ / LQ
+        // ------------------------------------------------------------
+
         let currentDensity =
-            flux * interaction
+            coupling *
+            flux *
+            interactionRate
 
         guard currentDensity.isFinite,
               currentDensity >= 0.0

@@ -2016,6 +2016,7 @@ struct ContentView: View {
                     "The QRTL field has a measurable potential, but the radial profile is not strictly decreasing from the center to the edge."
             }
         }
+        
     }
 
 

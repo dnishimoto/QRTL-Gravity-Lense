@@ -599,17 +599,32 @@ final class GlobularClusterDensityMap:
         at position: SIMD3<Float>
     ) -> Double {
 
-        let value =
-            Double(
-                density(
-                    at:
-                        position
-                )
-            )
+   
+        let radius = simd_length(position)
 
-        guard
-            value.isFinite,
-            value >= 0.0
+        guard radius.isFinite,
+              radius >= 0.0
+        else {
+            return 0.0
+        }
+
+        // Reject obviously invalid coordinates before touching
+        // the density source.
+        guard abs(position.x) < 1.0e30,
+              abs(position.y) < 1.0e30,
+              abs(position.z) < 1.0e30
+        else {
+            return 0.0
+        }
+
+        let value = Double(
+            density(
+                at: position
+            )
+        )
+
+        guard value.isFinite,
+              value >= 0.0
         else {
             return 0.0
         }
