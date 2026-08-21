@@ -1367,22 +1367,7 @@ struct ContentView: View {
 
                     DispatchQueue.main.async {
 
-                        self.computationStage =
-                            "Stage 4 / 4 — rendering"
-
-                        self.computationDetail =
-                            """
-                            Rendering the QRTL spacetime surface,
-                            stellar field, photon paths, heatmap,
-                            and projected galaxy images.
-                            """
-
-                        self.computationProgress =
-                            0.94
-
-                        self.statusMessage =
-                            "Stage 4/4 — rendering QRTL gravity surface and photon projection…"
-
+                    
                         // =================================================
                         // 1. PHOTONS / PROJECTION
                         // =================================================

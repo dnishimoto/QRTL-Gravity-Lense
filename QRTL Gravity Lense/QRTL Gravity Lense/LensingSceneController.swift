@@ -848,13 +848,19 @@ final class LensingSceneController:
         bottomPlaneNode?.removeFromParentNode()
 
         // =========================================================
-        // GRID
+        // VISUALIZATION GRID
+        //
+        // Keep the physics/radial lookup resolution independent
+        // from the SceneKit surface resolution.
+        //
+        // 64 x 64 = 4,096 vertices
+        // 63 x 63 x 2 = 7,938 triangles
         // =========================================================
 
         let n: Int =
             resolution > 4
-            ? min(resolution, 96)
-            : 48
+            ? min(resolution, 64)
+            : 32
 
         guard n >= 2 else {
             return
@@ -862,6 +868,7 @@ final class LensingSceneController:
 
         let extent = heatmapHalfExtent
         let vertexCount = n * n
+        let cellCount = (n - 1) * (n - 1)
 
         let start = -extent
         let step =
@@ -872,25 +879,18 @@ final class LensingSceneController:
         // GEOMETRY STORAGE
         // =========================================================
 
-        var positions: [SCNVector3] = []
-        var colors: [SIMD4<Float>] = []
-        var texcoords: [CGPoint] = []
-        var indices: [Int32] = []
+        var positions = [SCNVector3]()
+        var colors = [SIMD4<Float>]()
+        var texcoords = [CGPoint]()
+        var indices = [Int32]()
 
         positions.reserveCapacity(vertexCount)
         colors.reserveCapacity(vertexCount)
         texcoords.reserveCapacity(vertexCount)
-        indices.reserveCapacity(
-            (n - 1) * (n - 1) * 6
-        )
+        indices.reserveCapacity(cellCount * 6)
 
         // =========================================================
-        // COLOR CACHE
-        //
-        // Store the unnormalized intensity for each vertex.
-        //
-        // This means the expensive QRTL field functions are evaluated
-        // exactly once per vertex.
+        // COLOR INTENSITY CACHE
         // =========================================================
 
         var intensityCache = [Float](
@@ -901,26 +901,34 @@ final class LensingSceneController:
         // =========================================================
         // PASS 1
         //
-        // COLOR INTENSITY ONLY
+        // Calculate visualization intensity once per vertex.
         //
-        // No gravitational potential.
-        // No radial integration.
-        // No curvature calculation.
+        // This pass does NOT calculate gravitational curvature.
         // =========================================================
 
         var maximumIntensity: Float = 0.000001
 
         for j in 0..<n {
-            let z = start + Float(j) * step
+
+            let z =
+                start +
+                Float(j) * step
+
+            let rowOffset =
+                j * n
 
             for i in 0..<n {
-                let x = start + Float(i) * step
 
-                let position = SIMD3<Float>(
-                    x,
-                    0.0,
-                    z
-                )
+                let x =
+                    start +
+                    Float(i) * step
+
+                let position =
+                    SIMD3<Float>(
+                        x,
+                        0.0,
+                        z
+                    )
 
                 // -------------------------------------------------
                 // DENSITY
@@ -935,7 +943,10 @@ final class LensingSceneController:
                     density.isFinite
                     ? max(
                         0.0,
-                        min(density, 1.0)
+                        min(
+                            density,
+                            1.0
+                        )
                     )
                     : 0.0
 
@@ -955,7 +966,10 @@ final class LensingSceneController:
                     sourceValue.isFinite
                     ? max(
                         0.0,
-                        min(sourceValue, 1.0)
+                        min(
+                            sourceValue,
+                            1.0
+                        )
                     )
                     : 0.0
 
@@ -970,14 +984,14 @@ final class LensingSceneController:
 
                 let flowMagnitude =
                     flow.isFinite
-                    ? abs(Float(flow))
+                    ? abs(
+                        Float(flow)
+                    )
                     : 0.0
 
                 let flowTerm =
-                    flowMagnitude.isFinite
-                    ? flowMagnitude /
-                        (flowMagnitude + 1.0)
-                    : 0.0
+                    flowMagnitude /
+                    (flowMagnitude + 1.0)
 
                 // -------------------------------------------------
                 // MAGNETIC FIELD
@@ -1010,8 +1024,6 @@ final class LensingSceneController:
 
                 // -------------------------------------------------
                 // VISUALIZATION INTENSITY
-                //
-                // COLOR ONLY.
                 // -------------------------------------------------
 
                 let intensity =
@@ -1026,23 +1038,24 @@ final class LensingSceneController:
                     : 0.0
 
                 let index =
-                    j * n + i
+                    rowOffset + i
 
                 intensityCache[index] =
                     safeIntensity
 
-                maximumIntensity =
-                    max(
-                        maximumIntensity,
+                if safeIntensity > maximumIntensity {
+                    maximumIntensity =
                         safeIntensity
-                    )
+                }
             }
         }
 
         // =========================================================
-        // CONSTANTS FOR GRAVITY → VISUAL HEIGHT
+        // GRAVITY → SURFACE HEIGHT
         //
         // h = (-2 Phi / c²) × scale
+        //
+        // Precompute the constant multiplier once.
         // =========================================================
 
         let speedOfLightSquared =
@@ -1060,7 +1073,7 @@ final class LensingSceneController:
         // =========================================================
         // PASS 2
         //
-        // BUILD GEOMETRY
+        // BUILD SURFACE VERTICES
         //
         // Gravity path:
         //
@@ -1076,25 +1089,34 @@ final class LensingSceneController:
         //  ↓
         // SceneKit Y
         //
-        // NO radial integration.
+        // NO radial integration occurs here.
         // =========================================================
 
         for j in 0..<n {
-            let z = start + Float(j) * step
+
+            let z =
+                start +
+                Float(j) * step
 
             let v =
                 CGFloat(j) /
                 CGFloat(n - 1)
 
+            let rowOffset =
+                j * n
+
             for i in 0..<n {
-                let x = start + Float(i) * step
+
+                let x =
+                    start +
+                    Float(i) * step
 
                 let u =
                     CGFloat(i) /
                     CGFloat(n - 1)
 
                 // -------------------------------------------------
-                // RADIUS
+                // RADIAL DISTANCE
                 // -------------------------------------------------
 
                 let radiusSquared =
@@ -1111,8 +1133,6 @@ final class LensingSceneController:
 
                 // -------------------------------------------------
                 // RADIAL POTENTIAL LOOKUP
-                //
-                // This is the ONLY gravity calculation here.
                 // -------------------------------------------------
 
                 let potential =
@@ -1122,18 +1142,11 @@ final class LensingSceneController:
 
                 // -------------------------------------------------
                 // POTENTIAL → CURVATURE HEIGHT
-                //
-                // Equivalent to:
-                //
-                // spacetimeCurvatureHeight(at:)
-                //
-                // but without recalculating the potential.
                 // -------------------------------------------------
 
                 let curvatureHeight =
                     potential.isFinite
-                    ? Double(potential) *
-                        curvatureScale
+                    ? potential * curvatureScale
                     : 0.0
 
                 let y =
@@ -1158,7 +1171,7 @@ final class LensingSceneController:
                 // -------------------------------------------------
 
                 let index =
-                    j * n + i
+                    rowOffset + i
 
                 let intensity =
                     intensityCache[index]
@@ -1195,33 +1208,38 @@ final class LensingSceneController:
         }
 
         // =========================================================
-        // TRIANGLES
+        // TRIANGLE INDICES
         // =========================================================
 
         for j in 0..<(n - 1) {
-            let row = j * n
-            let nextRow = row + n
+
+            let row =
+                j * n
+
+            let nextRow =
+                row + n
 
             for i in 0..<(n - 1) {
-                let baseIndex =
+
+                let base =
                     Int32(row + i)
 
-                let rightIndex =
-                    baseIndex + 1
+                let right =
+                    base + 1
 
-                let bottomIndex =
+                let bottom =
                     Int32(nextRow + i)
 
-                let bottomRightIndex =
-                    bottomIndex + 1
+                let bottomRight =
+                    bottom + 1
 
-                indices.append(baseIndex)
-                indices.append(rightIndex)
-                indices.append(bottomIndex)
+                indices.append(base)
+                indices.append(right)
+                indices.append(bottom)
 
-                indices.append(rightIndex)
-                indices.append(bottomRightIndex)
-                indices.append(bottomIndex)
+                indices.append(right)
+                indices.append(bottomRight)
+                indices.append(bottom)
             }
         }
 
@@ -1303,15 +1321,15 @@ final class LensingSceneController:
         material.lightingModel = .constant
 
         if let heatmap {
+
             material.diffuse.contents =
                 heatmap
 
             material.emission.contents =
                 heatmap
 
-            material.lightingModel =
-                .constant
         } else {
+
             material.diffuse.contents =
                 UIColor.white
 
