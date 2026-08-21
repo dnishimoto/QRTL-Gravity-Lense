@@ -771,8 +771,12 @@ final class QRTLField {
             return 0.0
         }
 
+        // --------------------------------------------------------
+        // Radial integration resolution
+        // --------------------------------------------------------
+
         let sampleCount =
-            128
+            256
 
         let dr =
             clusterRadius /
@@ -787,6 +791,15 @@ final class QRTLField {
         var totalMass =
             0.0
 
+        // --------------------------------------------------------
+        // Integrate QRTL effective mass density
+        //
+        // rho_Q(r) = u_Q(r) / c²
+        //
+        // IMPORTANT:
+        // No qrtlGravityIndex is applied.
+        // --------------------------------------------------------
+
         for index in 0..<sampleCount {
 
             let r0 =
@@ -796,6 +809,11 @@ final class QRTLField {
             let r1 =
                 Double(index + 1) *
                 dr
+
+            guard r1 > r0
+            else {
+                continue
+            }
 
             let shellRadius =
                 0.5 *
@@ -807,12 +825,6 @@ final class QRTLField {
                     0.0,
                     0.0
                 )
-
-            // ----------------------------------------------------
-            // LOCAL QRTL EFFECTIVE MASS DENSITY
-            //
-            // rho_Q = u_Q / c²
-            // ----------------------------------------------------
 
             let massDensity =
                 qrtlEffectiveMassDensity(
@@ -826,7 +838,9 @@ final class QRTLField {
             }
 
             // ----------------------------------------------------
-            // SPHERICAL SHELL VOLUME
+            // Spherical shell volume
+            //
+            // dV = 4π/3 (r₁³ - r₀³)
             // ----------------------------------------------------
 
             let shellVolume =
@@ -847,7 +861,9 @@ final class QRTLField {
             }
 
             // ----------------------------------------------------
-            // MASS CONTRIBUTION
+            // Shell mass
+            //
+            // dM = rho_Q dV
             // ----------------------------------------------------
 
             let shellMass =
@@ -932,9 +948,9 @@ final class QRTLField {
             return 0.0
         }
 
-        // --------------------------------------------------------
-        // Radial integration resolution
-        // --------------------------------------------------------
+        // ========================================================
+        // RADIAL INTEGRATION
+        // ========================================================
 
         let sampleCount =
             256
@@ -949,13 +965,13 @@ final class QRTLField {
             return 0.0
         }
 
-        // --------------------------------------------------------
-        // QRTL effective mass density
+        // ========================================================
+        // QRTL EFFECTIVE MASS DENSITY
         //
         // rho_Q(r) = u_Q(r) / c²
         //
-        // No gravity-index calibration is applied.
-        // --------------------------------------------------------
+        // No gravity-index calibration.
+        // ========================================================
 
         func effectiveMassDensity(
             at radius: Double
@@ -998,11 +1014,11 @@ final class QRTLField {
             return density
         }
 
-        // --------------------------------------------------------
-        // Outside the QRTL cluster
+        // ========================================================
+        // OUTSIDE THE QRTL CLUSTER
         //
         // Phi(r) = -G M / r
-        // --------------------------------------------------------
+        // ========================================================
 
         if radius >= clusterRadius {
 
@@ -1092,22 +1108,25 @@ final class QRTLField {
                 : 0.0
         }
 
-        // --------------------------------------------------------
-        // Interior potential
+        // ========================================================
+        // INSIDE THE CLUSTER
+        //
+        // For a spherical density distribution:
         //
         // Phi(r) =
         //
         // -G [
         //
-        //      M(<r) / r
+        //     M(<r) / r
         //
-        //      +
+        //     +
         //
-        //      integral from r to R
-        //      of dM / r'
+        //     integral(r...R)
+        //         dM / r'
         //
         // ]
-        // --------------------------------------------------------
+        //
+        // ========================================================
 
         var enclosedMass =
             0.0
@@ -1115,9 +1134,9 @@ final class QRTLField {
         var exteriorIntegral =
             0.0
 
-        // --------------------------------------------------------
-        // Integrate radial shells
-        // --------------------------------------------------------
+        // ========================================================
+        // RADIAL SHELL INTEGRATION
+        // ========================================================
 
         for index in 0..<sampleCount {
 
@@ -1177,7 +1196,7 @@ final class QRTLField {
             }
 
             // ----------------------------------------------------
-            // Entire shell is inside evaluation radius
+            // Entire shell is inside r
             // ----------------------------------------------------
 
             if r1 <= radius {
@@ -1185,14 +1204,15 @@ final class QRTLField {
                 enclosedMass +=
                     shellMass
 
+                continue
             }
 
             // ----------------------------------------------------
-            // Evaluation radius falls inside this shell
+            // Evaluation point lies inside this shell
             // ----------------------------------------------------
 
-            else if r0 < radius &&
-                    radius < r1 {
+            if r0 < radius &&
+                radius < r1 {
 
                 let innerVolume =
                     (
@@ -1212,15 +1232,15 @@ final class QRTLField {
                         0.0
                     )
 
-                if innerMass.isFinite &&
-                    innerMass >= 0.0 {
+                if innerMass.isFinite,
+                   innerMass >= 0.0 {
 
                     enclosedMass +=
                         innerMass
                 }
 
                 // ------------------------------------------------
-                // Remaining exterior portion
+                // Exterior portion of the same shell
                 // ------------------------------------------------
 
                 let outerVolume =
@@ -1241,8 +1261,8 @@ final class QRTLField {
                         0.0
                     )
 
-                if outerMass.isFinite &&
-                    outerMass >= 0.0 {
+                if outerMass.isFinite,
+                   outerMass >= 0.0 {
 
                     exteriorIntegral +=
                         outerMass /
@@ -1252,26 +1272,28 @@ final class QRTLField {
                         )
                 }
 
+                continue
             }
 
             // ----------------------------------------------------
-            // Entire shell is exterior to evaluation radius
+            // Entire shell is outside r
             // ----------------------------------------------------
 
-            else {
-
-                exteriorIntegral +=
-                    shellMass /
-                    max(
-                        shellRadius,
-                        1.0e-12
-                    )
-            }
+            exteriorIntegral +=
+                shellMass /
+                max(
+                    shellRadius,
+                    1.0e-12
+                )
         }
 
-        // --------------------------------------------------------
-        // Enclosed-mass potential
-        // --------------------------------------------------------
+        // ========================================================
+        // ENCLOSED MASS CONTRIBUTION
+        //
+        // For r > 0:
+        //
+        // Phi_enclosed = -G M(<r) / r
+        // ========================================================
 
         let safeRadius =
             max(
@@ -1286,37 +1308,25 @@ final class QRTLField {
               safeRadius
             : 0.0
 
-        // --------------------------------------------------------
-        // Exterior-shell potential
-        // --------------------------------------------------------
+        // ========================================================
+        // EXTERIOR SHELL CONTRIBUTION
+        //
+        // Each exterior spherical shell contributes:
+        //
+        // dPhi = -G dM / r_shell
+        // ========================================================
 
         let exteriorPotential =
             -G *
             exteriorIntegral
 
-        // --------------------------------------------------------
-        // Center correction
-        //
-        // At r = 0:
-        //
-        // M(<r) / r -> 0
-        //
-        // so only the exterior shells contribute.
-        // --------------------------------------------------------
+        // ========================================================
+        // TOTAL QRTL GRAVITATIONAL POTENTIAL
+        // ========================================================
 
-        let potential: Double
-
-        if radius <= 1.0e-12 {
-
-            potential =
-                exteriorPotential
-
-        } else {
-
-            potential =
-                enclosedPotential +
-                exteriorPotential
-        }
+        let potential =
+            enclosedPotential +
+            exteriorPotential
 
         guard potential.isFinite
         else {
@@ -1539,6 +1549,26 @@ final class QRTLField {
         direction: SIMD3<Float>
     ) -> SIMD3<Float> {
 
+        let directionLength =
+            simd_length(
+                direction
+            )
+
+        guard directionLength.isFinite,
+              directionLength > 0.0
+        else {
+            return .zero
+        }
+
+        let cSquared =
+            speedOfLightSquared
+
+        guard cSquared.isFinite,
+              cSquared > 0.0
+        else {
+            return .zero
+        }
+
         let transverseGravity =
             qrtlTransverseGravity(
                 at: position,
@@ -1556,10 +1586,24 @@ final class QRTLField {
             return .zero
         }
 
+        // --------------------------------------------------------
+        // QRTL photon curvature
+        //
+        // The photon responds only to the transverse component
+        // of the QRTL gravitational acceleration.
+        //
+        // curvature magnitude:
+        //
+        //     -2 |g_transverse| / c²
+        //
+        // The factor of 2 provides the Einstein-style photon
+        // curvature scaling.
+        // --------------------------------------------------------
+
         let curvatureMagnitude =
             -2.0 *
             Double(magnitude) /
-            speedOfLightSquared
+            cSquared
 
         guard curvatureMagnitude.isFinite
         else {
@@ -1569,6 +1613,13 @@ final class QRTLField {
         let curvatureDirection =
             transverseGravity /
             magnitude
+
+        guard curvatureDirection.x.isFinite,
+              curvatureDirection.y.isFinite,
+              curvatureDirection.z.isFinite
+        else {
+            return .zero
+        }
 
         let curvature =
             curvatureDirection *
@@ -1609,10 +1660,33 @@ final class QRTLField {
             return 1.0
         }
 
+        let cSquared =
+            speedOfLightSquared
+
+        guard cSquared.isFinite,
+              cSquared > 0.0
+        else {
+            return 1.0
+        }
+
+        // --------------------------------------------------------
+        // Gravitational optical index
+        //
+        // n_G = 1 - 2Φ_Q / c²
+        //
+        // Since Φ_Q <= 0 for an attractive QRTL field,
+        // n_G >= 1 in the gravitational well.
+        // --------------------------------------------------------
+
         let normalized =
             -2.0 *
             potential /
-            speedOfLightSquared
+            cSquared
+
+        guard normalized.isFinite
+        else {
+            return 1.0
+        }
 
         let index =
             1.0 +
@@ -1640,11 +1714,31 @@ final class QRTLField {
                 at: position
             )
 
+        guard influence.isFinite,
+              influence >= 0.0
+        else {
+            return 0.0
+        }
+
         let coupling =
             max(
                 parameters.photonEMCoupling,
                 0.0
             )
+
+        guard coupling.isFinite
+        else {
+            return 0.0
+        }
+
+        // --------------------------------------------------------
+        // Electromagnetic optical contribution
+        //
+        // n_EM = coupling × electromagneticInfluence
+        //
+        // This is an optical contribution only.
+        // It does not modify QRTL gravitational mass.
+        // --------------------------------------------------------
 
         let contribution =
             coupling *
@@ -1682,6 +1776,13 @@ final class QRTLField {
                 at: position
             )
 
+        guard gravitational.isFinite,
+              gravitational > 0.0,
+              electromagnetic.isFinite
+        else {
+            return 1.0
+        }
+
         let index =
             gravitational *
             (
@@ -1708,9 +1809,267 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> SIMD3<Float> {
 
+        // ========================================================
+        // SPATIAL SCALE
+        // ========================================================
+
+        let radius =
+            Double(
+                simd_length(position)
+            )
+
+        guard radius.isFinite,
+              radius >= 0.0
+        else {
+            return .zero
+        }
+
+        // Adaptive finite-difference step.
+        //
+        // The step scales with distance from the QRTL center,
+        // while retaining a minimum numerical step.
+        //
+
+        let h =
+            max(
+                radius * 1.0e-3,
+                1.0e-3
+            )
+
+        guard h.isFinite,
+              h > 0.0
+        else {
+            return .zero
+        }
+
+        let step =
+            Float(h)
+
+        guard step.isFinite,
+              step > 0.0
+        else {
+            return .zero
+        }
+
+        // ========================================================
+        // FINITE-DIFFERENCE OFFSETS
+        // ========================================================
+
+        let dx =
+            SIMD3<Float>(
+                step,
+                0.0,
+                0.0
+            )
+
+        let dy =
+            SIMD3<Float>(
+                0.0,
+                step,
+                0.0
+            )
+
+        let dz =
+            SIMD3<Float>(
+                0.0,
+                0.0,
+                step
+            )
+
+        // ========================================================
+        // TOTAL OPTICAL INDEX
+        //
+        // d n / d x
+        // d n / d y
+        // d n / d z
+        //
+        // Central finite difference:
+        //
+        // df/dx =
+        //     [f(x+h) - f(x-h)] / 2h
+        // ========================================================
+
+        let indexXPlus =
+            totalIndex(
+                at:
+                    position + dx
+            )
+
+        let indexXMinus =
+            totalIndex(
+                at:
+                    position - dx
+            )
+
+        let indexYPlus =
+            totalIndex(
+                at:
+                    position + dy
+            )
+
+        let indexYMinus =
+            totalIndex(
+                at:
+                    position - dy
+            )
+
+        let indexZPlus =
+            totalIndex(
+                at:
+                    position + dz
+            )
+
+        let indexZMinus =
+            totalIndex(
+                at:
+                    position - dz
+            )
+
+        guard indexXPlus.isFinite,
+              indexXMinus.isFinite,
+              indexYPlus.isFinite,
+              indexYMinus.isFinite,
+              indexZPlus.isFinite,
+              indexZMinus.isFinite
+        else {
+            return .zero
+        }
+
+        // ========================================================
+        // CENTRAL DIFFERENCES
+        // ========================================================
+
+        let denominator =
+            2.0 * h
+
+        guard denominator.isFinite,
+              denominator > 0.0
+        else {
+            return .zero
+        }
+
+        let xGradient =
+            (
+                indexXPlus -
+                indexXMinus
+            ) /
+            denominator
+
+        let yGradient =
+            (
+                indexYPlus -
+                indexYMinus
+            ) /
+            denominator
+
+        let zGradient =
+            (
+                indexZPlus -
+                indexZMinus
+            ) /
+            denominator
+
+        guard xGradient.isFinite,
+              yGradient.isFinite,
+              zGradient.isFinite
+        else {
+            return .zero
+        }
+
+        // ========================================================
+        // RETURN GRADIENT
+        // ========================================================
+
+        let result =
+            SIMD3<Float>(
+                Float(xGradient),
+                Float(yGradient),
+                Float(zGradient)
+            )
+
+        guard result.x.isFinite,
+              result.y.isFinite,
+              result.z.isFinite
+        else {
+            return .zero
+        }
+
+        return result
+    }
+
+    // ========================================================
+    // QRTL LENSING ACCELERATION
+    //
+    // Combines:
+    //
+    // 1. Einstein-style gravitational curvature
+    // 2. Transverse optical-index gradient
+    //
+    // ========================================================
+    func qrtlLensingAcceleration(
+        at position: SIMD3<Float>,
+        direction: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        // ========================================================
+        // QRTL GRAVITATIONAL CURVATURE
+        //
+        // Derived from the QRTL gravitational potential.
+        //
+        // No qrtlGravityIndex calibration is used.
+        // ========================================================
+
+        let gravitationalCurvature =
+            qrtlPhotonCurvature(
+                at: position,
+                direction: direction
+            )
+
+        guard
+            gravitationalCurvature.x.isFinite,
+            gravitationalCurvature.y.isFinite,
+            gravitationalCurvature.z.isFinite
+        else {
+            return .zero
+        }
+
+        // ========================================================
+        // PHOTON DIRECTION
+        // ========================================================
+
+        let directionLength =
+            simd_length(direction)
+
+        guard
+            directionLength.isFinite,
+            directionLength > 0.0
+        else {
+            return gravitationalCurvature
+        }
+
+        let normalizedDirection =
+            direction /
+            directionLength
+
+        // ========================================================
+        // ELECTROMAGNETIC OPTICAL GRADIENT
+        //
+        // IMPORTANT:
+        //
+        // Do NOT use indexGradient() here because indexGradient()
+        // differentiates totalIndex(), which already contains the
+        // gravitational index.
+        //
+        // The gravitational contribution is already supplied by
+        // qrtlPhotonCurvature().
+        //
+        // Therefore only the electromagnetic optical contribution
+        // is differentiated here.
+        // ========================================================
+
         let radius =
             max(
-                simd_length(position),
+                Double(simd_length(position)),
                 1.0
             )
 
@@ -1721,6 +2080,13 @@ final class QRTLField {
                     1.0
                 )
             )
+
+        guard
+            h.isFinite,
+            h > 0.0
+        else {
+            return gravitationalCurvature
+        }
 
         let dx =
             SIMD3<Float>(
@@ -1743,149 +2109,186 @@ final class QRTLField {
                 h
             )
 
-        let xGradient =
-            (
-                totalIndex(
-                    at:
-                        position + dx
-                )
-                -
-                totalIndex(
-                    at:
-                        position - dx
-                )
-            )
-            /
-            Double(
-                2.0 * h
+        // ========================================================
+        // ELECTROMAGNETIC OPTICAL CONTRIBUTION
+        // ========================================================
+
+        let electromagneticXPlus =
+            electromagneticOpticalContribution(
+                at: position + dx
             )
 
-        let yGradient =
-            (
-                totalIndex(
-                    at:
-                        position + dy
-                )
-                -
-                totalIndex(
-                    at:
-                        position - dy
-                )
-            )
-            /
-            Double(
-                2.0 * h
+        let electromagneticXMinus =
+            electromagneticOpticalContribution(
+                at: position - dx
             )
 
-        let zGradient =
-            (
-                totalIndex(
-                    at:
-                        position + dz
-                )
-                -
-                totalIndex(
-                    at:
-                        position - dz
-                )
-            )
-            /
-            Double(
-                2.0 * h
+        let electromagneticYPlus =
+            electromagneticOpticalContribution(
+                at: position + dy
             )
 
-        guard xGradient.isFinite,
-              yGradient.isFinite,
-              zGradient.isFinite
-        else {
-            return .zero
-        }
-
-        return SIMD3<Float>(
-            Float(xGradient),
-            Float(yGradient),
-            Float(zGradient)
-        )
-    }
-
-    // ========================================================
-    // QRTL LENSING ACCELERATION
-    //
-    // Combines:
-    //
-    // 1. Einstein-style gravitational curvature
-    // 2. Transverse optical-index gradient
-    //
-    // ========================================================
-
-    func qrtlLensingAcceleration(
-        at position: SIMD3<Float>,
-        direction: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let gravitationalCurvature =
-            qrtlPhotonCurvature(
-                at: position,
-                direction: direction
+        let electromagneticYMinus =
+            electromagneticOpticalContribution(
+                at: position - dy
             )
 
-        let gradient =
-            indexGradient(
-                at: position
+        let electromagneticZPlus =
+            electromagneticOpticalContribution(
+                at: position + dz
             )
 
-        let directionLength =
-            simd_length(
-                direction
+        let electromagneticZMinus =
+            electromagneticOpticalContribution(
+                at: position - dz
             )
 
-        guard directionLength.isFinite,
-              directionLength > 0.0
+        guard
+            electromagneticXPlus.isFinite,
+            electromagneticXMinus.isFinite,
+            electromagneticYPlus.isFinite,
+            electromagneticYMinus.isFinite,
+            electromagneticZPlus.isFinite,
+            electromagneticZMinus.isFinite
         else {
             return gravitationalCurvature
         }
 
-        let normalizedDirection =
-            direction /
-            directionLength
+        // ========================================================
+        // CENTRAL DIFFERENCE
+        //
+        // grad(n_EM)
+        // ========================================================
 
-        let gradientParallel =
-            simd_dot(
-                gradient,
-                normalizedDirection
-            )
+        let denominator =
+            2.0 * Double(h)
 
-        let transverseGradient =
-            gradient -
-            normalizedDirection *
-            gradientParallel
+        guard
+            denominator.isFinite,
+            denominator > 0.0
+        else {
+            return gravitationalCurvature
+        }
 
-        let electromagneticScale =
-            Float(
-                max(
-                    parameters.photonEMCoupling,
-                    0.0
+        let electromagneticGradient =
+            SIMD3<Float>(
+                Float(
+                    (
+                        electromagneticXPlus -
+                        electromagneticXMinus
+                    ) /
+                    denominator
+                ),
+                Float(
+                    (
+                        electromagneticYPlus -
+                        electromagneticYMinus
+                    ) /
+                    denominator
+                ),
+                Float(
+                    (
+                        electromagneticZPlus -
+                        electromagneticZMinus
+                    ) /
+                    denominator
                 )
             )
 
+        guard
+            electromagneticGradient.x.isFinite,
+            electromagneticGradient.y.isFinite,
+            electromagneticGradient.z.isFinite
+        else {
+            return gravitationalCurvature
+        }
+
+        // ========================================================
+        // REMOVE PARALLEL COMPONENT
+        //
+        // Only the transverse optical gradient bends the photon.
+        // ========================================================
+
+        let gradientParallel =
+            simd_dot(
+                electromagneticGradient,
+                normalizedDirection
+            )
+
+        guard gradientParallel.isFinite
+        else {
+            return gravitationalCurvature
+        }
+
+        let transverseGradient =
+            electromagneticGradient -
+            normalizedDirection *
+            gradientParallel
+
+        guard
+            transverseGradient.x.isFinite,
+            transverseGradient.y.isFinite,
+            transverseGradient.z.isFinite
+        else {
+            return gravitationalCurvature
+        }
+
+        // ========================================================
+        // ELECTROMAGNETIC PHOTON COUPLING
+        // ========================================================
+
+        let electromagneticScale =
+            max(
+                parameters.photonEMCoupling,
+                0.0
+            )
+
+        guard
+            electromagneticScale.isFinite
+        else {
+            return gravitationalCurvature
+        }
+
+        // ========================================================
+        // ELECTROMAGNETIC OPTICAL CURVATURE
+        // ========================================================
+
         let opticalCurvature =
             -transverseGradient *
-            electromagneticScale
+            Float(
+                electromagneticScale
+            )
+
+        guard
+            opticalCurvature.x.isFinite,
+            opticalCurvature.y.isFinite,
+            opticalCurvature.z.isFinite
+        else {
+            return gravitationalCurvature
+        }
+
+        // ========================================================
+        // TOTAL QRTL PHOTON LENSING ACCELERATION
+        //
+        // QRTL gravitational curvature
+        // +
+        // electromagnetic optical curvature
+        // ========================================================
 
         let result =
             gravitationalCurvature +
             opticalCurvature
 
-        guard result.x.isFinite,
-              result.y.isFinite,
-              result.z.isFinite
+        guard
+            result.x.isFinite,
+            result.y.isFinite,
+            result.z.isFinite
         else {
             return .zero
         }
 
         return result
     }
-
     // ========================================================
     // COMPLETE FIELD SAMPLE
     // ========================================================
