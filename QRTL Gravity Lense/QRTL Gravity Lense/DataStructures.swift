@@ -9,6 +9,16 @@ import Foundation
 import simd
 import SceneKit
 import SwiftUI
+
+// ============================================================
+// QRTL GRAVITY SURFACE DIAGNOSTICS
+// ============================================================
+
+
+
+var gravitySurfaceDiagnostics =
+    GravitySurfaceDiagnostics()
+
 struct PhotonTraceProgress {
 
     let total: Int

@@ -44,10 +44,22 @@ final class QRTLField {
     let referenceDensity: Float
 
     // ========================================================
+    // PHYSICAL SCALE
+    // ========================================================
+
+    /// Physical radius represented by normalized SceneKit
+    /// coordinate magnitude 1.0.
+    ///
+    /// This MUST use the same radius used to construct
+    /// GlobularClusterDensitySource.
+    let physicalRadiusMeters: Double
+
+    // ========================================================
     // PHYSICAL CONSTANTS
     // ========================================================
 
-    private let solarMassKg: Float = 1.98847e30
+    private let solarMassKg: Float =
+        1.98847e30
 
     private var clusterMassKg: Float {
         1.0e6 * solarMassKg
@@ -57,11 +69,8 @@ final class QRTLField {
         Float(PhysicalConstants.G)
     }
 
-  
     private let speedOfLight: Double =
         299_792_458.0
-
- 
 
     private var speedOfLightSquared: Float {
         let c = speedOfLight
@@ -74,14 +83,57 @@ final class QRTLField {
 
     init(
         densitySource: GlobularClusterDensitySource,
-        parameters: QRTLParameters
+        parameters: QRTLParameters,
+        physicalRadiusMeters: Double
     ) {
-        self.densitySource = densitySource
-        self.parameters = parameters
 
-        self.referenceDensity = max(
-            densitySource.maximumDensity,
-            0.000001
+        self.densitySource =
+            densitySource
+
+        self.parameters =
+            parameters
+
+        self.physicalRadiusMeters =
+            physicalRadiusMeters
+
+        self.referenceDensity =
+            max(
+                densitySource.maximumDensity,
+                0.000001
+            )
+    }
+
+    func physicalPosition(
+        from normalizedPosition: SIMD3<Float>
+    ) -> SIMD3<Double> {
+
+        SIMD3<Double>(
+            Double(normalizedPosition.x) * physicalRadiusMeters,
+            Double(normalizedPosition.y) * physicalRadiusMeters,
+            Double(normalizedPosition.z) * physicalRadiusMeters
+        )
+    }
+
+    // MARK: - Mass Density
+
+    func massDensity(
+        at normalizedPosition: SIMD3<Float>
+    ) -> Float {
+
+        let physicalPosition =
+            physicalPosition(
+                from: normalizedPosition
+            )
+
+        let physicalPositionFloat =
+            SIMD3<Float>(
+                Float(physicalPosition.x),
+                Float(physicalPosition.y),
+                Float(physicalPosition.z)
+            )
+
+        return densitySource.density(
+            at: physicalPositionFloat
         )
     }
 
@@ -167,7 +219,63 @@ final class QRTLField {
 
         return scale
     }
+    func diagnoseQRTLField(
+        at position: SIMD3<Float>
+    ) {
 
+        print("================================================")
+        print("QRTL FIELD PIPELINE DIAGNOSTIC")
+        print("================================================")
+
+        let density =
+            massDensity(at: position)
+
+        let normalized =
+            normalizedDensity(at: position)
+
+        let influence =
+            influence(at: position)
+
+        let source =
+            qrtlSource(at: position)
+
+        let flux =
+            bolgarinoFlux(at: position)
+
+        let currentDensity =
+            qrtlCurrentDensity(at: position)
+
+        let current =
+            qrtlCurrent(at: position)
+
+        let energy =
+            qrtlEnergyDensity(at: position)
+
+        let potential =
+            gravitationalPotential(at: position)
+
+        let gradient =
+            indexGradient(at: position)
+
+        let acceleration =
+            qrtlLensingAcceleration(
+                at: position,
+                direction: SIMD3<Float>(0, 0, 1)
+            )
+
+        print("Position:", position)
+        print("Mass density:", density)
+        print("Normalized density:", normalized)
+        print("QRTL influence:", influence)
+        print("QRTL source:", source)
+        print("Bolgarino flux:", flux)
+        print("QRTL current density:", currentDensity)
+        print("QRTL current:", current)
+        print("QRTL energy density:", energy)
+        print("Gravitational potential:", potential)
+        print("Index gradient:", gradient)
+        print("QRTL lensing acceleration:", acceleration)
+    }
   
     func inverseSpacetimeMetric(
         at position: SIMD3<Float>
@@ -685,18 +793,6 @@ final class QRTLField {
         )
     }
 
-    // ========================================================
-    // MASS DENSITY
-    // ========================================================
-
-    func massDensity(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        physicalMassDensity(
-            at: position
-        )
-    }
 
     // ========================================================
     // NORMALIZED DENSITY

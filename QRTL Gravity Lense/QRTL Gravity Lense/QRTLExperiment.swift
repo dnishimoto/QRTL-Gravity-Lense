@@ -203,7 +203,9 @@ final class QRTLExperiment {
                 densitySource:
                     densitySource,
                 parameters:
-                    parameters
+                    parameters,
+                physicalRadiusMeters:
+                    radius
             )
     }
 

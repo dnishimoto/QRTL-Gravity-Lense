@@ -161,6 +161,591 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         let galaxyB = makeProjectionNode(positions: galaxyBProjectionPositions, color: .magenta)
         galaxyBNode = galaxyB
         addChildNode(galaxyB)
+        
+        let testPositions: [SIMD3<Float>] = [
+            SIMD3<Float>(0, 0, 0),
+            SIMD3<Float>(0.1, 0, 0),
+            SIMD3<Float>(0.5, 0, 0),
+            SIMD3<Float>(1.0, 0, 0),
+            SIMD3<Float>(5.0, 0, 0)
+        ]
+
+        for position in testPositions {
+
+            let potential =
+                field.gravitationalPotential(
+                    at: position
+                )
+
+            let acceleration =
+                field.qrtlLensingAcceleration(
+                    at: position,
+                    direction: SIMD3<Float>(1, 0, 0)
+                )
+
+            print(
+                "QRTL TEST",
+                "position:", position,
+                "potential:", potential,
+                "acceleration:", acceleration,
+                "magnitude:", simd_length(acceleration)
+            )
+            let diagnosticPosition = SIMD3<Float>(0, 0, 0)
+
+            print("")
+            print("============================================================")
+            print("QRTL FIELD PIPELINE DIAGNOSTIC")
+            print("============================================================")
+
+            print("Position:", diagnosticPosition)
+
+            let density =
+                field.massDensity(
+                    at: diagnosticPosition
+                )
+
+            print("Mass density:", density)
+
+            let normalizedDensity =
+                field.normalizedDensity(
+                    at: diagnosticPosition
+                )
+
+            print("Normalized density:", normalizedDensity)
+
+            let influence =
+                field.influence(
+                    at: diagnosticPosition
+                )
+
+            print("QRTL influence:", influence)
+
+            let source =
+                field.qrtlSource(
+                    at: diagnosticPosition
+                )
+
+            print("QRTL source:", source)
+
+            let flux =
+                field.bolgarinoFlux(
+                    at: diagnosticPosition
+                )
+
+            print("Bolgarino flux:", flux)
+
+            let currentDensity =
+                field.qrtlCurrentDensity(
+                    at: diagnosticPosition
+                )
+
+            print("QRTL current density:", currentDensity)
+
+            let current =
+                field.qrtlCurrent(
+                    at: diagnosticPosition
+                )
+
+            print("QRTL current:", current)
+
+            let energy =
+                field.qrtlEnergyDensity(
+                    at: diagnosticPosition
+                )
+
+            print("QRTL energy density:", energy)
+
+
+            print("Gravitational potential:", potential)
+
+            let gradient =
+                field.indexGradient(
+                    at: diagnosticPosition
+                )
+
+            print("Index gradient:", gradient)
+
+          
+            print("QRTL lensing acceleration:", acceleration)
+
+            print("============================================================")
+        }
+    }
+    
+    // ============================================================
+    // INDEPENDENT SURFACE CURVATURE VALIDATION
+    // ============================================================
+
+    private func validateSurfaceCurvature(
+        radialSegments: Int,
+        angularSegments: Int,
+        positions: [SCNVector3]
+    ) {
+
+        guard
+            radialSegments >= 3,
+            angularSegments >= 3
+        else {
+            return
+        }
+
+        var radialHeights: [Float] = []
+
+        radialHeights.reserveCapacity(
+            radialSegments + 1
+        )
+
+        // Center height.
+        radialHeights.append(
+            positions[0].y
+        )
+
+        // Average each circular ring.
+        for radialIndex in 1...radialSegments {
+
+            let start =
+                1
+                +
+                (radialIndex - 1)
+                * angularSegments
+
+            var sum: Float = 0.0
+            var count = 0
+
+            for angularIndex in 0..<angularSegments {
+
+                let index =
+                    start + angularIndex
+
+                guard index < positions.count else {
+                    continue
+                }
+
+                let y =
+                    positions[index].y
+
+                guard y.isFinite else {
+                    continue
+                }
+
+                sum += y
+                count += 1
+            }
+
+            if count > 0 {
+                radialHeights.append(
+                    sum / Float(count)
+                )
+            }
+        }
+
+        guard radialHeights.count >= 3 else {
+            return
+        }
+
+        gravitySurfaceDiagnostics.centerDepth =
+            radialHeights[0]
+
+        gravitySurfaceDiagnostics.rimDepth =
+            radialHeights.last ?? 0.0
+
+        // --------------------------------------------------------
+        // SECOND DIFFERENCE
+        //
+        // This measures geometric curvature of the radial profile.
+        // It does NOT read the QRTL field.
+        // --------------------------------------------------------
+
+        var curvatureSum: Float = 0.0
+        var curvatureCount = 0
+
+        for index in 1..<(radialHeights.count - 1) {
+
+            let previous =
+                radialHeights[index - 1]
+
+            let current =
+                radialHeights[index]
+
+            let next =
+                radialHeights[index + 1]
+
+            let secondDifference =
+                next
+                -
+                2.0 * current
+                +
+                previous
+
+            guard secondDifference.isFinite else {
+                continue
+            }
+
+            curvatureSum +=
+                abs(secondDifference)
+
+            curvatureCount += 1
+        }
+
+        guard curvatureCount > 0 else {
+            return
+        }
+
+        gravitySurfaceDiagnostics.curvatureSamples =
+            curvatureCount
+
+        gravitySurfaceDiagnostics.curvatureMagnitude =
+            curvatureSum
+            / Float(curvatureCount)
+
+        // --------------------------------------------------------
+        // BOWL TEST
+        //
+        // Center should be below its immediate radial neighbors.
+        // --------------------------------------------------------
+
+        if radialHeights.count >= 3 {
+
+            let center =
+                radialHeights[0]
+
+            let firstRing =
+                radialHeights[1]
+
+            gravitySurfaceDiagnostics.concaveCenter =
+                center < firstRing
+        }
+    }
+    // ============================================================
+    // SURFACE SYMMETRY VALIDATION
+    // ============================================================
+
+    private func validateSurfaceSymmetry(
+        radialSamples: Int = 8,
+        angularSamples: Int = 32
+    ) {
+
+        guard
+            radialSamples > 0,
+            angularSamples >= 4
+        else {
+            return
+        }
+
+        var totalError: Float = 0.0
+        var maximumError: Float = 0.0
+        var comparisonCount = 0
+
+        let halfAngularCount =
+            angularSamples / 2
+
+        for radialIndex in 1...radialSamples {
+
+            let radius =
+                extent
+                *
+                Float(radialIndex)
+                /
+                Float(radialSamples)
+
+            for angularIndex in 0..<halfAngularCount {
+
+                let angle =
+                    2.0
+                    * Float.pi
+                    * Float(angularIndex)
+                    / Float(angularSamples)
+
+                let oppositeAngle =
+                    angle + Float.pi
+
+                let positionA =
+                    SIMD3<Float>(
+                        radius * cos(angle),
+                        0.0,
+                        radius * sin(angle)
+                    )
+
+                let positionB =
+                    SIMD3<Float>(
+                        radius * cos(oppositeAngle),
+                        0.0,
+                        radius * sin(oppositeAngle)
+                    )
+
+                let intensityA =
+                    sampleQRTLGravity(
+                        at: positionA
+                    )
+
+                let intensityB =
+                    sampleQRTLGravity(
+                        at: positionB
+                    )
+
+                guard
+                    intensityA.isFinite,
+                    intensityB.isFinite
+                else {
+                    continue
+                }
+
+                let denominator =
+                    max(
+                        max(
+                            intensityA,
+                            intensityB
+                        ),
+                        1.0e-8
+                    )
+
+                let error =
+                    abs(
+                        intensityA
+                        -
+                        intensityB
+                    )
+                    / denominator
+
+                totalError += error
+
+                maximumError =
+                    max(
+                        maximumError,
+                        error
+                    )
+
+                comparisonCount += 1
+            }
+        }
+
+        guard comparisonCount > 0 else {
+            return
+        }
+
+        gravitySurfaceDiagnostics.symmetryAverageError =
+            totalError
+            / Float(comparisonCount)
+
+        gravitySurfaceDiagnostics.symmetryMaximumError =
+            maximumError
+    }
+    // ============================================================
+    // RADIAL QRTL FIELD VALIDATION
+    // ============================================================
+
+    private func validateRadialField(
+        radiusSamples: Int = 16,
+        angularSamples: Int = 32
+    ) {
+
+        var radialProfile:
+            [(radius: Float, intensity: Float)] = []
+
+        guard
+            radiusSamples > 0,
+            angularSamples > 0
+        else {
+            return
+        }
+
+        // Avoid treating the exact center as a directional
+        // acceleration measurement.
+        let minimumRadius =
+            max(
+                extent / Float(radiusSamples * 20),
+                0.0001
+            )
+
+        for radialIndex in 1...radiusSamples {
+
+            let radius =
+                minimumRadius
+                +
+                (
+                    extent - minimumRadius
+                )
+                *
+                Float(radialIndex - 1)
+                /
+                Float(
+                    max(
+                        radiusSamples - 1,
+                        1
+                    )
+                )
+
+            var intensitySum: Float = 0.0
+            var validCount = 0
+
+            for angularIndex in 0..<angularSamples {
+
+                let angle =
+                    2.0
+                    * Float.pi
+                    * Float(angularIndex)
+                    / Float(angularSamples)
+
+                let position =
+                    SIMD3<Float>(
+                        radius * cos(angle),
+                        0.0,
+                        radius * sin(angle)
+                    )
+
+                let intensity =
+                    sampleQRTLGravity(
+                        at: position
+                    )
+
+                guard intensity.isFinite else {
+                    continue
+                }
+
+                intensitySum += intensity
+                validCount += 1
+            }
+
+            guard validCount > 0 else {
+                continue
+            }
+
+            let averageIntensity =
+                intensitySum
+                / Float(validCount)
+
+            radialProfile.append(
+                (
+                    radius: radius,
+                    intensity: averageIntensity
+                )
+            )
+        }
+
+        gravitySurfaceDiagnostics.radialSamples =
+            radialProfile
+
+        guard radialProfile.count > 1 else {
+            return
+        }
+
+        var decreasingViolations = 0
+        var increasingViolations = 0
+
+        for index in 1..<radialProfile.count {
+
+            let previous =
+                radialProfile[index - 1].intensity
+
+            let current =
+                radialProfile[index].intensity
+
+            let tolerance =
+                max(
+                    previous * 0.01,
+                    1.0e-8
+                )
+
+            if current > previous + tolerance {
+                increasingViolations += 1
+            }
+
+            if current < previous - tolerance {
+                decreasingViolations += 1
+            }
+        }
+
+        gravitySurfaceDiagnostics.radialIncreasingViolations =
+            increasingViolations
+
+        gravitySurfaceDiagnostics.radialDecreasingViolations =
+            decreasingViolations
+    }
+    // ============================================================
+    // FIELD STATISTICS
+    // ============================================================
+
+    private func calculateFieldStatistics(
+        samples: [Float]
+    ) {
+
+        guard !samples.isEmpty else {
+            gravitySurfaceDiagnostics =
+                GravitySurfaceDiagnostics()
+
+            return
+        }
+
+        let validSamples =
+            samples.filter {
+                $0.isFinite
+            }
+
+        guard !validSamples.isEmpty else {
+            gravitySurfaceDiagnostics =
+                GravitySurfaceDiagnostics()
+
+            return
+        }
+
+        let minimum =
+            validSamples.min() ?? 0.0
+
+        let maximum =
+            validSamples.max() ?? 0.0
+
+        let average =
+            validSamples.reduce(
+                0.0,
+                +
+            ) / Float(validSamples.count)
+
+        gravitySurfaceDiagnostics.sampleCount =
+            validSamples.count
+
+        gravitySurfaceDiagnostics.minimumFieldIntensity =
+            minimum
+
+        gravitySurfaceDiagnostics.maximumFieldIntensity =
+            maximum
+
+        gravitySurfaceDiagnostics.averageFieldIntensity =
+            average
+    }
+    // ============================================================
+    // SAMPLE AUTHORITATIVE QRTL FIELD
+    // ============================================================
+    //
+    // This measures the actual QRTL gravitational response.
+    //
+    // It does NOT use the visual surface height.
+    //
+    // Therefore this value is independent of how the surface
+    // is rendered.
+    //
+
+    private func sampleQRTLGravity(
+        at position: SIMD3<Float>
+    ) -> Float {
+
+        let response =
+            field.qrtlLensingAcceleration(
+                at: position,
+                direction: SIMD3<Float>(
+                    1.0,
+                    0.0,
+                    0.0
+                )
+            )
+
+        let intensity =
+            simd_length(response)
+
+        guard intensity.isFinite else {
+            return 0.0
+        }
+
+        return intensity
     }
     // ============================================================
     // PROJECTED GALAXY
@@ -439,9 +1024,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
 
     private func makeSurfaceGeometry() -> SCNGeometry {
+
         let radialSegments = max(gridSize / 2, 16)
         let angularSegments = max(gridSize, 32)
-
         let bowlRadius = extent
         let rimFadeFraction: Float = 0.18
 
@@ -459,24 +1044,68 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         indices.reserveCapacity(
             angularSegments * 3 +
-            max(radialSegments - 1, 0) * angularSegments * 6
+            max(radialSegments - 1, 0) *
+            angularSegments * 6
         )
 
-        // ------------------------------------------------------------
-        // SAMPLE POTENTIAL MAGNITUDES ON THE CIRCULAR BOWL DOMAIN
-        // ------------------------------------------------------------
+        // ============================================================
+        // QRTL FIELD VALIDATION DATA
+        // ============================================================
+
+        var qrtlIntensities: [Float] = []
+
+        qrtlIntensities.reserveCapacity(
+            1 + radialSegments * angularSegments
+        )
 
         var potentialMagnitudes: [Float] = []
+
         potentialMagnitudes.reserveCapacity(
             1 + radialSegments * angularSegments
         )
 
-        var maximumMagnitude: Float = 0.0
+        var maximumPotential: Float = 0.0
 
-        func samplePotentialMagnitude(
+        // ------------------------------------------------------------
+        // GLOBAL QRTL STATISTICS
+        // ------------------------------------------------------------
+
+        var qrtlMinimum: Float = .greatestFiniteMagnitude
+        var qrtlMaximum: Float = 0.0
+        var qrtlSum: Double = 0.0
+        var qrtlSampleCount: Int = 0
+
+        // ------------------------------------------------------------
+        // CENTER SAMPLE
+        // ------------------------------------------------------------
+
+        var centerQRTLIntensity: Float = 0.0
+
+        // ------------------------------------------------------------
+        // RADIAL VALIDATION
+        //
+        // One representative QRTL intensity is retained for each
+        // radial ring. The angular average is used so that the radial
+        // profile is independent of individual angular samples.
+        // ------------------------------------------------------------
+
+        var radialIntensityProfile: [Float] = []
+
+        radialIntensityProfile.reserveCapacity(
+            radialSegments + 1
+        )
+
+        // ============================================================
+        // SAMPLE QRTL FIELD + POTENTIAL
+        // ============================================================
+
+        func sampleField(
             x: Float,
             z: Float
-        ) -> Float {
+        ) -> (
+            intensity: Float,
+            potential: Float
+        ) {
 
             let position =
                 SIMD3<Float>(
@@ -485,80 +1114,374 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     z
                 )
 
-            let potential =
-                field.gravitationalPotential(
-                    at: position
+            // --------------------------------------------------------
+            // AUTHORITATIVE QRTL GRAVITY RESPONSE
+            // --------------------------------------------------------
+
+            let qrtlResponse =
+                field.qrtlLensingAcceleration(
+                    at: position,
+                    direction:
+                        SIMD3<Float>(
+                            1.0,
+                            0.0,
+                            0.0
+                        )
                 )
 
-            let safePotential =
+            let intensity =
                 sanitize(
+                    simd_length(
+                        qrtlResponse
+                    )
+                )
+
+            // --------------------------------------------------------
+            // AUTHORITATIVE GRAVITATIONAL POTENTIAL
+            // --------------------------------------------------------
+
+            let potential =
+                sanitize(
+                    field.gravitationalPotential(
+                        at: position
+                    )
+                )
+
+            let potentialMagnitude =
+                abs(
                     potential
                 )
 
-            let magnitude =
-                abs(
-                    safePotential
-                )
-
-            maximumMagnitude =
+            maximumPotential =
                 max(
-                    maximumMagnitude,
-                    magnitude
+                    maximumPotential,
+                    potentialMagnitude
                 )
 
-            return magnitude
+            // --------------------------------------------------------
+            // FIELD STATISTICS
+            // --------------------------------------------------------
+
+            qrtlMinimum =
+                min(
+                    qrtlMinimum,
+                    intensity
+                )
+
+            qrtlMaximum =
+                max(
+                    qrtlMaximum,
+                    intensity
+                )
+
+            qrtlSum +=
+                Double(
+                    intensity
+                )
+
+            qrtlSampleCount += 1
+
+            return (
+                intensity:
+                    intensity,
+                potential:
+                    potentialMagnitude
+            )
         }
-        // Center vertex.
-        let centerMagnitude = samplePotentialMagnitude(
-            x: 0.0,
-            z: 0.0
+
+        // ============================================================
+        // CENTER SAMPLE
+        // ============================================================
+
+        let centerSample =
+            sampleField(
+                x: 0.0,
+                z: 0.0
+            )
+
+        centerQRTLIntensity =
+            centerSample.intensity
+
+        qrtlIntensities.append(
+            centerSample.intensity
         )
 
-        potentialMagnitudes.append(centerMagnitude)
+        potentialMagnitudes.append(
+            centerSample.potential
+        )
 
-        // Concentric circular rings.
+        radialIntensityProfile.append(
+            centerSample.intensity
+        )
+
+        // ============================================================
+        // SAMPLE CONCENTRIC RINGS
+        // ============================================================
+
         for radialIndex in 1...radialSegments {
+
             let normalizedRadius =
                 Float(radialIndex) /
                 Float(radialSegments)
 
-            let radius = normalizedRadius * bowlRadius
+            let radius =
+                normalizedRadius *
+                bowlRadius
+
+            var ringIntensitySum: Double = 0.0
+            var ringSampleCount: Int = 0
 
             for angularIndex in 0..<angularSegments {
+
                 let angle =
-                    2.0 * Float.pi *
+                    2.0 *
+                    Float.pi *
                     Float(angularIndex) /
                     Float(angularSegments)
 
-                let x = radius * cos(angle)
-                let z = radius * sin(angle)
+                let x =
+                    radius *
+                    cos(angle)
 
-                let magnitude = samplePotentialMagnitude(
-                    x: x,
-                    z: z
+                let z =
+                    radius *
+                    sin(angle)
+
+                let sample =
+                    sampleField(
+                        x: x,
+                        z: z
+                    )
+
+                qrtlIntensities.append(
+                    sample.intensity
                 )
 
-                potentialMagnitudes.append(magnitude)
+                potentialMagnitudes.append(
+                    sample.potential
+                )
+
+                ringIntensitySum +=
+                    Double(
+                        sample.intensity
+                    )
+
+                ringSampleCount += 1
+            }
+
+            // --------------------------------------------------------
+            // RADIAL AVERAGE
+            // --------------------------------------------------------
+
+            let radialAverage: Float
+
+            if ringSampleCount > 0 {
+
+                radialAverage =
+                    Float(
+                        ringIntensitySum /
+                        Double(
+                            ringSampleCount
+                        )
+                    )
+
+            } else {
+
+                radialAverage = 0.0
+            }
+
+            radialIntensityProfile.append(
+                radialAverage
+            )
+        }
+
+        // ============================================================
+        // VALIDATE GLOBAL FIELD STATISTICS
+        // ============================================================
+
+        let qrtlAverage: Float
+
+        if qrtlSampleCount > 0 {
+
+            qrtlAverage =
+                Float(
+                    qrtlSum /
+                    Double(
+                        qrtlSampleCount
+                    )
+                )
+
+        } else {
+
+            qrtlAverage = 0.0
+        }
+
+        if qrtlMinimum ==
+            .greatestFiniteMagnitude {
+
+            qrtlMinimum = 0.0
+        }
+
+        // ============================================================
+        // RADIAL FIELD VALIDATION
+        //
+        // For the current symmetric surface, the radial profile should
+        // generally decrease as distance from the center increases.
+        //
+        // This does NOT assume a 1/r² law.
+        // ============================================================
+
+        var radialDecreaseCount = 0
+        var radialComparisonCount = 0
+
+        if radialIntensityProfile.count > 1 {
+
+            for i in 1..<radialIntensityProfile.count {
+
+                let previous =
+                    radialIntensityProfile[i - 1]
+
+                let current =
+                    radialIntensityProfile[i]
+
+                if current <= previous {
+
+                    radialDecreaseCount += 1
+                }
+
+                radialComparisonCount += 1
             }
         }
 
-        let normalization = max(
-            maximumMagnitude,
-            1.0e-30
-        )
+        let radialMonotonicity: Float
 
-        // ------------------------------------------------------------
-        // BUILD THE CENTER VERTEX
-        // ------------------------------------------------------------
+        if radialComparisonCount > 0 {
+
+            radialMonotonicity =
+                Float(
+                    radialDecreaseCount
+                ) /
+                Float(
+                    radialComparisonCount
+                )
+
+        } else {
+
+            radialMonotonicity = 0.0
+        }
+
+        // ============================================================
+        // SURFACE SYMMETRY VALIDATION
+        //
+        // Opposite angular samples at the same radius should have
+        // similar QRTL intensity for a symmetric mass distribution.
+        // ============================================================
+
+        var symmetryErrorSum: Double = 0.0
+        var symmetryComparisonCount = 0
+
+        let halfAngularSegments =
+            angularSegments / 2
+
+        for radialIndex in 1...radialSegments {
+
+            let ringStart =
+                1 +
+                (radialIndex - 1) *
+                angularSegments
+
+            for angularIndex in 0..<halfAngularSegments {
+
+                let oppositeIndex =
+                    angularIndex +
+                    halfAngularSegments
+
+                let indexA =
+                    ringStart +
+                    angularIndex
+
+                let indexB =
+                    ringStart +
+                    oppositeIndex
+
+                guard
+                    indexA <
+                        qrtlIntensities.count,
+                    indexB <
+                        qrtlIntensities.count
+                else {
+                    continue
+                }
+
+                let a =
+                    qrtlIntensities[indexA]
+
+                let b =
+                    qrtlIntensities[indexB]
+
+                let denominator =
+                    max(
+                        max(
+                            abs(a),
+                            abs(b)
+                        ),
+                        1.0e-12
+                    )
+
+                let relativeError =
+                    abs(a - b) /
+                    denominator
+
+                symmetryErrorSum +=
+                    Double(
+                        relativeError
+                    )
+
+                symmetryComparisonCount += 1
+            }
+        }
+
+        let qrtlSymmetryError: Float
+
+        if symmetryComparisonCount > 0 {
+
+            qrtlSymmetryError =
+                Float(
+                    symmetryErrorSum /
+                    Double(
+                        symmetryComparisonCount
+                    )
+                )
+
+        } else {
+
+            qrtlSymmetryError = 0.0
+        }
+
+        // ============================================================
+        // POTENTIAL NORMALIZATION
+        // ============================================================
+
+        let normalization =
+            max(
+                maximumPotential,
+                1.0e-30
+            )
+
+        // ============================================================
+        // BUILD CENTER VERTEX
+        // ============================================================
 
         let centerDepth =
             -min(
                 max(
-                    potentialMagnitudes[0] / normalization,
+                    potentialMagnitudes[0] /
+                    normalization,
                     0.0
                 ),
                 1.0
-            ) * curvatureScale
+            ) *
+            curvatureScale
 
         positions.append(
             SCNVector3(
@@ -576,56 +1499,93 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             )
         )
 
-        // ------------------------------------------------------------
-        // BUILD THE CIRCULAR RINGS
-        // ------------------------------------------------------------
+        // ============================================================
+        // BUILD CIRCULAR RINGS
+        // ============================================================
 
         var potentialIndex = 1
 
         for radialIndex in 1...radialSegments {
+
             let normalizedRadius =
                 Float(radialIndex) /
                 Float(radialSegments)
 
-            let radius = normalizedRadius * bowlRadius
+            let radius =
+                normalizedRadius *
+                bowlRadius
 
-            // Smoothly forces the outer rim toward y = 0.
-            let rimStart = max(
-                0.0,
-                1.0 - rimFadeFraction
-            )
+            // --------------------------------------------------------
+            // RIM FADE
+            // --------------------------------------------------------
+
+            let rimStart =
+                max(
+                    0.0,
+                    1.0 -
+                    rimFadeFraction
+                )
 
             let rimFade: Float
 
             if normalizedRadius <= rimStart {
+
                 rimFade = 1.0
+
             } else {
+
                 let t =
-                    (normalizedRadius - rimStart) /
-                    max(rimFadeFraction, 1.0e-6)
+                    (
+                        normalizedRadius -
+                        rimStart
+                    ) /
+                    max(
+                        rimFadeFraction,
+                        1.0e-6
+                    )
 
-                let clampedT = min(max(t, 0.0), 1.0)
+                let clampedT =
+                    min(
+                        max(
+                            t,
+                            0.0
+                        ),
+                        1.0
+                    )
 
-                // Smoothstep transition from bowl depth to flat rim.
                 rimFade =
                     1.0 -
-                    clampedT * clampedT *
-                    (3.0 - 2.0 * clampedT)
+                    clampedT *
+                    clampedT *
+                    (
+                        3.0 -
+                        2.0 *
+                        clampedT
+                    )
             }
 
             for angularIndex in 0..<angularSegments {
+
                 let angle =
-                    2.0 * Float.pi *
+                    2.0 *
+                    Float.pi *
                     Float(angularIndex) /
                     Float(angularSegments)
 
-                let x = radius * cos(angle)
-                let z = radius * sin(angle)
+                let x =
+                    radius *
+                    cos(angle)
+
+                let z =
+                    radius *
+                    sin(angle)
 
                 let normalizedPotential =
                     min(
                         max(
-                            potentialMagnitudes[potentialIndex] /
+                            potentialMagnitudes[
+                                potentialIndex
+                            ] /
                             normalization,
                             0.0
                         ),
@@ -649,47 +1609,288 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             }
         }
 
-        // ------------------------------------------------------------
+        // ============================================================
+        // INDEPENDENT SURFACE CURVATURE VALIDATION
+        //
+        // Estimate radial curvature directly from the generated
+        // surface heights.
+        //
+        // This is deliberately separate from the QRTL field value.
+        //
+        // The quantity being tested here is the geometry:
+        //
+        //      d²y / dr²
+        //
+        // It tells us whether the generated surface actually has
+        // curvature rather than merely being displaced vertically.
+        // ============================================================
+
+        var curvatureMagnitudeSum: Double = 0.0
+        var curvatureSampleCount = 0
+
+        if radialSegments >= 2 {
+
+            var radialHeights: [Float] = []
+
+            radialHeights.reserveCapacity(
+                radialSegments + 1
+            )
+
+            radialHeights.append(
+                centerDepth
+            )
+
+            for radialIndex in 1...radialSegments {
+
+                let ringStart =
+                    1 +
+                    (radialIndex - 1) *
+                    angularSegments
+
+                guard
+                    ringStart <
+                        positions.count
+                else {
+                    continue
+                }
+
+                var heightSum: Double = 0.0
+
+                for angularIndex in 0..<angularSegments {
+
+                    let vertex =
+                        positions[
+                            ringStart +
+                            angularIndex
+                        ]
+
+                    heightSum +=
+                        Double(
+                            vertex.y
+                        )
+                }
+
+                let averageHeight =
+                    Float(
+                        heightSum /
+                        Double(
+                            angularSegments
+                        )
+                    )
+
+                radialHeights.append(
+                    averageHeight
+                )
+            }
+
+            if radialHeights.count >= 3 {
+
+                let dr =
+                    bowlRadius /
+                    Float(
+                        radialSegments
+                    )
+
+                if dr > 1.0e-12 {
+
+                    for i in 1..<(radialHeights.count - 1) {
+
+                        let previous =
+                            radialHeights[i - 1]
+
+                        let current =
+                            radialHeights[i]
+
+                        let next =
+                            radialHeights[i + 1]
+
+                        let secondDerivative =
+                            (
+                                next -
+                                2.0 * current +
+                                previous
+                            ) /
+                            (
+                                dr * dr
+                            )
+
+                        if secondDerivative.isFinite {
+
+                            curvatureMagnitudeSum +=
+                                Double(
+                                    abs(
+                                        secondDerivative
+                                    )
+                                )
+
+                            curvatureSampleCount += 1
+                        }
+                    }
+                }
+            }
+        }
+
+        let averageSurfaceCurvature: Float
+
+        if curvatureSampleCount > 0 {
+
+            averageSurfaceCurvature =
+                Float(
+                    curvatureMagnitudeSum /
+                    Double(
+                        curvatureSampleCount
+                    )
+                )
+
+        } else {
+
+            averageSurfaceCurvature = 0.0
+        }
+
+        // ============================================================
+        // QRTL SURFACE DIAGNOSTIC REPORT
+        // ============================================================
+
+        print("")
+        print("============================================================")
+        print("QRTL GRAVITY SURFACE VALIDATION")
+        print("============================================================")
+    
+        print("QRTL Surface Diagnostics")
+        print("-------------------------")
+
+        print(
+            "QRTL sample count: " +
+            "\(gravitySurfaceDiagnostics.sampleCount)"
+        )
+
+        print(
+            "QRTL minimum field: " +
+            "\(gravitySurfaceDiagnostics.minimumFieldIntensity)"
+        )
+
+        print(
+            "QRTL maximum field: " +
+            "\(gravitySurfaceDiagnostics.maximumFieldIntensity)"
+        )
+
+        print(
+            "QRTL average field: " +
+            "\(gravitySurfaceDiagnostics.averageFieldIntensity)"
+        )
+
+        print(
+            "QRTL symmetry error: " +
+            "\(gravitySurfaceDiagnostics.symmetryMaximumError)"
+        )
+
+        
+        print(
+            "Average surface curvature: " +
+            "\(averageSurfaceCurvature)"
+        )
+
+        print(
+            "============================================================"
+        )
+
+        print(
+            "RADIAL QRTL PROFILE"
+        )
+
+        for i in 0..<radialIntensityProfile.count {
+
+            let radius =
+                Float(i) /
+                Float(radialSegments) *
+                bowlRadius
+
+            print(
+                "r = \(radius), " +
+                "QRTL = \(radialIntensityProfile[i])"
+            )
+        }
+
+        print(
+            "============================================================"
+        )
+
+        // ============================================================
         // CREATE CENTER TRIANGLE FAN
-        // ------------------------------------------------------------
+        // ============================================================
 
         for angularIndex in 0..<angularSegments {
+
             let next =
-                (angularIndex + 1) %
+                (
+                    angularIndex + 1
+                ) %
                 angularSegments
 
             indices.append(0)
-            indices.append(Int32(1 + next))
-            indices.append(Int32(1 + angularIndex))
+
+            indices.append(
+                Int32(
+                    1 + next
+                )
+            )
+
+            indices.append(
+                Int32(
+                    1 + angularIndex
+                )
+            )
         }
 
-        // ------------------------------------------------------------
+        // ============================================================
         // CONNECT CONCENTRIC RINGS
-        // ------------------------------------------------------------
+        // ============================================================
 
         for radialIndex in 1..<radialSegments {
+
             let innerStart =
-                1 + (radialIndex - 1) * angularSegments
+                1 +
+                (
+                    radialIndex - 1
+                ) *
+                angularSegments
 
             let outerStart =
-                1 + radialIndex * angularSegments
+                1 +
+                radialIndex *
+                angularSegments
 
             for angularIndex in 0..<angularSegments {
+
                 let next =
-                    (angularIndex + 1) %
+                    (
+                        angularIndex + 1
+                    ) %
                     angularSegments
 
                 let innerA =
-                    Int32(innerStart + angularIndex)
+                    Int32(
+                        innerStart +
+                        angularIndex
+                    )
 
                 let innerB =
-                    Int32(innerStart + next)
+                    Int32(
+                        innerStart +
+                        next
+                    )
 
                 let outerA =
-                    Int32(outerStart + angularIndex)
+                    Int32(
+                        outerStart +
+                        angularIndex
+                    )
 
                 let outerB =
-                    Int32(outerStart + next)
+                    Int32(
+                        outerStart +
+                        next
+                    )
 
                 indices.append(innerA)
                 indices.append(outerA)
@@ -701,73 +1902,116 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             }
         }
 
-        // ------------------------------------------------------------
-        // CALCULATE SMOOTH VERTEX NORMALS FROM TRIANGLE FACES
-        // ------------------------------------------------------------
+        // ============================================================
+        // CALCULATE SMOOTH VERTEX NORMALS
+        // ============================================================
 
-        var accumulatedNormals = Array(
-            repeating: SIMD3<Float>(0.0, 0.0, 0.0),
-            count: positions.count
-        )
+        var accumulatedNormals =
+            Array(
+                repeating:
+                    SIMD3<Float>(
+                        0.0,
+                        0.0,
+                        0.0
+                    ),
+                count:
+                    positions.count
+            )
 
         for triangleStart in stride(
             from: 0,
             to: indices.count,
             by: 3
         ) {
-            let indexA = Int(indices[triangleStart])
-            let indexB = Int(indices[triangleStart + 1])
-            let indexC = Int(indices[triangleStart + 2])
 
-            let a = SIMD3<Float>(
-                positions[indexA].x,
-                positions[indexA].y,
-                positions[indexA].z
-            )
+            let indexA =
+                Int(
+                    indices[
+                        triangleStart
+                    ]
+                )
 
-            let b = SIMD3<Float>(
-                positions[indexB].x,
-                positions[indexB].y,
-                positions[indexB].z
-            )
+            let indexB =
+                Int(
+                    indices[
+                        triangleStart + 1
+                    ]
+                )
 
-            let c = SIMD3<Float>(
-                positions[indexC].x,
-                positions[indexC].y,
-                positions[indexC].z
-            )
+            let indexC =
+                Int(
+                    indices[
+                        triangleStart + 2
+                    ]
+                )
 
-            let faceNormal = simd_cross(
-                b - a,
-                c - a
-            )
+            let a =
+                SIMD3<Float>(
+                    positions[indexA].x,
+                    positions[indexA].y,
+                    positions[indexA].z
+                )
 
-            accumulatedNormals[indexA] += faceNormal
-            accumulatedNormals[indexB] += faceNormal
-            accumulatedNormals[indexC] += faceNormal
+            let b =
+                SIMD3<Float>(
+                    positions[indexB].x,
+                    positions[indexB].y,
+                    positions[indexB].z
+                )
+
+            let c =
+                SIMD3<Float>(
+                    positions[indexC].x,
+                    positions[indexC].y,
+                    positions[indexC].z
+                )
+
+            let faceNormal =
+                simd_cross(
+                    b - a,
+                    c - a
+                )
+
+            accumulatedNormals[indexA] +=
+                faceNormal
+
+            accumulatedNormals[indexB] +=
+                faceNormal
+
+            accumulatedNormals[indexC] +=
+                faceNormal
         }
 
         normals.removeAll(
             keepingCapacity: true
         )
 
-        for accumulatedNormal in accumulatedNormals {
-            let lengthSquared = simd_length_squared(
-                accumulatedNormal
-            )
+        for accumulatedNormal
+        in accumulatedNormals {
 
-            let normal: SIMD3<Float>
-
-            if lengthSquared > 1.0e-12 {
-                normal = simd_normalize(
+            let lengthSquared =
+                simd_length_squared(
                     accumulatedNormal
                 )
+
+            let normal:
+                SIMD3<Float>
+
+            if lengthSquared > 1.0e-12 {
+
+                normal =
+                    simd_normalize(
+                        accumulatedNormal
+                    )
+
             } else {
-                normal = SIMD3<Float>(
-                    0.0,
-                    1.0,
-                    0.0
-                )
+
+                normal =
+                    SIMD3<Float>(
+                        0.0,
+                        1.0,
+                        0.0
+                    )
             }
 
             normals.append(
@@ -779,34 +2023,47 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             )
         }
 
-        // ------------------------------------------------------------
+        // ============================================================
         // CREATE SCENEKIT GEOMETRY
-        // ------------------------------------------------------------
+        // ============================================================
 
-        let vertexSource = SCNGeometrySource(
-            vertices: positions
-        )
+        let vertexSource =
+            SCNGeometrySource(
+                vertices:
+                    positions
+            )
 
-        let normalSource = SCNGeometrySource(
-            normals: normals
-        )
+        let normalSource =
+            SCNGeometrySource(
+                normals:
+                    normals
+            )
 
-        let element = SCNGeometryElement(
-            indices: indices,
-            primitiveType: .triangles
-        )
+        let element =
+            SCNGeometryElement(
+                indices:
+                    indices,
+                primitiveType:
+                    .triangles
+            )
 
-        let geometry = SCNGeometry(
-            sources: [
-                vertexSource,
-                normalSource
-            ],
-            elements: [
-                element
-            ]
-        )
+        let geometry =
+            SCNGeometry(
+                sources: [
+                    vertexSource,
+                    normalSource
+                ],
+                elements: [
+                    element
+                ]
+            )
 
-        let material = SCNMaterial()
+        // ============================================================
+        // MATERIAL
+        // ============================================================
+
+        let material =
+            SCNMaterial()
 
         material.diffuse.contents =
             UIColor.systemGreen.withAlphaComponent(
@@ -823,16 +2080,20 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 0.10
             )
 
-        material.isDoubleSided = true
-        material.transparency = 0.82
-        material.lightingModel = .physicallyBased
+        material.isDoubleSided =
+            true
+
+        material.transparency =
+            0.82
+
+        material.lightingModel =
+            .physicallyBased
 
         geometry.materials = [
             material
         ]
-        
-   
 
         return geometry
     }
+
 }
