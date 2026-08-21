@@ -36,6 +36,8 @@ import simd
 
 final class QRTLField {
     
+    let spacetimeHeightScale: Float = 1.0e6
+    
     var qrtlMetricCoupling: Float = 1.0
     
     private var spatialPotentialGrid: [Float] = []
@@ -1594,68 +1596,49 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> Float {
 
-        // --------------------------------------------------------
-        // 1. QRTL GRAVITATIONAL POTENTIAL
-        // --------------------------------------------------------
-        //
-        // This is the authoritative QRTL gravity quantity.
-        //
-        //     Phi_QRTL < 0
-        //
-        // Stronger QRTL gravity produces a larger magnitude
-        // of negative potential.
-        //
-        // --------------------------------------------------------
+        // ============================================================
+        // AUTHORITATIVE QRTL POTENTIAL
+        // ============================================================
 
-        let qrtlPotential =
-            qrtlGravitationalPotential(
+        let potential =
+            gravitationalPotential(
                 at: position
             )
 
-        guard qrtlPotential.isFinite else {
-            return 0.0
-        }
-
-        // --------------------------------------------------------
-        // 2. QRTL WEAK-FIELD CURVATURE
-        // --------------------------------------------------------
+        // ============================================================
+        // QRTL SPACETIME CURVATURE
         //
-        //     h_QRTL = -2 Phi_QRTL / c²
+        // Weak-field relationship:
         //
-        // This is dimensionless.
+        // curvature ∝ -2 Φ / c²
         //
-        // --------------------------------------------------------
+        // The result is dimensionless.
+        // ============================================================
 
-        let qrtlCurvature =
-            -2.0 *
-            qrtlPotential /
-            speedOfLightSquared
+        let curvature =
+            -2.0 * Float (potential) * inverseSpeedOfLightSquared
 
-        guard qrtlCurvature.isFinite else {
-            return 0.0
-        }
-
-        // --------------------------------------------------------
-        // 3. CONVERT QRTL CURVATURE TO SURFACE HEIGHT
-        // --------------------------------------------------------
+        // ============================================================
+        // VISUAL AMPLIFICATION
         //
-        // The conversion to SceneKit coordinates is a visualization
-        // scale. It does not alter the QRTL gravitational field.
-        //
-        // --------------------------------------------------------
-
-        let spacetimeHeightScale =
-            1.0e6
+        // The physical curvature can be extremely small.
+        // Therefore convert the dimensionless curvature into
+        // SceneKit display units.
+        // ============================================================
 
         let height =
-            qrtlCurvature *
+            curvature *
             spacetimeHeightScale
+
+        // ============================================================
+        // SAFETY
+        // ============================================================
 
         guard height.isFinite else {
             return 0.0
         }
 
-        return Float(height)
+        return height
     }
     // ============================================================
     // QRTL GRAVITY INFLUENCE
