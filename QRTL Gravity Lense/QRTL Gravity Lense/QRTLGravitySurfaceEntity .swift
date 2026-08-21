@@ -307,90 +307,64 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // No gravity physics is performed here.
     // ============================================================
 
-    private func samplePotentialMagnitude(
+    func samplePotentialMagnitude(
         x: Float,
         z: Float
     ) -> Float {
 
         // ============================================================
-        // VISUAL → PHYSICAL COORDINATE MAPPING
+        // DISPLAY SPACE
         //
-        // Photons travel along physical +X.
-        //
-        // Gravity surface is the physical X = 0 cross-section.
-        //
-        // visual X → physical Y
-        // visual Z → physical Z
+        // x and z are SceneKit/display coordinates.
+        // They are NOT physical meters.
         // ============================================================
 
-        let physicalPosition = SIMD3<Float>(
-            0.0,
-            x,
-            z
-        )
-
-        // ============================================================
-        // TRUE 3D RADIUS
-        // ============================================================
-
-        let radius = simd_length(
-            physicalPosition
-        )
-
-        // ============================================================
-        // AUTHORITATIVE QRTL RADIAL LOOKUP
-        // ============================================================
-
-        let potential = field.interpolateRadialPotential(
-            radius: Double(radius)
-        )
-
-        let magnitude = abs(
-            Float(potential)
-        )
-
-        guard magnitude.isFinite else {
-
-            print(
-                "QRTL SURFACE INVALID POTENTIAL:",
-                potential,
-                "radius:",
-                radius
+        let displayRadius =
+            sqrt(
+                x * x +
+                z * z
             )
 
-            return 0.0
-        }
-
         // ============================================================
-        // TRACK GLOBAL VISUALIZATION MAXIMUM
-        // ============================================================
-
-        maximumPotential = max(
-            maximumPotential,
-            magnitude
-        )
-
-        // ============================================================
-        // DIAGNOSTIC
+        // MAP DISPLAY RADIUS → PHYSICAL RADIUS
         //
-        // This lets us verify that the radial lookup is actually
-        // returning a nonzero gravitational potential.
+        // The displayed surface has radius `extent`.
+        //
+        // displayRadius = 0
+        //     → physical radius = 0
+        //
+        // displayRadius = extent
+        //     → physical radius = clusterRadiusMeters
         // ============================================================
 
-        if radius < 0.0001 {
-
-            print(
-                "QRTL SURFACE CENTER:",
-                "potential =",
-                potential,
-                "magnitude =",
-                magnitude,
-                "maximum =",
-                maximumPotential
+        let normalizedRadius =
+            min(
+                max(
+                    displayRadius / extent,
+                    0.0
+                ),
+                1.0
             )
-        }
 
-        return magnitude
+        let physicalRadius =
+            Double(normalizedRadius) *
+            Double(field.clusterRadiusMeters)
+        // ============================================================
+        // AUTHORITATIVE RADIAL QRTL POTENTIAL
+        // ============================================================
+
+        let potential =
+            field.interpolateRadialPotential(
+                radius: physicalRadius
+            )
+
+        // ============================================================
+        // VISUAL MAGNITUDE
+        // ============================================================
+
+        return Float(abs(
+            potential
+        ))
     }
     // ============================================================
     // CLEAR SCENE

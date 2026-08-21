@@ -66,7 +66,7 @@ final class QRTLField {
          )
      }
 
-     private var clusterRadiusMeters: Double {
+    var clusterRadiusMeters: Double {
 
          QRTLUnits.parsecsToMeters(
              parameters.clusterRadiusParsecs
