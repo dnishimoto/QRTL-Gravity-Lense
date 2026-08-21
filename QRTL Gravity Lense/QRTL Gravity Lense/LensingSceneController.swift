@@ -901,7 +901,8 @@ final class LensingSceneController:
         // =========================================================
         // PASS 1
         //
-        // Calculate visualization intensity once per vertex.
+        // Calculate visualization intensity once per vertex
+        // using the precomputed radial lookup tables.
         //
         // This pass does NOT calculate gravitational curvature.
         // =========================================================
@@ -931,12 +932,30 @@ final class LensingSceneController:
                     )
 
                 // -------------------------------------------------
-                // DENSITY
+                // RADIAL DISTANCE (shared by all lookups)
+                // -------------------------------------------------
+
+                let radiusSquared =
+                    x * x +
+                    z * z
+
+                let radius =
+                    Double(
+                        sqrt(
+                            max(
+                                0.0,
+                                radiusSquared
+                            )
+                        )
+                    )
+
+                // -------------------------------------------------
+                // DENSITY  (radial table)
                 // -------------------------------------------------
 
                 let density =
-                    field.normalizedDensity(
-                        at: position
+                    field.interpolateRadialNormalizedDensity(
+                        radius: radius
                     )
 
                 let densityTerm =
@@ -944,19 +963,19 @@ final class LensingSceneController:
                     ? max(
                         0.0,
                         min(
-                            density,
+                            Float(density),
                             1.0
                         )
                     )
                     : 0.0
 
                 // -------------------------------------------------
-                // QRTL SOURCE
+                // QRTL SOURCE  (radial table)
                 // -------------------------------------------------
 
                 let qrtlSource =
-                    field.qrtlSource(
-                        at: position
+                    field.interpolateRadialSource(
+                        radius: radius
                     )
 
                 let sourceValue =
@@ -974,12 +993,12 @@ final class LensingSceneController:
                     : 0.0
 
                 // -------------------------------------------------
-                // BOLGARINO FLOW
+                // BOLGARINO FLOW  (radial table)
                 // -------------------------------------------------
 
                 let flow =
-                    field.bolgarinoFlux(
-                        at: position
+                    field.interpolateRadialFlux(
+                        radius: radius
                     )
 
                 let flowMagnitude =
@@ -994,11 +1013,11 @@ final class LensingSceneController:
                     (flowMagnitude + 1.0)
 
                 // -------------------------------------------------
-                // MAGNETIC FIELD
+                // MAGNETIC FIELD  (radial magnitude + geometric direction)
                 // -------------------------------------------------
 
                 let magnetic =
-                    field.magneticField(
+                    field.interpolateRadialMagneticField(
                         at: position
                     )
 

@@ -1,4 +1,4 @@
-//
+
 //  QRTLField.swift
 //  QRTL Gravity Lense
 //
@@ -45,6 +45,15 @@ final class QRTLField {
     let densitySource: GlobularClusterDensityMap
     let parameters: QRTLParameters
     let referenceDensity: Float
+    
+    // ========================================================
+    // ADDITIONAL RADIAL LOOKUP TABLES (built once at init)
+    // ========================================================
+    
+    private var radialNormalizedDensityTable: [Double] = []
+    private var radialQRTLSourceTable: [Double] = []
+    private var radialBolgarinoFluxTable: [Double] = []
+    private var radialMagneticMagnitudeTable: [Double] = []
     
     private var clusterMassKg: Double {
 
@@ -101,7 +110,190 @@ final class QRTLField {
                 parameters: parameters,
                 sampleCount: 1024
             )
+        
+        // One-time build of all additional radial tables
+        // (same radii as radialGravityTable).
+        buildAdditionalRadialLookupTables()
     }
+    
+    // ========================================================
+    // BUILD ADDITIONAL RADIAL LOOKUP TABLES (ONCE)
+    // ========================================================
+    
+    private func buildAdditionalRadialLookupTables() {
+        
+        let count = radialGravityTable.count
+        guard count >= 2 else {
+            radialNormalizedDensityTable = []
+            radialQRTLSourceTable = []
+            radialBolgarinoFluxTable = []
+            radialMagneticMagnitudeTable = []
+            return
+        }
+        
+        radialNormalizedDensityTable = [Double](repeating: 0.0, count: count)
+        radialQRTLSourceTable = [Double](repeating: 0.0, count: count)
+        radialBolgarinoFluxTable = [Double](repeating: 0.0, count: count)
+        radialMagneticMagnitudeTable = [Double](repeating: 0.0, count: count)
+        
+        for i in 0..<count {
+            
+            let radius = radialGravityTable[i].radius
+            
+            let position = SIMD3<Float>(
+                Float(radius),
+                0.0,
+                0.0
+            )
+            
+            // Normalized density
+            let norm = Double(densitySource.normalizedDensity(at: position))
+            radialNormalizedDensityTable[i] =
+                (norm.isFinite && norm >= 0.0) ? norm : 0.0
+            
+            // QRTL source (uses existing method)
+            let source = qrtlSource(at: position)
+            radialQRTLSourceTable[i] =
+                (source.isFinite && source >= 0.0) ? source : 0.0
+            
+            // Bolgarino flux (uses existing method)
+            let flux = bolgarinoFlux(at: position)
+            radialBolgarinoFluxTable[i] =
+                (flux.isFinite && flux >= 0.0) ? flux : 0.0
+            
+            // Magnetic magnitude (uses existing magneticField, keeps vector behaviour)
+            let B = magneticField(at: position)
+            let mag = Double(simd_length(B))
+            radialMagneticMagnitudeTable[i] =
+                (mag.isFinite && mag >= 0.0) ? mag : 0.0
+        }
+    }
+    
+    // ========================================================
+    // FAST RADIAL INTERPOLATORS (for rendering / visualization)
+    // ========================================================
+    
+    func interpolateRadialNormalizedDensity(radius: Double) -> Double {
+        interpolateRadialScalarTable(
+            radius: radius,
+            values: radialNormalizedDensityTable
+        )
+    }
+    
+    func interpolateRadialSource(radius: Double) -> Double {
+        interpolateRadialScalarTable(
+            radius: radius,
+            values: radialQRTLSourceTable
+        )
+    }
+    
+    func interpolateRadialFlux(radius: Double) -> Double {
+        interpolateRadialScalarTable(
+            radius: radius,
+            values: radialBolgarinoFluxTable
+        )
+    }
+    
+    /// Returns a full magnetic-field vector.
+    /// Magnitude comes from the radial table; direction is reconstructed
+    /// exactly as in the original magneticField(at:) implementation.
+    func interpolateRadialMagneticField(at position: SIMD3<Float>) -> SIMD3<Float> {
+        
+        let radius = Double(simd_length(position))
+        guard radius.isFinite, radius > 0.0 else {
+            return .zero
+        }
+        
+        let magnitude = interpolateRadialScalarTable(
+            radius: radius,
+            values: radialMagneticMagnitudeTable
+        )
+        
+        guard magnitude.isFinite, magnitude > 0.0 else {
+            return .zero
+        }
+        
+        // Reconstruct tangential direction (identical to original magneticField)
+        let p = SIMD3<Double>(
+            Double(position.x),
+            Double(position.y),
+            Double(position.z)
+        )
+        
+        let axis = SIMD3<Double>(0.0, 1.0, 0.0)
+        
+        var tangential = simd_cross(axis, p)
+        let tangentialLength = simd_length(tangential)
+        
+        guard tangentialLength.isFinite, tangentialLength > 0.0 else {
+            return .zero
+        }
+        
+        tangential /= tangentialLength
+        
+        return SIMD3<Float>(
+            Float(tangential.x * magnitude),
+            Float(tangential.y * magnitude),
+            Float(tangential.z * magnitude)
+        )
+    }
+    
+    // Generic binary-search interpolator used by the new tables.
+    // (Does not touch the existing interpolateRadialPotential.)
+    private func interpolateRadialScalarTable(
+        radius: Double,
+        values: [Double]
+    ) -> Double {
+        
+        guard !radialGravityTable.isEmpty,
+              values.count == radialGravityTable.count,
+              radius.isFinite
+        else {
+            return 0.0
+        }
+        
+        if radius <= radialGravityTable[0].radius {
+            return values[0]
+        }
+        
+        let lastIndex = radialGravityTable.count - 1
+        if radius >= radialGravityTable[lastIndex].radius {
+            return values[lastIndex]
+        }
+        
+        var lower = 0
+        var upper = lastIndex
+        
+        while upper - lower > 1 {
+            let middle = (lower + upper) >> 1
+            if radialGravityTable[middle].radius <= radius {
+                lower = middle
+            } else {
+                upper = middle
+            }
+        }
+        
+        let r0 = radialGravityTable[lower].radius
+        let r1 = radialGravityTable[upper].radius
+        let span = r1 - r0
+        
+        guard span.isFinite, span > 0.0 else {
+            return values[lower]
+        }
+        
+        let t = (radius - r0) / span
+        guard t.isFinite else {
+            return values[lower]
+        }
+        
+        let value = values[lower] + (values[upper] - values[lower]) * t
+        return value.isFinite ? value : values[lower]
+    }
+    
+    // ========================================================
+    // EXISTING METHODS (unchanged)
+    // ========================================================
+
     func qrtlEnergyDensity(
         at position: SIMD3<Float>
     ) -> Float {
