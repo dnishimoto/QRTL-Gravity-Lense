@@ -1166,6 +1166,31 @@ struct ContentView: View {
                     let field =
                         experiment.field
 
+                    // ========================================================
+                    // UPDATE SIMPLE GRAVITY POTENTIAL OVERLAY
+                    // ========================================================
+                    //
+                    // IMPORTANT:
+                    //
+                    // This samples the SAME authoritative QRTLField that is
+                    // subsequently used for:
+                    //
+                    //   QRTL gravitational potential
+                    //   QRTL spacetime metric
+                    //   photon tracing
+                    //   gravity surface
+                    //   deformed spacetime visualization
+                    //
+                    // No separate gravity model is used here.
+                    // ========================================================
+
+                    updatePotentialOverlay(
+                        field:
+                            field,
+                        radiusMeters:
+                            radiusMeters
+                    )
+                    
                     // ====================================================
                     // STAGE 1C — UNIFIED SPACETIME EVALUATION
                     // ====================================================
@@ -1811,5 +1836,220 @@ struct ContentView: View {
             execute:
                 physicsWorkItem
         )
+    }
+    // ============================================================
+    // MARK: - QRTL POTENTIAL SAMPLING
+    // ============================================================
+
+    private func updatePotentialOverlay(
+        field: QRTLField,
+        radiusMeters: Double
+    ) {
+
+        // --------------------------------------------------------
+        // Sample the SAME authoritative QRTL field used by the
+        // photon tracer and spacetime renderer.
+        // --------------------------------------------------------
+
+        let centerPosition =
+            SIMD3<Float>(
+                0.0,
+                0.0,
+                0.0
+            )
+
+        let quarterPosition =
+            SIMD3<Float>(
+                Float(radiusMeters * 0.25),
+                0.0,
+                0.0
+            )
+
+        let halfPosition =
+            SIMD3<Float>(
+                Float(radiusMeters * 0.50),
+                0.0,
+                0.0
+            )
+
+        let edgePosition =
+            SIMD3<Float>(
+                Float(radiusMeters * 0.95),
+                0.0,
+                0.0
+            )
+
+        // --------------------------------------------------------
+        // Evaluate gravitational potential
+        // --------------------------------------------------------
+
+        let centerPotential =
+            Double(
+                field.gravitationalPotential(
+                    at: centerPosition
+                )
+            )
+
+        let quarterPotential =
+            Double(
+                field.gravitationalPotential(
+                    at: quarterPosition
+                )
+            )
+
+        let halfPotential =
+            Double(
+                field.gravitationalPotential(
+                    at: halfPosition
+                )
+            )
+
+        let edgePotential =
+            Double(
+                field.gravitationalPotential(
+                    at: edgePosition
+                )
+            )
+
+        // --------------------------------------------------------
+        // Store the actual values in the SwiftUI state.
+        // --------------------------------------------------------
+
+        DispatchQueue.main.async {
+
+            self.potentialCenter =
+                centerPotential
+
+            self.potentialQuarter =
+                quarterPotential
+
+            self.potentialHalf =
+                halfPotential
+
+            self.potentialEdge =
+                edgePotential
+
+            // ----------------------------------------------------
+            // Classify each location.
+            //
+            // We use ABSOLUTE magnitude because gravitational
+            // potential may be negative.
+            // ----------------------------------------------------
+
+            self.potentialCenterLevel =
+                self.potentialLevel(
+                    centerPotential,
+                    reference: centerPotential
+                )
+
+            self.potentialQuarterLevel =
+                self.potentialLevel(
+                    quarterPotential,
+                    reference: centerPotential
+                )
+
+            self.potentialHalfLevel =
+                self.potentialLevel(
+                    halfPotential,
+                    reference: centerPotential
+                )
+
+            self.potentialEdgeLevel =
+                self.potentialLevel(
+                    edgePotential,
+                    reference: centerPotential
+                )
+
+            // ----------------------------------------------------
+            // Determine whether the field actually forms a
+            // decreasing gravity-well profile.
+            // ----------------------------------------------------
+
+            let centerMagnitude =
+                abs(centerPotential)
+
+            let quarterMagnitude =
+                abs(quarterPotential)
+
+            let halfMagnitude =
+                abs(halfPotential)
+
+            let edgeMagnitude =
+                abs(edgePotential)
+
+            let isFlat =
+                centerMagnitude < 1e-30 ||
+                (
+                    abs(centerMagnitude - edgeMagnitude)
+                    /
+                    max(centerMagnitude, 1e-30)
+                    < 0.01
+                )
+
+            let formsWell =
+                centerMagnitude > quarterMagnitude &&
+                quarterMagnitude > halfMagnitude &&
+                halfMagnitude > edgeMagnitude
+
+            if isFlat {
+
+                self.potentialStatus =
+                    "LOW / FLAT GRAVITY POTENTIAL"
+
+                self.potentialExplanation =
+                    "The QRTL potential changes very little from the center to the edge. A strong bowl-shaped spacetime deformation is therefore not expected."
+
+            } else if formsWell {
+
+                self.potentialStatus =
+                    "HIGH CENTER → LOW EDGE"
+
+                self.potentialExplanation =
+                    "The QRTL gravitational potential is strongest near the cluster center and decreases outward. This is the expected profile for a bowl-shaped gravity well."
+
+            } else {
+
+                self.potentialStatus =
+                    "POTENTIAL PROFILE DETECTED"
+
+                self.potentialExplanation =
+                    "The QRTL field has a measurable potential, but the radial profile is not strictly decreasing from the center to the edge."
+            }
+        }
+    }
+
+
+    // ============================================================
+    // MARK: - POTENTIAL LEVEL CLASSIFICATION
+    // ============================================================
+
+    private func potentialLevel(
+        _ potential: Double,
+        reference: Double
+    ) -> String {
+
+        let magnitude =
+            abs(potential)
+
+        let referenceMagnitude =
+            abs(reference)
+
+        guard referenceMagnitude > 1e-30 else {
+            return "LOW"
+        }
+
+        let fraction =
+            magnitude /
+            referenceMagnitude
+
+        if fraction >= 0.66 {
+            return "HIGH"
+        }
+
+        if fraction >= 0.33 {
+            return "MEDIUM"
+        }
+
+        return "LOW"
     }
 }
