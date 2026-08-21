@@ -124,6 +124,28 @@ import UIKit
 struct ContentView: View {
     
     // ============================================================
+    // MARK: - SIMPLE GRAVITY POTENTIAL DEBUG
+    // ============================================================
+
+    @State private var showPotentialDebug: Bool = true
+
+    @State private var potentialCenter: Double = 0.0
+    @State private var potentialQuarter: Double = 0.0
+    @State private var potentialHalf: Double = 0.0
+    @State private var potentialEdge: Double = 0.0
+
+    @State private var potentialCenterLevel: String = "UNKNOWN"
+    @State private var potentialQuarterLevel: String = "UNKNOWN"
+    @State private var potentialHalfLevel: String = "UNKNOWN"
+    @State private var potentialEdgeLevel: String = "UNKNOWN"
+
+    @State private var potentialStatus: String =
+        "Waiting for QRTL field"
+
+    @State private var potentialExplanation: String =
+        "The QRTL gravitational potential has not been sampled yet."
+    
+    // ============================================================
     // MARK: - PHYSICAL CLUSTER PARAMETERS
     // ============================================================
     
@@ -259,35 +281,9 @@ struct ContentView: View {
             // ====================================================
             
             VStack {
-                
-                Spacer()
-                
-                Toggle(
-                    isOn: $showPhotonPaths
-                ) {
-                    
-                    Label(
-                        "Smooth Photon Paths",
-                        systemImage: "wave.3.forward"
-                    )
-                    .labelStyle(
-                        .titleAndIcon
-                    )
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 16)
-                .foregroundColor(.white)
-                .background(
-                    .ultraThinMaterial,
-                    in: Capsule()
-                )
-                .tint(.pink)
-                .frame(maxWidth: 250)
-                
+           
                 HStack {
-                    
-                    Spacer()
-                    
+                 
                     Button {
                         
                         showControls = true
@@ -411,40 +407,52 @@ struct ContentView: View {
     // MARK: - COMPUTATION OVERLAY
     // ============================================================
     
+    // ============================================================
+    // MARK: - COMPUTATION OVERLAY
+    // ============================================================
+
     private var computationOverlay: some View {
-        
+
         VStack(
             alignment: .leading,
             spacing: 10
         ) {
-            
+
+            // ========================================================
+            // HEADER
+            // ========================================================
+
             HStack {
-                
+
                 Image(
                     systemName:
                         isRunning
                     ? "gearshape.2.fill"
                     : "checkmark.circle.fill"
                 )
-                
+
                 Text(
                     isRunning
                     ? "QRTL PHYSICS COMPUTATION"
                     : "QRTL COMPUTATION COMPLETE"
                 )
                 .font(.headline)
-                
+
                 Spacer()
             }
-            
+
             Divider()
-            
+
+            // ========================================================
+            // CURRENT PROCESSING STAGE
+            // ========================================================
+
             Text(
                 computationStage
             )
             .font(.subheadline)
             .fontWeight(.semibold)
-            
+
             Text(
                 computationDetail
             )
@@ -454,60 +462,174 @@ struct ContentView: View {
                 horizontal: false,
                 vertical: true
             )
-            
+
             ProgressView(
                 value:
                     computationProgress
             )
-            
+
             HStack {
-                
+
                 Text("Progress")
-                
+
                 Spacer()
-                
+
                 Text(
                     "\(Int(computationProgress * 100))%"
                 )
             }
             .font(.caption)
-            
+
             Divider()
-            
+
+            // ========================================================
+            // PHOTON PROCESSING
+            // ========================================================
+
             computationRow(
                 "Photons created",
                 "\(photonsCreated)"
             )
-            
+
             computationRow(
                 "Photons traced",
                 "\(photonsTraced)"
             )
-            
+
             computationRow(
                 "Projection hits",
                 "\(projectionHits)"
             )
-            
+
             computationRow(
                 "Path points",
                 "\(photonPathPoints)"
             )
-            
+
             computationRow(
                 "Max QRTL influence",
                 String(
-                    format: "%.5g",
+                    format:
+                        "%.5g",
                     maximumQRTLInfluence
                 )
             )
-            
+
             computationRow(
                 "Elapsed",
                 String(
-                    format: "%.1f s",
+                    format:
+                        "%.1f s",
                     computationElapsed
                 )
+            )
+
+            Divider()
+
+            // ========================================================
+            // QRTL GRAVITY POTENTIAL
+            // ========================================================
+
+            HStack {
+
+                Image(
+                    systemName:
+                        "arrow.down.circle.fill"
+                )
+
+                Text(
+                    "QRTL GRAVITY POTENTIAL"
+                )
+                .font(.subheadline)
+                .fontWeight(.bold)
+
+                Spacer()
+            }
+
+            // --------------------------------------------------------
+            // OVERALL POTENTIAL STATUS
+            // --------------------------------------------------------
+
+            Text(
+                potentialStatus
+            )
+            .font(.caption)
+            .fontWeight(.bold)
+
+            Text(
+                potentialExplanation
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(
+                horizontal: false,
+                vertical: true
+            )
+
+            // --------------------------------------------------------
+            // POTENTIAL BY RADIUS
+            // --------------------------------------------------------
+
+            potentialLevelRow(
+                "Center",
+                level:
+                    potentialCenterLevel,
+                value:
+                    potentialCenter
+            )
+
+            potentialLevelRow(
+                "25% radius",
+                level:
+                    potentialQuarterLevel,
+                value:
+                    potentialQuarter
+            )
+
+            potentialLevelRow(
+                "50% radius",
+                level:
+                    potentialHalfLevel,
+                value:
+                    potentialHalf
+            )
+
+            potentialLevelRow(
+                "Edge",
+                level:
+                    potentialEdgeLevel,
+                value:
+                    potentialEdge
+            )
+
+            // --------------------------------------------------------
+            // INTERPRETATION
+            // --------------------------------------------------------
+
+            Text(
+                "Expected gravity-well pattern:"
+            )
+            .font(.caption2)
+            .fontWeight(.semibold)
+
+            Text(
+                "HIGH at center → " +
+                "MEDIUM farther out → " +
+                "LOW at edge"
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            Text(
+                "If all four values are the same, " +
+                "the physical potential is flat and " +
+                "the spacetime surface cannot form a bowl."
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(
+                horizontal: false,
+                vertical: true
             )
         }
         .padding(16)
@@ -516,9 +638,10 @@ struct ContentView: View {
         )
         .background(
             .ultraThinMaterial,
-            in: RoundedRectangle(
-                cornerRadius: 18
-            )
+            in:
+                RoundedRectangle(
+                    cornerRadius: 18
+                )
         )
         .foregroundStyle(.white)
         .padding(.top, 55)
@@ -527,6 +650,33 @@ struct ContentView: View {
             maxHeight: .infinity,
             alignment: .top
         )
+    }
+    private func potentialLevelRow(
+        _ name: String,
+        level: String,
+        value: Double
+    ) -> some View {
+
+        HStack {
+
+            Text(name)
+
+            Spacer()
+
+            Text(level)
+                .fontWeight(.bold)
+
+            Text(
+                String(
+                    format:
+                        "%.2e",
+                    value
+                )
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .font(.caption)
     }
     
     // ============================================================
