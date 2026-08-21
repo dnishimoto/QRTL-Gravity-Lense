@@ -12,19 +12,34 @@ import simd
 // GLOBULAR CLUSTER DENSITY SOURCE PROTOCOL
 // ============================================================
 
+import Foundation
+import simd
+
 protocol GlobularClusterDensitySource {
 
-    // ========================================================
-    // CONTINUOUS MASS DENSITY
-    // ========================================================
+    // ============================================================
+    // MASS DENSITY
+    // ============================================================
 
     func density(
         at position: SIMD3<Float>
     ) -> Float
 
-    // ========================================================
-    // CLUSTER DENSITY PROPERTIES
-    // ========================================================
+    // ============================================================
+    // DIRECT GRAVITATIONAL FIELD
+    // ============================================================
+
+    func gravitationalPotential(
+        at position: SIMD3<Float>
+    ) -> Double
+
+    func gravitationalAcceleration(
+        at position: SIMD3<Float>
+    ) -> SIMD3<Float>
+
+    // ============================================================
+    // CLUSTER PROPERTIES
+    // ============================================================
 
     var totalMass: Float { get }
 
@@ -34,15 +49,7 @@ protocol GlobularClusterDensitySource {
 
     var fieldRadiusMeters: Float { get }
 
-    // ========================================================
-    // GRAVITY MEASUREMENT
-    // ========================================================
-
     var starCount: Int { get }
-
-    // ========================================================
-    // MASS PER SOURCE STAR
-    // ========================================================
 
     var perStarMassKg: Float { get }
 }

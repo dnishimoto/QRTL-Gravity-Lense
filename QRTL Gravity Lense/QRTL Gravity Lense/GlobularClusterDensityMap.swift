@@ -1,30 +1,25 @@
-//
-//  GlobularClusterDensityMap.swift
-//  QRTL Gravity Lense
-//
-//  Continuous spherical mass model for the globular cluster.
-//
-//  IMPORTANT:
-//  The star positions are retained for visualization/source photons,
-//  but gravitational density is NOT calculated by looking up a
-//  microscopic spatial cell.
-//
-//  The gravitational field uses a continuous Plummer profile:
-//
-//      rho(r) = (3 M / 4 pi a^3) (1 + r^2/a^2)^(-5/2)
-//
-//      M(r) = M r^3 / (r^2 + a^2)^(3/2)
-//
-//      Phi(r) = -G M / sqrt(r^2 + a^2)
-//
-//  This guarantees a nonzero, continuous interior field.
-//
+
 
 import Foundation
 import simd
 
 // ============================================================
-// GLOBULAR CLUSTER DENSITY MAP
+// GLOBULAR CLUSTER DENSITY SOURCE
+// ============================================================
+//
+// The source represents a globular cluster using:
+//
+//     • discrete stellar positions
+//     • equal mass per source star
+//     • softened 3D gravitational summation
+//     • continuous density evaluation
+//
+// The gravitational field is NOT reconstructed from a radial
+// shell integral and does NOT assume spherical symmetry.
+//
+// Every star contributes directly to the field at every query
+// position.
+//
 // ============================================================
 
 final class GlobularClusterDensityMap:
@@ -49,142 +44,76 @@ final class GlobularClusterDensityMap:
 
     // ========================================================
     // PLUMMER SCALE
+    // ========================================================
     //
-    // This controls the concentration of the continuous
-    // spherical mass distribution.
+    // Retained as the characteristic smooth scale of the
+    // cluster.
     //
-    // A smaller value produces a denser center.
+    // It is useful for diagnostics and smooth density
+    // normalization, but the gravitational field below is
+    // generated directly from the individual stars.
+    //
     // ========================================================
 
     let plummerScaleMeters: Double
 
     // ========================================================
     // STAR POSITIONS
+    // ========================================================
     //
-    // Retained for rendering and photon-source generation.
-    // They are NOT used as a discrete density lookup.
+    // These positions are now ACTIVE gravitational sources.
+    //
+    // Every position contributes:
+    //
+    //     Phi_i = -G m_i / sqrt(d^2 + epsilon^2)
+    //
+    // and
+    //
+    //     a_i =
+    //     -G m_i d /
+    //     (d^2 + epsilon^2)^(3/2)
+    //
     // ========================================================
 
     let starPositions: [SIMD3<Float>]
 
     // ========================================================
     // LEGACY CELL SIZE
+    // ========================================================
     //
-    // Kept only for source compatibility with code that may
-    // still reference this property.
+    // Retained for source compatibility.
     //
-    // It is NO LONGER used to calculate gravitational density.
+    // It is NOT used as a density-grid lookup.
+    //
     // ========================================================
 
-    let cellSizeMeters: Float = 1.0e9
+    let cellSizeMeters: Float =
+        1.0e9
 
-
-
-    var totalMass: Float {
-
-        let value =
-            Float(clusterMassKg)
-
-        guard
-            value.isFinite,
-            value >= 0.0
-        else {
-            return 0.0
-        }
-
-        return value
-    }
-
-    // ============================================================
-    // MAXIMUM DENSITY
-    // ============================================================
+    // ========================================================
+    // GRAVITATIONAL SOFTENING
+    // ========================================================
     //
-    // Plummer central density:
+    // Prevents singularities when a query point is very close
+    // to a source star.
     //
-    // rho(0) = 3M / (4πa³)
+    // This is now the spatial resolution parameter for the
+    // stellar gravitational field.
     //
-    // ============================================================
+    // ========================================================
 
-    var maximumDensity: Float {
+    let softeningLengthMeters: Double
 
-        let a =
-            max(
-                plummerScaleMeters,
-                1.0
-            )
-
-        let mass =
-            clusterMassKg
-
-        guard
-            mass.isFinite,
-            mass > 0.0
-        else {
-            return 0.0
-        }
-
-        let value =
-            3.0 * mass /
-            (
-                4.0 *
-                Double.pi *
-                a *
-                a *
-                a
-            )
-
-        guard
-            value.isFinite,
-            value >= 0.0
-        else {
-            return 0.0
-        }
-
-        return Float(value)
-    }
-
-    // ============================================================
-    // INTEGRATED DENSITY
-    // ============================================================
+    // ========================================================
+    // MASS PER STAR
+    // ========================================================
     //
-    // ∫ρ dV = total cluster mass
+    // Each source star receives an equal fraction of the
+    // total cluster mass.
     //
-    // ============================================================
-
-    var integratedDensity: Float {
-
-        return totalMass
-    }
-
-    // ============================================================
-    // FIELD RADIUS
-    // ============================================================
-
-    var fieldRadiusMeters: Float {
-
-        let value =
-            clusterRadiusMeters
-
-        guard
-            value.isFinite,
-            value > 0.0
-        else {
-            return 0.0
-        }
-
-        return value
-    }
-
-    // ============================================================
-    // MASS PER SOURCE STAR
-    // ============================================================
+    //     m_star = M / N
     //
-    // Each rendered/source star represents:
-    //
-    //     total cluster mass / number of stars
-    //
-    // This does NOT replace the continuous Plummer field.
-    // ============================================================
+    // ========================================================
 
     var perStarMassKg: Float {
 
@@ -210,11 +139,111 @@ final class GlobularClusterDensityMap:
         return Float(value)
     }
 
+    // ========================================================
+    // TOTAL MASS
+    // ========================================================
+
+    var totalMass: Float {
+
+        guard
+            clusterMassKg.isFinite,
+            clusterMassKg >= 0.0
+        else {
+            return 0.0
+        }
+
+        return Float(clusterMassKg)
+    }
+
+    // ========================================================
+    // FIELD RADIUS
+    // ========================================================
+
+    var fieldRadiusMeters: Float {
+
+        guard
+            clusterRadiusMeters.isFinite,
+            clusterRadiusMeters > 0.0
+        else {
+            return 0.0
+        }
+
+        return clusterRadiusMeters
+    }
+
+    // ========================================================
+    // MAXIMUM DENSITY
+    // ========================================================
+    //
+    // For visualization/normalization this is evaluated at
+    // the cluster center using the smooth Plummer profile.
+    //
+    // The actual gravitational field is NOT derived from this
+    // value.
+    //
+    // ========================================================
+
+    var maximumDensity: Float {
+
+        let a =
+            max(
+                plummerScaleMeters,
+                1.0
+            )
+
+        let mass =
+            clusterMassKg
+
+        guard
+            mass.isFinite,
+            mass > 0.0
+        else {
+            return 0.0
+        }
+
+        let value =
+            3.0 *
+            mass /
+            (
+                4.0 *
+                Double.pi *
+                a *
+                a *
+                a
+            )
+
+        guard
+            value.isFinite,
+            value >= 0.0
+        else {
+            return 0.0
+        }
+
+        return Float(value)
+    }
+
+    // ========================================================
+    // INTEGRATED DENSITY
+    // ========================================================
+    //
+    // The integrated physical mass represented by the source.
+    //
+    // ========================================================
+
+    var integratedDensity: Float {
+        return totalMass
+    }
+
+    // ========================================================
+    // INITIALIZER
+    // ========================================================
+
     init(
         clusterMassKg: Double,
         clusterRadiusMeters: Float,
         starPositions: [SIMD3<Float>],
-        plummerScaleFraction: Double = 0.30
+        plummerScaleFraction: Double = 0.30,
+        softeningLengthMeters: Double? = nil
     ) {
 
         self.clusterMassKg =
@@ -250,16 +279,34 @@ final class GlobularClusterDensityMap:
                 safeFraction,
                 1.0
             )
+
+        // ----------------------------------------------------
+        // SOFTENING
+        // ----------------------------------------------------
+        //
+        // If no explicit value is supplied, use a fraction
+        // of the cluster radius.
+        //
+        // This avoids singular gravitational acceleration
+        // around individual stars.
+        //
+        // ----------------------------------------------------
+
+        let defaultSoftening =
+            Double(clusterRadiusMeters) *
+            0.01
+
+        self.softeningLengthMeters =
+            max(
+                softeningLengthMeters ??
+                defaultSoftening,
+                1.0
+            )
     }
 
-    // ============================================================
+    // ========================================================
     // CONVENIENCE INITIALIZER
-    // ============================================================
-    //
-    // Useful when the cluster has a radius and star count but
-    // positions are generated elsewhere.
-    //
-    // ============================================================
+    // ========================================================
 
     convenience init(
         clusterMassKg: Double,
@@ -278,6 +325,7 @@ final class GlobularClusterDensityMap:
                 Array(
                     repeating:
                         SIMD3<Float>.zero,
+
                     count:
                         max(
                             starCount,
@@ -287,9 +335,9 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
+    // ========================================================
     // RADIUS
-    // ============================================================
+    // ========================================================
 
     func radius(
         at position: SIMD3<Float>
@@ -309,8 +357,9 @@ final class GlobularClusterDensityMap:
             y * y +
             z * z
 
-        guard radiusSquared.isFinite,
-              radiusSquared >= 0.0
+        guard
+            radiusSquared.isFinite,
+            radiusSquared >= 0.0
         else {
             return 0.0
         }
@@ -320,9 +369,9 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
+    // ========================================================
     // NORMALIZED RADIUS
-    // ============================================================
+    // ========================================================
 
     func normalizedRadius(
         at position: SIMD3<Float>
@@ -339,7 +388,9 @@ final class GlobularClusterDensityMap:
                 clusterRadiusMeters
             )
 
-        guard clusterRadius > 0.0 else {
+        guard
+            clusterRadius > 0.0
+        else {
             return 0.0
         }
 
@@ -347,109 +398,156 @@ final class GlobularClusterDensityMap:
             clusterRadius
     }
 
-    // ============================================================
-    // CONTINUOUS MASS DENSITY
+    // ========================================================
+    // DISTANCE TO STAR
+    // ========================================================
+
+    private func distanceSquared(
+        from position: SIMD3<Float>,
+        to star: SIMD3<Float>
+    ) -> Double {
+
+        let dx =
+            Double(position.x) -
+            Double(star.x)
+
+        let dy =
+            Double(position.y) -
+            Double(star.y)
+
+        let dz =
+            Double(position.z) -
+            Double(star.z)
+
+        return
+            dx * dx +
+            dy * dy +
+            dz * dz
+    }
+
+    // ========================================================
+    // CONTINUOUS 3D STELLAR DENSITY
+    // ========================================================
     //
-    // Plummer density:
+    // Each star is represented by a softened localized kernel.
     //
-    // rho(r) =
+    // This means density now depends on:
     //
-    // 3M
-    // ───────────────
-    // 4 pi a^3
+    //     |position - starPosition|
     //
-    // ×
+    // rather than only:
     //
-    // (1 + r²/a²)^(-5/2)
+    //     |position|
     //
-    // This is evaluated continuously at every point.
-    // ============================================================
+    // Therefore the stellar distribution can create local
+    // structure in the gravity surface.
+    //
+    // ========================================================
 
     func density(
         at position: SIMD3<Float>
     ) -> Float {
 
-        let r =
-            radius(
-                at:
-                    position
-            )
-
-        let clusterRadius =
-            Double(
-                clusterRadiusMeters
-            )
-
-        guard r <= clusterRadius else {
-            return 0.0
-        }
-
-        let mass =
-            clusterMassKg
-
-        guard mass > 0.0,
-              mass.isFinite
+        guard
+            starCount > 0,
+            clusterMassKg > 0.0
         else {
             return 0.0
         }
 
-        let a =
+        let epsilon =
             max(
-                plummerScaleMeters,
+                softeningLengthMeters,
                 1.0
             )
 
-        let aSquared =
-            a * a
+        let epsilonSquared =
+            epsilon *
+            epsilon
 
-        let rSquared =
-            r * r
+        let starMass =
+            clusterMassKg /
+            Double(starCount)
 
-        let denominator =
-            pow(
-                1.0 +
-                rSquared /
-                aSquared,
-                2.5
-            )
-
-        guard denominator.isFinite,
-              denominator > 0.0
+        guard
+            starMass.isFinite,
+            starMass > 0.0
         else {
             return 0.0
         }
 
+        // ----------------------------------------------------
+        // Gaussian-like localized stellar kernel.
+        //
+        // This is used for the density visualization.
+        // The gravitational potential below uses the exact
+        // softened point-mass summation separately.
+        // ----------------------------------------------------
+
         let normalization =
-            3.0 *
-            mass /
+            starMass /
             (
-                4.0 *
-                Double.pi *
-                a *
-                a *
-                a
+                pow(
+                    2.0 * Double.pi,
+                    1.5
+                ) *
+                pow(
+                    epsilon,
+                    3.0
+                )
             )
 
-        let density =
-            normalization /
-            denominator
+        var totalDensity:
+            Double = 0.0
 
-        guard density.isFinite,
-              density >= 0.0
+        for star in starPositions {
+
+            let dSquared =
+                distanceSquared(
+                    from:
+                        position,
+                    to:
+                        star
+                )
+
+            guard
+                dSquared.isFinite
+            else {
+                continue
+            }
+
+            let exponent =
+                -0.5 *
+                dSquared /
+                epsilonSquared
+
+            let contribution =
+                normalization *
+                exp(exponent)
+
+            if contribution.isFinite,
+               contribution > 0.0 {
+
+                totalDensity +=
+                    contribution
+            }
+        }
+
+        guard
+            totalDensity.isFinite,
+            totalDensity >= 0.0
         else {
             return 0.0
         }
 
         return Float(
-            density
+            totalDensity
         )
     }
 
-    // ============================================================
+    // ========================================================
     // PHYSICAL MASS DENSITY
-    //
-    // This intentionally does NOT perform a cell lookup.
-    // ============================================================
+    // ========================================================
 
     func physicalMassDensity(
         at position: SIMD3<Float>
@@ -463,8 +561,9 @@ final class GlobularClusterDensityMap:
                 )
             )
 
-        guard value.isFinite,
-              value >= 0.0
+        guard
+            value.isFinite,
+            value >= 0.0
         else {
             return 0.0
         }
@@ -472,9 +571,9 @@ final class GlobularClusterDensityMap:
         return value
     }
 
-    // ============================================================
+    // ========================================================
     // CENTER DENSITY
-    // ============================================================
+    // ========================================================
 
     var centerDensity: Double {
 
@@ -484,11 +583,9 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
+    // ========================================================
     // NORMALIZED DENSITY
-    //
-    // 0 ... 1 relative to center density.
-    // ============================================================
+    // ========================================================
 
     func normalizedDensity(
         at position: SIMD3<Float>
@@ -500,21 +597,26 @@ final class GlobularClusterDensityMap:
                     position
             )
 
-        let center =
-            centerDensity
+        let maximum =
+            Double(
+                maximumDensity
+            )
 
-        guard center > 0.0,
-              center.isFinite,
-              current.isFinite
+        guard
+            maximum > 0.0,
+            maximum.isFinite,
+            current.isFinite
         else {
             return 0.0
         }
 
         let normalized =
             current /
-            center
+            maximum
 
-        guard normalized.isFinite else {
+        guard
+            normalized.isFinite
+        else {
             return 0.0
         }
 
@@ -529,96 +631,83 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
+    // ========================================================
     // ENCLOSED MASS
+    // ========================================================
     //
-    // Plummer enclosed mass:
+    // Unlike the old Plummer implementation, this is now
+    // determined directly from the stellar positions.
     //
-    // M(r) =
+    // A star contributes its mass when it lies inside the
+    // requested radius.
     //
-    // M r³
-    // ───────────────
-    // (r² + a²)^(3/2)
-    //
-    // This is continuous everywhere.
-    // ============================================================
+    // ========================================================
 
     func enclosedMass(
         at position: SIMD3<Float>
     ) -> Double {
 
-        let r =
+        let queryRadius =
             radius(
                 at:
                     position
             )
 
-        guard r > 0.0 else {
-            return 0.0
-        }
-
-        let clusterRadius =
-            Double(
-                clusterRadiusMeters
-            )
-
-        if r >= clusterRadius {
-            return clusterMassKg
-        }
-
-        let a =
-            max(
-                plummerScaleMeters,
-                1.0
-            )
-
-        let rSquared =
-            r * r
-
-        let aSquared =
-            a * a
-
-        let denominator =
-            pow(
-                rSquared +
-                aSquared,
-                1.5
-            )
-
-        guard denominator.isFinite,
-              denominator > 0.0
+        guard
+            queryRadius > 0.0,
+            starCount > 0
         else {
             return 0.0
         }
 
-        let mass =
-            clusterMassKg *
-            r *
-            r *
-            r /
-            denominator
+        let starMass =
+            clusterMassKg /
+            Double(starCount)
 
-        guard mass.isFinite,
-              mass >= 0.0
+        var enclosedMass:
+            Double = 0.0
+
+        for star in starPositions {
+
+            let starRadius =
+                radius(
+                    at:
+                        star
+                )
+
+            if starRadius <= queryRadius {
+
+                enclosedMass +=
+                    starMass
+            }
+        }
+
+        guard
+            enclosedMass.isFinite
         else {
             return 0.0
         }
 
         return min(
-            mass,
+            max(
+                enclosedMass,
+                0.0
+            ),
             clusterMassKg
         )
     }
 
-    // ============================================================
+    // ========================================================
     // ENCLOSED MASS FRACTION
-    // ============================================================
+    // ========================================================
 
     func enclosedMassFraction(
         at position: SIMD3<Float>
     ) -> Double {
 
-        guard clusterMassKg > 0.0 else {
+        guard
+            clusterMassKg > 0.0
+        else {
             return 0.0
         }
 
@@ -632,7 +721,9 @@ final class GlobularClusterDensityMap:
             mass /
             clusterMassKg
 
-        guard fraction.isFinite else {
+        guard
+            fraction.isFinite
+        else {
             return 0.0
         }
 
@@ -645,181 +736,239 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
-    // GRAVITATIONAL POTENTIAL
+    // ========================================================
+    // 3D GRAVITATIONAL POTENTIAL
+    // ========================================================
     //
-    // Plummer potential:
+    //     Phi(r) =
     //
-    // Phi(r) =
+    //       -G SUM[m_i /
+    //       sqrt(|r-r_i|^2 + epsilon^2)]
     //
-    //       -GM
-    // ─────────────────
-    // sqrt(r² + a²)
+    // This is the critical replacement for the old radial
+    // Plummer potential.
     //
-    // Unlike the previous sparse-grid implementation, the
-    // interior potential is NEVER zero merely because there
-    // isn't a star in a local cell.
-    // ============================================================
+    // ========================================================
 
     func gravitationalPotential(
         at position: SIMD3<Float>
     ) -> Double {
 
-        let r =
-            radius(
-                at:
-                    position
-            )
-
-        let mass =
-            clusterMassKg
-
-        guard mass > 0.0,
-              mass.isFinite
+        guard
+            starCount > 0,
+            clusterMassKg > 0.0
         else {
             return 0.0
         }
 
-        let a =
+        let starMass =
+            clusterMassKg /
+            Double(starCount)
+
+        let epsilon =
             max(
-                plummerScaleMeters,
+                softeningLengthMeters,
                 1.0
             )
 
-        let denominator =
-            sqrt(
-                r * r +
-                a * a
-            )
+        let epsilonSquared =
+            epsilon *
+            epsilon
 
-        guard denominator.isFinite,
-              denominator > 0.0
-        else {
-            return 0.0
+        var potential:
+            Double = 0.0
+
+        for star in starPositions {
+
+            let dSquared =
+                distanceSquared(
+                    from:
+                        position,
+                    to:
+                        star
+                )
+
+            guard
+                dSquared.isFinite
+            else {
+                continue
+            }
+
+            let denominator =
+                sqrt(
+                    dSquared +
+                    epsilonSquared
+                )
+
+            guard
+                denominator.isFinite,
+                denominator > 0.0
+            else {
+                continue
+            }
+
+            potential +=
+                -gravitationalConstant *
+                starMass /
+                denominator
         }
 
-        let potential = -gravitationalConstant *
-            mass /
-            denominator
-
-        guard potential.isFinite else {
+        guard
+            potential.isFinite
+        else {
             return 0.0
         }
 
         return potential
     }
 
-    // ============================================================
-    // GRAVITATIONAL ACCELERATION
+    // ========================================================
+    // 3D GRAVITATIONAL ACCELERATION
+    // ========================================================
     //
-    // a(r) =
+    //     a(r) =
     //
-    // -GM r
-    // ─────────────────────────
-    // (r² + a²)^(3/2)
+    //       -G SUM[
+    //          m_i (r-r_i)
+    //          /
+    //          (|r-r_i|² + epsilon²)^(3/2)
+    //       ]
     //
-    // This is continuous and finite at the center.
-    // ============================================================
+    // Every star contributes its own vector.
+    //
+    // ========================================================
 
     func gravitationalAcceleration(
         at position: SIMD3<Float>
     ) -> SIMD3<Float> {
 
-        let rSquared =
-            Double(
-                position.x
-            ) *
-            Double(
-                position.x
-            ) +
-            Double(
-                position.y
-            ) *
-            Double(
-                position.y
-            ) +
-            Double(
-                position.z
-            ) *
-            Double(
-                position.z
-            )
-
-        guard rSquared.isFinite else {
-            return .zero
-        }
-
-        let a =
-            max(
-                plummerScaleMeters,
-                1.0
-            )
-
-        let denominator =
-            pow(
-                rSquared +
-                a * a,
-                1.5
-            )
-
-        guard denominator.isFinite,
-              denominator > 0.0
+        guard
+            starCount > 0,
+            clusterMassKg > 0.0
         else {
             return .zero
         }
 
-        let scale =
-            -gravitationalConstant *
+        let starMass =
             clusterMassKg /
-            denominator
+            Double(starCount)
 
-        guard scale.isFinite else {
+        let epsilon =
+            max(
+                softeningLengthMeters,
+                1.0
+            )
+
+        let epsilonSquared =
+            epsilon *
+            epsilon
+
+        var acceleration =
+            SIMD3<Double>(
+                0.0,
+                0.0,
+                0.0
+            )
+
+        for star in starPositions {
+
+            let dx =
+                Double(position.x) -
+                Double(star.x)
+
+            let dy =
+                Double(position.y) -
+                Double(star.y)
+
+            let dz =
+                Double(position.z) -
+                Double(star.z)
+
+            let dSquared =
+                dx * dx +
+                dy * dy +
+                dz * dz
+
+            guard
+                dSquared.isFinite
+            else {
+                continue
+            }
+
+            let denominator =
+                pow(
+                    dSquared +
+                    epsilonSquared,
+                    1.5
+                )
+
+            guard
+                denominator.isFinite,
+                denominator > 0.0
+            else {
+                continue
+            }
+
+            let scale =
+                -gravitationalConstant *
+                starMass /
+                denominator
+
+            acceleration.x +=
+                scale * dx
+
+            acceleration.y +=
+                scale * dy
+
+            acceleration.z +=
+                scale * dz
+        }
+
+        guard
+            acceleration.x.isFinite,
+            acceleration.y.isFinite,
+            acceleration.z.isFinite
+        else {
             return .zero
         }
 
         return SIMD3<Float>(
-            Float(
-                scale *
-                Double(position.x)
-            ),
-            Float(
-                scale *
-                Double(position.y)
-            ),
-            Float(
-                scale *
-                Double(position.z)
-            )
+            Float(acceleration.x),
+            Float(acceleration.y),
+            Float(acceleration.z)
         )
     }
 
-    // ============================================================
+    // ========================================================
     // POTENTIAL GRADIENT
+    // ========================================================
     //
-    // ∇Phi = -acceleration
-    // ============================================================
+    //     grad(Phi) = -a
+    //
+    // ========================================================
 
     func potentialGradient(
         at position: SIMD3<Float>
     ) -> SIMD3<Float> {
 
         return -gravitationalAcceleration(
-                at:
-                    position
-            )
+            at:
+                position
+        )
     }
 
-    // ============================================================
+    // ========================================================
     // STAR POSITION ACCESS
-    // ============================================================
+    // ========================================================
 
     func starPosition(
         at index: Int
     ) -> SIMD3<Float>? {
 
-        guard starPositions.indices.contains(
-            index
-        )
+        guard
+            starPositions.indices.contains(
+                index
+            )
         else {
             return nil
         }
@@ -827,44 +976,51 @@ final class GlobularClusterDensityMap:
         return starPositions[index]
     }
 
-    // ============================================================
-    // STAR COUNT
-    // ============================================================
+    // ========================================================
+    // STAR COUNT ALIAS
+    // ========================================================
 
     var numberOfStars: Int {
-
         return starPositions.count
     }
 
-    // ============================================================
+    // ========================================================
     // DIAGNOSTIC SAMPLE
-    // ============================================================
+    // ========================================================
 
     struct DensitySample {
 
-        let position: SIMD3<Float>
+        let position:
+            SIMD3<Float>
 
-        let radiusMeters: Double
+        let radiusMeters:
+            Double
 
-        let normalizedRadius: Double
+        let normalizedRadius:
+            Double
 
-        let density: Double
+        let density:
+            Double
 
-        let normalizedDensity: Double
+        let normalizedDensity:
+            Double
 
-        let enclosedMassKg: Double
+        let enclosedMassKg:
+            Double
 
-        let enclosedMassFraction: Double
+        let enclosedMassFraction:
+            Double
 
-        let gravitationalPotential: Double
+        let gravitationalPotential:
+            Double
 
         let gravitationalAcceleration:
             SIMD3<Float>
     }
 
-    // ============================================================
+    // ========================================================
     // SAMPLE
-    // ============================================================
+    // ========================================================
 
     func sample(
         at position: SIMD3<Float>
@@ -951,11 +1107,9 @@ final class GlobularClusterDensityMap:
         )
     }
 
-    // ============================================================
-    // VERIFY THE CONTINUOUS FIELD
-    //
-    // Useful for diagnostics/debugging.
-    // ============================================================
+    // ========================================================
+    // DIAGNOSTIC SAMPLES
+    // ========================================================
 
     func diagnosticSamples()
         -> [DensitySample] {
@@ -994,5 +1148,82 @@ final class GlobularClusterDensityMap:
                     position
             )
         }
+    }
+
+    // ========================================================
+    // STAR FIELD DIAGNOSTIC
+    // ========================================================
+    //
+    // Returns the total gravitational contribution of all
+    // stars at a position.
+    //
+    // Useful for verifying that the field actually changes
+    // when the query point moves relative to the stars.
+    //
+    // ========================================================
+
+    func starFieldMagnitude(
+        at position: SIMD3<Float>
+    ) -> Float {
+
+        let acceleration =
+            gravitationalAcceleration(
+                at:
+                    position
+            )
+
+        let magnitude =
+            simd_length(
+                acceleration
+            )
+
+        guard
+            magnitude.isFinite
+        else {
+            return 0.0
+        }
+
+        return magnitude
+    }
+
+    // ========================================================
+    // VERIFY STAR-DRIVEN FIELD
+    // ========================================================
+    //
+    // Samples the potential at arbitrary positions.
+    //
+    // If the star distribution is asymmetric, these values
+    // will no longer be identical at equal radial distances.
+    //
+    // ========================================================
+
+    func potentialDifference(
+        between first: SIMD3<Float>,
+        and second: SIMD3<Float>
+    ) -> Double {
+
+        let p1 =
+            gravitationalPotential(
+                at:
+                    first
+            )
+
+        let p2 =
+            gravitationalPotential(
+                at:
+                    second
+            )
+
+        let difference =
+            p1 -
+            p2
+
+        guard
+            difference.isFinite
+        else {
+            return 0.0
+        }
+
+        return difference
     }
 }
