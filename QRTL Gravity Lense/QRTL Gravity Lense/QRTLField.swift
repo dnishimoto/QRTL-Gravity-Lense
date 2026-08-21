@@ -228,6 +228,28 @@ final class QRTLField {
             )
         )
     }
+    func radialCurvatureHeight(
+        at position: SIMD3<Float>
+    ) -> Float {
+
+        let radius = sqrt(
+            position.x * position.x +
+            position.z * position.z
+        )
+
+        let potential =
+            interpolateRadialPotential(
+                radius: Double(radius)
+            )
+
+        guard potential.isFinite else {
+            return 0.0
+        }
+
+        return spacetimeCurvatureHeight(
+            at : position
+        )
+    }
     // ============================================================
     // MARK: - BUILD SPATIAL GRAVITY VISUALIZATION
     // ============================================================
@@ -731,6 +753,7 @@ final class QRTLField {
             }
         }
     }
+
     // ============================================================
     // RADIAL GRAVITY LOOKUP TABLE
     // ============================================================
@@ -1021,7 +1044,7 @@ final class QRTLField {
     //
     // ============================================================
 
-    private func interpolateRadialPotential(
+    func interpolateRadialPotential(
         radius: Double
     ) -> Double {
 
