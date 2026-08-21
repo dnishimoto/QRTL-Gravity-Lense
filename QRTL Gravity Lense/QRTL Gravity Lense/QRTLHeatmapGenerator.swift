@@ -93,7 +93,7 @@ final class QRTLHeatmapGenerator {
 
     static func makeHeatmapImage(
         field: QRTLField,
-        size: Int = 256,
+        size: Int = 64,
         halfExtent: Double
     ) -> UIImage {
 

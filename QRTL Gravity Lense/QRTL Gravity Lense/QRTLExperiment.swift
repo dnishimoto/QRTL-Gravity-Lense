@@ -86,7 +86,7 @@ final class QRTLExperiment {
 
     private let clusterRadiusMeters: Double
 
-    private let starCount: Int = 3000
+    private let starCount: Int = 1000
 
     // ========================================================
     // STAR POSITIONS

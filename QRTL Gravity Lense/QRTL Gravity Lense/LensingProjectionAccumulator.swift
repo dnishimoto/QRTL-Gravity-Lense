@@ -36,7 +36,7 @@ final class LensingProjectionAccumulator {
     // =========================================================
 
     init(
-        resolution: Int = 256,
+        resolution: Int = 64,
         halfExtent: Float = 12.0
     ) {
 

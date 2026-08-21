@@ -930,7 +930,7 @@ struct ContentView: View {
                     let starPositions =
                         self.scene.generateGlobularClusterStarPositions(
                             starCount:
-                                3000,
+                                1000,
                             radiusMeters:
                                 Float(radiusMeters)
                         )
