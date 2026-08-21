@@ -312,25 +312,42 @@ final class QRTLField {
 
         switch (row, column) {
 
-        case (0, 0): return metric.g00
-        case (0, 1): return metric.g01
-        case (0, 2): return metric.g02
-        case (0, 3): return metric.g03
+        // ========================================================
+        // TIME-TIME
+        // ========================================================
 
-        case (1, 0): return metric.g10
-        case (1, 1): return metric.g11
-        case (1, 2): return metric.g12
-        case (1, 3): return metric.g13
+        case (0, 0):
+            return metric.g00
 
-        case (2, 0): return metric.g20
-        case (2, 1): return metric.g21
-        case (2, 2): return metric.g22
-        case (2, 3): return metric.g23
+        // ========================================================
+        // X-X
+        // ========================================================
 
-        case (3, 0): return metric.g30
-        case (3, 1): return metric.g31
-        case (3, 2): return metric.g32
-        case (3, 3): return metric.g33
+        case (1, 1):
+            return metric.g11
+
+        // ========================================================
+        // Y-Y
+        // ========================================================
+
+        case (2, 2):
+            return metric.g22
+
+        // ========================================================
+        // Z-Z
+        // ========================================================
+
+        case (3, 3):
+            return metric.g33
+
+        // ========================================================
+        // OFF-DIAGONAL TERMS
+        //
+        // The current QRTL metric is diagonal.
+        //
+        // g01 = g02 = g03 = ...
+        //      = g30 = g31 = g32 = 0
+        // ========================================================
 
         default:
             return 0.0
@@ -340,32 +357,37 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> QRTLSpacetimeMetric {
 
-        let metric = qrtlSpacetimeMetric(
-            at: position
-        )
+        let metric =
+            qrtlSpacetimeMetric(
+                at: position
+            )
+
+        // ============================================================
+        // INVERSE OF DIAGONAL METRIC
+        //
+        // For a diagonal metric:
+        //
+        // g^00 = 1 / g00
+        // g^11 = 1 / g11
+        // g^22 = 1 / g22
+        // g^33 = 1 / g33
+        //
+        // All off-diagonal components are zero.
+        // ============================================================
 
         return QRTLSpacetimeMetric(
 
-            g00: 1.0 / metric.g00,
-            g01: 0.0,
-            g02: 0.0,
-            g03: 0.0,
+            g00:
+                1.0 / metric.g00,
 
-            g10: 0.0,
-            g11: 1.0 / metric.g11,
-            g12: 0.0,
-            g13: 0.0,
+            g11:
+                1.0 / metric.g11,
 
-            g20: 0.0,
-            g21: 0.0,
-            g22: 1.0 / metric.g22,
-            g23: 0.0,
+            g22:
+                1.0 / metric.g22,
 
-            g30: 0.0,
-            g31: 0.0,
-            g32: 0.0,
-
-            g33: 1.0 / metric.g33
+            g33:
+                1.0 / metric.g33
         )
     }
     func qrtlMetricDerivative(
@@ -418,59 +440,49 @@ final class QRTLField {
         column: Int
     ) -> Float {
 
-        let metric = qrtlSpacetimeMetric(
-            at: position
-        )
+        let metric =
+            qrtlSpacetimeMetric(
+                at: position
+            )
 
         switch (row, column) {
+
+        // ========================================================
+        // TIME-TIME
+        // ========================================================
 
         case (0, 0):
             return metric.g00
 
-        case (0, 1):
-            return metric.g01
-
-        case (0, 2):
-            return metric.g02
-
-        case (0, 3):
-            return metric.g03
-
-        case (1, 0):
-            return metric.g10
+        // ========================================================
+        // X-X
+        // ========================================================
 
         case (1, 1):
             return metric.g11
 
-        case (1, 2):
-            return metric.g12
-
-        case (1, 3):
-            return metric.g13
-
-        case (2, 0):
-            return metric.g20
-
-        case (2, 1):
-            return metric.g21
+        // ========================================================
+        // Y-Y
+        // ========================================================
 
         case (2, 2):
             return metric.g22
 
-        case (2, 3):
-            return metric.g23
-
-        case (3, 0):
-            return metric.g30
-
-        case (3, 1):
-            return metric.g31
-
-        case (3, 2):
-            return metric.g32
+        // ========================================================
+        // Z-Z
+        // ========================================================
 
         case (3, 3):
             return metric.g33
+
+        // ========================================================
+        // OFF-DIAGONAL COMPONENTS
+        //
+        // Current QRTL spacetime metric is diagonal.
+        // Therefore:
+        //
+        // gμν = 0 when μ ≠ ν
+        // ========================================================
 
         default:
             return 0.0
@@ -480,37 +492,65 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> QRTLSpacetimeMetric {
 
-        let potential = gravitationalPotential(
-            at: position
-        )
+        // ============================================================
+        // QRTL GRAVITATIONAL POTENTIAL
+        // ============================================================
+
+        let potential =
+            gravitationalPotential(
+                at: position
+            )
+
+        // ============================================================
+        // DIMENSIONLESS POTENTIAL / c²
+        // ============================================================
 
         let phiOverC2 =
-            qrtlMetricCoupling * Float(potential) * inverseSpeedOfLightSquared
+            qrtlMetricCoupling *
+            Float(potential) *
+            inverseSpeedOfLightSquared
 
-        let temporal = -(1.0 + 2.0 * phiOverC2)
-        let spatial = 1.0 - 2.0 * phiOverC2
+        // ============================================================
+        // TEMPORAL METRIC COMPONENT
+        //
+        // Weak-field form:
+        //
+        // g00 = -(1 + 2Φ/c²)
+        // ============================================================
+
+        let temporal =
+            -(1.0 + 2.0 * phiOverC2)
+
+        // ============================================================
+        // SPATIAL METRIC COMPONENTS
+        //
+        // All three spatial directions must be valid.
+        //
+        // IMPORTANT:
+        // g22 must NOT be zero.
+        // ============================================================
+
+        let spatial =
+            1.0 -
+            phiOverC2
+
+        // ============================================================
+        // QRTL SPACETIME METRIC
+        // ============================================================
 
         return QRTLSpacetimeMetric(
 
-            g00: temporal,
-            g01: 0.0,
-            g02: 0.0,
-            g03: 0.0,
+            g00:
+                temporal,
 
-            g10: 0.0,
-            g11: spatial,
-            g12: 0.0,
-            g13: 0.0,
+            g11:
+                spatial,
 
-            g20: 0.0,
-            g21: 0.0,
-            g22: 0.0,
-            g23: 0.0,
+            g22:
+                spatial,
 
-            g30: 0.0,
-            g31: 0.0,
-            g32: 0.0,
-            g33: spatial
+            g33:
+                spatial
         )
     }
   
