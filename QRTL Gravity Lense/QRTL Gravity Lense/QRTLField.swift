@@ -73,8 +73,13 @@ final class QRTLField {
         299_792_458.0
 
     private var speedOfLightSquared: Float {
-        let c = speedOfLight
-        return Float(max(c * c, 1.0))
+
+        let c = Float(speedOfLight)
+
+        return max(
+            c * c,
+            Float(1.0)
+        )
     }
 
     // ========================================================
@@ -99,42 +104,337 @@ final class QRTLField {
         self.referenceDensity =
             max(
                 densitySource.maximumDensity,
-                0.000001
+                1.0e-30
             )
     }
+     // ============================================================
+    // NORMALIZED → PHYSICAL POSITION
+    //
+    // normalizedPosition:
+    //     0 = center
+    //     1 = physical cluster radius
+    //
+    // IMPORTANT:
+    // There must be ONLY ONE function with this name.
+    // ============================================================
 
-    func physicalPosition(
+    private func physicalPosition(
         from normalizedPosition: SIMD3<Float>
-    ) -> SIMD3<Double> {
+    ) -> SIMD3<Float> {
 
-        SIMD3<Double>(
-            Double(normalizedPosition.x) * physicalRadiusMeters,
-            Double(normalizedPosition.y) * physicalRadiusMeters,
-            Double(normalizedPosition.z) * physicalRadiusMeters
+        let radius: Float = max(
+            Float(physicalRadiusMeters),
+            1.0
+        )
+
+        return SIMD3<Float>(
+            normalizedPosition.x * radius,
+            normalizedPosition.y * radius,
+            normalizedPosition.z * radius
         )
     }
 
-    // MARK: - Mass Density
+    // ============================================================
+    // PHYSICAL MASS DENSITY
+    // ============================================================
 
     func massDensity(
         at normalizedPosition: SIMD3<Float>
     ) -> Float {
 
-        let physicalPosition =
-            physicalPosition(
-                from: normalizedPosition
-            )
-
-        let physicalPositionFloat =
-            SIMD3<Float>(
-                Float(physicalPosition.x),
-                Float(physicalPosition.y),
-                Float(physicalPosition.z)
-            )
-
-        return densitySource.density(
-            at: physicalPositionFloat
+        let position = physicalPosition(
+            from: normalizedPosition
         )
+
+        let density = densitySource.density(
+            at: position
+        )
+
+        guard density.isFinite else {
+            return 0.0
+        }
+
+        return max(density, 0.0)
+    }
+
+    // ============================================================
+    // NORMALIZED MASS DENSITY
+    // ============================================================
+
+    func normalizedDensity(
+        at normalizedPosition: SIMD3<Float>
+    ) -> Float {
+
+        let density = massDensity(
+            at: normalizedPosition
+        )
+
+        let reference = max(
+            referenceDensity,
+            Float(1.0e-30)
+        )
+
+        let value = density / reference
+
+        guard value.isFinite else {
+            return 0.0
+        }
+
+        return min(
+            max(value, 0.0),
+            1.0
+        )
+    }
+    // ============================================================
+    // QRTL SOURCE
+    // ============================================================
+
+    func qrtlSource(
+        at normalizedPosition: SIMD3<Float>
+    ) -> Float {
+
+        let density = normalizedDensity(
+            at: normalizedPosition
+        )
+
+        let source =
+            Float(parameters.alphaQ) * density
+
+        guard source.isFinite else {
+            return 0.0
+        }
+
+        return max(source, 0.0)
+    }
+
+    // ============================================================
+    // BOLGARINO FLUX
+    // ============================================================
+
+    func bolgarinoFlux(
+        at normalizedPosition: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let r =
+            simd_length(
+                normalizedPosition
+            )
+
+        guard r > 1.0e-6 else {
+            return .zero
+        }
+
+        let direction =
+            normalizedPosition / r
+
+        let source =
+            qrtlSource(
+                at: normalizedPosition
+            )
+
+        let velocity =
+            max(
+                Float(parameters.qrtlVelocity),
+                1.0e-6
+            )
+
+        return direction *
+            source *
+            velocity
+    }
+    // ============================================================
+    // QRTL CURRENT DENSITY
+    // ============================================================
+
+    func qrtlEnergyDensity(
+        at normalizedPosition: SIMD3<Float>
+    ) -> Float {
+
+        let source =
+            qrtlSource(
+                at: normalizedPosition
+            )
+
+        let velocity =
+            max(
+                Float(parameters.qrtlVelocity),
+                1.0e-6
+            )
+
+        let current =
+            qrtlCurrent(
+                at: normalizedPosition
+            )
+
+        let kineticEnergy =
+            Float(0.5) *
+            source *
+            velocity *
+            velocity
+
+        let electromagneticEnergy =
+            Float(0.5) *
+            max(
+                Float(parameters.electromagneticCoupling),
+                0.0
+            ) *
+            current *
+            current
+
+        let energy =
+            kineticEnergy +
+            electromagneticEnergy
+
+        guard energy.isFinite else {
+            return 0.0
+        }
+
+        return max(
+            energy,
+            0.0
+        )
+    }
+
+    // ============================================================
+    // QRTL CURRENT
+    // ============================================================
+
+    func qrtlCurrent(
+        at normalizedPosition: SIMD3<Float>
+    ) -> Float {
+
+        simd_length(
+            qrtlCurrentDensity(
+                at: normalizedPosition
+            )
+        )
+    }
+
+    func gravitationalPotential(
+        at normalizedPosition: SIMD3<Float>,
+        effectiveEnergyDensity: Float? = nil
+    ) -> Float {
+
+        let physical = physicalPosition(
+            from: normalizedPosition
+        )
+
+        let r = max(
+            simd_length(physical),
+            Float(1.0)
+        )
+
+        let energyDensity =
+            effectiveEnergyDensity ??
+            qrtlEnergyDensity(
+                at: normalizedPosition
+            )
+
+        let c2 = max(
+            speedOfLightSquared,
+            Float(1.0)
+        )
+
+        let massEquivalent =
+            energyDensity / c2
+
+        let potential =
+            -gravitationalConstant *
+            massEquivalent /
+            r
+
+        guard potential.isFinite else {
+            return 0.0
+        }
+
+        return potential
+    }
+    // ============================================================
+    // INDEX GRADIENT
+    // ============================================================
+
+    func indexGradient(
+        at normalizedPosition: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let radius =
+            max(
+                simd_length(
+                    normalizedPosition
+                ),
+                1.0e-4
+            )
+
+        let h =
+            max(
+                radius * 0.0025,
+                1.0e-4
+            )
+
+        var gradient =
+            SIMD3<Float>.zero
+
+        for axis in 0..<3 {
+
+            var plus =
+                normalizedPosition
+
+            var minus =
+                normalizedPosition
+
+            plus[axis] += h
+            minus[axis] -= h
+
+            let phiPlus =
+                gravitationalPotential(
+                    at: plus
+                )
+
+            let phiMinus =
+                gravitationalPotential(
+                    at: minus
+                )
+
+            gradient[axis] =
+                (
+                    phiPlus -
+                    phiMinus
+                ) /
+                (
+                    2.0 * h
+                )
+        }
+
+        return gradient
+    }
+
+    
+ 
+   
+    // ============================================================
+    // QRTL LENSING ACCELERATION
+    // ============================================================
+
+    func qrtlLensingAcceleration(
+        at normalizedPosition: SIMD3<Float>,
+        direction: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let gradient =
+            indexGradient(
+                at: normalizedPosition
+            )
+
+        let transverse =
+            gradient -
+            simd_dot(
+                gradient,
+                direction
+            ) *
+            direction
+
+        return -transverse *
+            Float(parameters.chiQ)
     }
 
     // ========================================================
@@ -218,6 +518,23 @@ final class QRTLField {
         }
 
         return scale
+    }
+    func qrtlCurrentDensity(
+        at position: SIMD3<Float>
+    ) -> SIMD3<Float> {
+
+        let flux =
+            bolgarinoFlux(
+                at: position
+            )
+
+        let velocity =
+            max(
+                Float(parameters.qrtlVelocity),
+                1.0
+            )
+
+        return flux / velocity
     }
     func diagnoseQRTLField(
         at position: SIMD3<Float>
@@ -798,55 +1115,9 @@ final class QRTLField {
     // NORMALIZED DENSITY
     // ========================================================
 
-    func normalizedDensity(
-        at position: SIMD3<Float>
-    ) -> Float {
+   
 
-        let density =
-            densitySource.density(
-                at: position
-            )
-
-        guard density.isFinite else {
-            return 0.0
-        }
-
-        let normalized =
-            density / referenceDensity
-
-        guard normalized.isFinite else {
-            return 0.0
-        }
-
-        return min(
-            max(normalized, 0.0),
-            1.0
-        )
-    }
-
-    // ========================================================
-    // QRTL SOURCE
-    // ========================================================
-
-    func qrtlSource(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        let density =
-            normalizedDensity(
-                at: position
-            )
-
-        let source =
-            Float(parameters.alphaQ) *
-            density
-
-        guard source.isFinite else {
-            return 0.0
-        }
-
-        return max(source, 0.0)
-    }
+ 
 
     // ========================================================
     // QRTL INFLUENCE
@@ -892,83 +1163,7 @@ final class QRTLField {
         return direction * strength
     }
 
-    // ========================================================
-    // BOLGARINO RADIAL FLOW
-    // ========================================================
 
-    func bolgarinoFlux(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let radiusSquared =
-            simd_length_squared(position)
-
-        guard radiusSquared.isFinite,
-              radiusSquared > 0.000001
-        else {
-            return .zero
-        }
-
-        let radius =
-            sqrt(radiusSquared)
-
-        let radialDirection =
-            position / radius
-
-        let source =
-            qrtlSource(
-                at: position
-            )
-
-        let falloff =
-            1.0 /
-            max(radiusSquared, 0.01)
-
-        let magnitude =
-            source * falloff
-
-        guard magnitude.isFinite else {
-            return .zero
-        }
-
-        return radialDirection * magnitude
-    }
-
-    // ========================================================
-    // QRTL CURRENT DENSITY
-    // ========================================================
-
-    func qrtlCurrentDensity(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let flux =
-            bolgarinoFlux(
-                at: position
-            )
-
-        let coupling =
-            Float(
-                parameters.electromagneticCoupling
-            )
-
-        return flux * coupling
-    }
-
-    // ========================================================
-    // QRTL CURRENT
-    // ========================================================
-
-    func qrtlCurrent(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        simd_length(
-            qrtlCurrentDensity(
-                at: position
-            )
-        )
-    }
 
     // ========================================================
     // MAGNETIC FIELD
@@ -1146,40 +1341,7 @@ final class QRTLField {
         )
     }
 
-    // ========================================================
-    // QRTL ENERGY DENSITY
-    // ========================================================
-
-    func qrtlEnergyDensity(
-        at position: SIMD3<Float>
-    ) -> Float {
-
-        let source =
-            qrtlSource(
-                at: position
-            )
-
-        let flux =
-            bolgarinoFlux(
-                at: position
-            )
-
-        let fluxMagnitude =
-            simd_length(flux)
-
-        let energy =
-            source *
-            fluxMagnitude
-
-        guard energy.isFinite else {
-            return 0.0
-        }
-
-        return max(
-            energy,
-            0.0
-        )
-    }
+ 
 
     // ========================================================
     // EFFECTIVE ENERGY DENSITY
@@ -1768,54 +1930,7 @@ final class QRTLField {
         )
     }
 
-    // ========================================================
-    // TOTAL INDEX GRADIENT
-    // ========================================================
-    //
-    // EM photon influence has been removed.
-    //
-    // This method is retained for compatibility.
-    //
-    // ========================================================
 
-    func indexGradient(
-        at position: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let gradient =
-            gravitationalPotentialGradient(
-                at: position
-            )
-
-        let result =
-            -2.0 *
-            gradient /
-            speedOfLightSquared
-
-        guard result.x.isFinite,
-              result.y.isFinite,
-              result.z.isFinite
-        else {
-            return .zero
-        }
-
-        return result
-    }
-
-    // ========================================================
-    // COMPATIBILITY WRAPPER
-    // ========================================================
-
-    func qrtlLensingAcceleration(
-        at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        einsteinPhotonBendingAcceleration(
-            at: position,
-            direction: photonDirection
-        )
-    }
 
     // ========================================================
     // COMPATIBILITY WRAPPER
@@ -1834,22 +1949,7 @@ final class QRTLField {
         )
     }
 
-    // ========================================================
-    // QRTL LENSING STRENGTH
-    // ========================================================
-
-    func qrtlLensingStrength(
-        at position: SIMD3<Float>,
-        direction photonDirection: SIMD3<Float>
-    ) -> Float {
-
-        simd_length(
-            einsteinPhotonBendingAcceleration(
-                at: position,
-                direction: photonDirection
-            )
-        )
-    }
+  
 
     // ========================================================
     // IMPACT PARAMETER

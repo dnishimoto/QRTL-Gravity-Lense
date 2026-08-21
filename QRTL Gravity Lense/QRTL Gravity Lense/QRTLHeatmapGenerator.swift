@@ -105,13 +105,7 @@ final class QRTLHeatmapGenerator {
             0.0
 
         // --------------------------------------------------------
-        // HEATMAP SAMPLING
-        //
-        // FIXED: `y` previously reused `i` (the same loop variable
-        // driving `x`), so every sampled position had y == x, and
-        // the field was only ever varied along one true screen
-        // axis (crossed with z from `j`) instead of a real (y, z)
-        // grid. `y` now correctly uses `j`, matching `z`.
+        // CURRENT-DENSITY HEATMAP SAMPLING
         // --------------------------------------------------------
 
         for j in 0..<resolution {
@@ -137,24 +131,24 @@ final class QRTLHeatmapGenerator {
                         Float(z)
                     )
 
-                let photonDirection =
-                    SIMD3<Float>(
-                        1.0,
-                        0.0,
-                        0.0
+                let currentDensity =
+                    field.qrtlCurrentDensity(
+                        at: position
                     )
 
-                let lensingStrength =
+                let currentMagnitude =
                     Double(
-                        field.qrtlLensingStrength(
-                            at: position,
-                            direction: photonDirection
+                        simd_length(
+                            currentDensity
                         )
                     )
 
                 let safeValue =
-                    lensingStrength.isFinite
-                    ? max(lensingStrength, 0.0)
+                    currentMagnitude.isFinite
+                    ? max(
+                        currentMagnitude,
+                        0.0
+                    )
                     : 0.0
 
                 samples[j][i] =
@@ -175,7 +169,6 @@ final class QRTLHeatmapGenerator {
         guard maximum.isFinite,
               maximum > 0.0
         else {
-
             return makeEmptyHeatmap(
                 resolution:
                     resolution
@@ -205,7 +198,7 @@ final class QRTLHeatmapGenerator {
         }
 
         // --------------------------------------------------------
-        // DRAW FIELD
+        // DRAW CURRENT-DENSITY FIELD
         // --------------------------------------------------------
 
         for j in 0..<resolution {
@@ -221,7 +214,6 @@ final class QRTLHeatmapGenerator {
 
                 guard normalized.isFinite
                 else {
-                    normalized = 0.0
                     continue
                 }
 
@@ -287,7 +279,6 @@ final class QRTLHeatmapGenerator {
 
         return image
     }
-
 
     // ============================================================
     // HEATMAP COLOR
