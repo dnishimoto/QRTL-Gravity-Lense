@@ -225,9 +225,19 @@ struct SpatialGravitySample {
 }
 
 struct RadialGravitySample {
+
     let radius: Double
+
+    /// QRTL energy density at this radius.
+    let energyDensity: Double
+
+    /// Effective mass density derived from QRTL energy density.
     let effectiveMassDensity: Double
+
+    /// Enclosed effective mass at this radius.
     let enclosedMass: Double
+
+    /// QRTL gravitational potential at this radius.
     let potential: Double
 }
 struct ControlsSheet:

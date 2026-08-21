@@ -40,7 +40,6 @@ final class QRTLField {
 
     private var spatialEnergyDensityGrid: [Float] = []
 
-    private let spatialGridResolution = 128
 
     var radialGravityTable: [RadialGravitySample] = []
     let densitySource: GlobularClusterDensityMap
@@ -229,15 +228,70 @@ final class QRTLField {
             )
         )
     }
+    // ============================================================
+    // MARK: - BUILD SPATIAL GRAVITY VISUALIZATION
+    // ============================================================
+    //
+    // VISUALIZATION ONLY
+    //
+    // This does NOT solve gravity.
+    //
+    // Authoritative QRTL gravity:
+    //
+    //     GlobularClusterDensityMap
+    //                 ↓
+    //             QRTLField
+    //                 ↓
+    //        radialGravityTable
+    //
+    // This function creates a 2-D X-Z visualization slice through
+    // that existing radial field.
+    //
+    // ============================================================
+
+    // ============================================================
+    // MARK: - BUILD SPATIAL GRAVITY FIELD
+    // ============================================================
+    //
+    // VISUALIZATION ONLY
+    //
+    // The radialGravityTable is the authoritative source.
+    //
+    // This function does NOT:
+    //
+    // • calculate stellar density
+    // • calculate gravitational potential
+    // • calculate QRTL energy density
+    // • solve gravity
+    // • construct a 3-D spatial field
+    //
+    // It simply converts the existing radial QRTL field into a
+    // 2-D X-Z visualization slice.
+    //
+    // Physics:
+    //
+    //     GlobularClusterDensityMap
+    //                ↓
+    //            QRTLField
+    //                ↓
+    //       radialGravityTable
+    //                ↓
+    //      buildSpatialGravityField()
+    //                ↓
+    //          2-D heatmap
+    //
+    // ============================================================
+
     private func buildSpatialGravityField() {
 
-        let resolution =
-            spatialGridResolution
+        // ============================================================
+        // VISUALIZATION RESOLUTION
+        // ============================================================
+
+        let resolution = 128
 
         let totalSamples =
-            resolution *
-            resolution *
-            resolution
+            resolution * resolution
 
         spatialPotentialGrid =
             [Float](
@@ -251,6 +305,19 @@ final class QRTLField {
                 count: totalSamples
             )
 
+        // ============================================================
+        // RADIAL TABLE VALIDATION
+        // ============================================================
+
+        guard radialGravityTable.count >= 2 else {
+
+            return
+        }
+
+        // ============================================================
+        // PHYSICAL CLUSTER RADIUS
+        // ============================================================
+
         let radius =
             Float(
                 QRTLUnits.parsecsToMeters(
@@ -258,98 +325,284 @@ final class QRTLField {
                 )
             )
 
+        guard radius > 0.0 else {
+
+            return
+        }
+
         let diameter =
             radius * 2.0
 
         let spacing =
             diameter /
-            Float(resolution - 1)
+            Float(
+                max(
+                    resolution - 1,
+                    1
+                )
+            )
+
+        // ============================================================
+        // X-Z VISUALIZATION SLICE
+        //
+        // Y = 0
+        //
+        // Every pixel corresponds to a radial distance from the
+        // center of the globular cluster.
+        // ============================================================
 
         for zIndex in 0..<resolution {
 
-            for yIndex in 0..<resolution {
+            let z =
+                -radius +
+                Float(zIndex) * spacing
 
-                for xIndex in 0..<resolution {
+            for xIndex in 0..<resolution {
 
-                    let x =
-                        -radius +
-                        Float(xIndex) * spacing
+                let x =
+                    -radius +
+                    Float(xIndex) * spacing
 
-                    let y =
-                        -radius +
-                        Float(yIndex) * spacing
+                let gridIndex =
+                    xIndex +
+                    zIndex * resolution
 
-                    let z =
-                        -radius +
-                        Float(zIndex) * spacing
+                // ====================================================
+                // RADIAL DISTANCE
+                // ====================================================
 
-                    let position =
-                        SIMD3<Float>(
-                            x,
-                            y,
-                            z
-                        )
+                let radialDistance =
+                    sqrt(
+                        x * x +
+                        z * z
+                    )
 
-                    let index =
-                        spatialGridIndex(
-                            x: xIndex,
-                            y: yIndex,
-                            z: zIndex
-                        )
+                // ====================================================
+                // OUTSIDE RADIAL FIELD
+                // ====================================================
 
-                    let energyDensity =
-                        qrtlEnergyDensity(
-                            at: position
-                        )
+                if radialDistance >= radius {
 
-                    spatialEnergyDensityGrid[index] =
-                        energyDensity.isFinite
-                        ? energyDensity
-                        : 0.0
+                    spatialPotentialGrid[gridIndex] = 0.0
+                    spatialEnergyDensityGrid[gridIndex] = 0.0
+
+                    continue
                 }
+
+                // ====================================================
+                // NORMALIZED RADIAL POSITION
+                //
+                // 0 = center
+                // 1 = cluster radius
+                // ====================================================
+
+                let normalizedRadius =
+                    radialDistance / radius
+
+                // ====================================================
+                // MAP RADIUS INTO RADIAL TABLE
+                // ============================================================
+
+                let tablePosition =
+                    normalizedRadius *
+                    Float(
+                        radialGravityTable.count - 1
+                    )
+
+                let lowerIndex =
+                    max(
+                        0,
+                        min(
+                            Int(floor(tablePosition)),
+                            radialGravityTable.count - 1
+                        )
+                    )
+
+                let upperIndex =
+                    min(
+                        lowerIndex + 1,
+                        radialGravityTable.count - 1
+                    )
+
+                let interpolation =
+                    tablePosition -
+                    Float(lowerIndex)
+
+                // ====================================================
+                // READ RADIAL GRAVITY TABLE
+                // ============================================================
+
+                let lower =
+                    radialGravityTable[lowerIndex]
+
+                let upper =
+                    radialGravityTable[upperIndex]
+
+                // ====================================================
+                // INTERPOLATE POTENTIAL
+                // ============================================================
+
+                let potential =
+                    lower.potential +
+                    (
+                        upper.potential -
+                        lower.potential
+                    ) * Double(interpolation)
+
+                // ====================================================
+                // INTERPOLATE ENERGY DENSITY
+                // ============================================================
+
+                let energyDensity =
+                    lower.energyDensity +
+                    (
+                        upper.energyDensity -
+                        lower.energyDensity
+                    ) * Double(interpolation)
+
+                // ====================================================
+                // STORE VISUALIZATION VALUES
+                // ============================================================
+
+                spatialPotentialGrid[gridIndex] =
+                    potential.isFinite
+                    ? Float(potential)
+                    : 0.0
+
+                spatialEnergyDensityGrid[gridIndex] =
+                    energyDensity.isFinite
+                    ? Float(energyDensity)
+                    : 0.0
             }
         }
+
+        // ============================================================
+        // CREATE VISUAL POTENTIAL SURFACE
+        // ============================================================
+        //
+        // This function now receives values that came directly from
+        // radialGravityTable.
+        //
+        // It does not perform another gravity calculation.
+        //
+        // ============================================================
 
         buildSpatialPotentialFromEnergyDensity(
             radius: radius,
             spacing: spacing
         )
     }
+    // ============================================================
+    // MARK: - SPATIAL GRID INDEX
+    // ============================================================
+    //
+    // Flattened 3D:
+    //
+    // index = x
+    //       + resolution * y
+    //       + resolution² * z
+    //
+    // X changes fastest.
+    // Y changes next.
+    // Z changes slowest.
+    //
+    // Total grid size:
+    //
+    // resolution × resolution × resolution
+    //
+    // ============================================================
+
     private func spatialGridIndex(
         x: Int,
-        y: Int,
-        z: Int
+        z: Int,
+        resolution: Int
     ) -> Int {
 
-        return
-            x +
-            spatialGridResolution *
-            (
-                y +
-                spatialGridResolution * z
-            )
+        return x + z * resolution
     }
+    
+    // ============================================================
+    // MARK: - BUILD SPATIAL POTENTIAL FROM RADIAL GRAVITY TABLE
+    // ============================================================
+    //
+    // VISUALIZATION ONLY
+    //
+    // IMPORTANT:
+    //
+    // This function does NOT solve the gravitational potential.
+    //
+    // The authoritative QRTL gravity calculation has already been
+    // performed when radialGravityTable was constructed:
+    //
+    //     GlobularClusterDensityMap
+    //                ↓
+    //            QRTLField
+    //                ↓
+    //       radialGravityTable
+    //
+    // This function simply samples the existing radial potential
+    // and places it into the 2-D X-Z visualization grid.
+    //
+    // Therefore there is:
+    //
+    //     NO 3-D grid
+    //     NO cell-mass calculation
+    //     NO pairwise gravity summation
+    //     NO O(N²) potential solver
+    //
+    // ============================================================
+
     private func buildSpatialPotentialFromEnergyDensity(
         radius: Float,
         spacing: Float
     ) {
 
-        let resolution =
-            spatialGridResolution
+        // ============================================================
+        // VISUALIZATION RESOLUTION
+        // ============================================================
+        //
+        // This is a visualization resolution only.
+        //
+        // 128 × 128 = 16,384 samples.
+        //
+        // It is NOT a QRTL physics resolution.
+        //
+        // ============================================================
+
+        let resolution = 128
 
         let totalSamples =
-            resolution *
-            resolution *
-            resolution
+            resolution * resolution
 
-        guard spatialEnergyDensityGrid.count == totalSamples else {
+        // ============================================================
+        // VALIDATE RADIAL TABLE
+        // ============================================================
+
+        guard radialGravityTable.count >= 2 else {
+
             spatialPotentialGrid =
                 [Float](
                     repeating: 0.0,
                     count: totalSamples
                 )
+
             return
         }
+
+        guard radius > 0.0 else {
+
+            spatialPotentialGrid =
+                [Float](
+                    repeating: 0.0,
+                    count: totalSamples
+                )
+
+            return
+        }
+
+        // ============================================================
+        // ALLOCATE 2-D POTENTIAL GRID
+        // ============================================================
 
         spatialPotentialGrid =
             [Float](
@@ -357,152 +610,124 @@ final class QRTLField {
                 count: totalSamples
             )
 
-        let G = 6.67430e-11
-        let c = 299_792_458.0
-
-        // Convert QRTL energy density to effective mass density.
+        // ============================================================
+        // SAMPLE RADIAL POTENTIAL
+        // ============================================================
         //
-        // rho_eff = u_Q / c²
+        // The X-Z plane passes through the center of the cluster.
         //
-        // The potential is then obtained by summing the contribution
-        // of every spatial cell.
-
-        let cellVolume =
-            Double(spacing) *
-            Double(spacing) *
-            Double(spacing)
-
-        let cellMasses =
-            spatialEnergyDensityGrid.map { energyDensity -> Double in
-
-                guard energyDensity.isFinite,
-                      energyDensity > 0.0
-                else {
-                    return 0.0
-                }
-
-                let massDensity =
-                    Double(energyDensity) /
-                    (c * c)
-
-                return massDensity *
-                       cellVolume
-            }
+        // Y = 0
+        //
+        // Because the QRTL gravity field is radial, every X-Z pixel
+        // only needs its radial distance from the cluster center.
+        //
+        // ============================================================
 
         for zIndex in 0..<resolution {
 
-            for yIndex in 0..<resolution {
+            let z =
+                -radius +
+                Float(zIndex) * spacing
 
-                for xIndex in 0..<resolution {
+            for xIndex in 0..<resolution {
 
-                    let targetIndex =
-                        spatialGridIndex(
-                            x: xIndex,
-                            y: yIndex,
-                            z: zIndex
-                        )
+                let x =
+                    -radius +
+                    Float(xIndex) * spacing
 
-                    let targetX =
-                        -radius +
-                        Float(xIndex) * spacing
+                let index =
+                    xIndex +
+                    zIndex * resolution
 
-                    let targetY =
-                        -radius +
-                        Float(yIndex) * spacing
+                // ====================================================
+                // RADIAL DISTANCE
+                // ====================================================
 
-                    let targetZ =
-                        -radius +
-                        Float(zIndex) * spacing
+                let radialDistance =
+                    sqrt(
+                        x * x +
+                        z * z
+                    )
 
-                    let target =
-                        SIMD3<Double>(
-                            Double(targetX),
-                            Double(targetY),
-                            Double(targetZ)
-                        )
+                // ====================================================
+                // OUTSIDE THE PHYSICAL CLUSTER
+                // ====================================================
 
-                    var potential = 0.0
+                if radialDistance >= radius {
 
-                    for sourceZ in 0..<resolution {
+                    spatialPotentialGrid[index] =
+                        0.0
 
-                        for sourceY in 0..<resolution {
-
-                            for sourceX in 0..<resolution {
-
-                                let sourceIndex =
-                                    spatialGridIndex(
-                                        x: sourceX,
-                                        y: sourceY,
-                                        z: sourceZ
-                                    )
-
-                                let sourceMass =
-                                    cellMasses[sourceIndex]
-
-                                guard sourceMass > 0.0 else {
-                                    continue
-                                }
-
-                                let sourceXPosition =
-                                    -Double(radius) +
-                                    Double(sourceX) *
-                                    Double(spacing)
-
-                                let sourceYPosition =
-                                    -Double(radius) +
-                                    Double(sourceY) *
-                                    Double(spacing)
-
-                                let sourceZPosition =
-                                    -Double(radius) +
-                                    Double(sourceZ) *
-                                    Double(spacing)
-
-                                let dx =
-                                    target.x -
-                                    sourceXPosition
-
-                                let dy =
-                                    target.y -
-                                    sourceYPosition
-
-                                let dz =
-                                    target.z -
-                                    sourceZPosition
-
-                                let distanceSquared =
-                                    dx * dx +
-                                    dy * dy +
-                                    dz * dz
-
-                                // Softening prevents a cell from
-                                // producing an infinite potential
-                                // at its own center.
-                                let softening =
-                                    max(
-                                        Double(spacing) * 0.5,
-                                        1.0
-                                    )
-
-                                let distance =
-                                    sqrt(
-                                        distanceSquared +
-                                        softening * softening
-                                    )
-
-                                potential +=
-                                    -G *
-                                    sourceMass /
-                                    distance
-                            }
-                        }
-                    }
-
-                    spatialPotentialGrid[targetIndex] =
-                        potential.isFinite
-                        ? Float(potential)
-                        : 0.0
+                    continue
                 }
+
+                // ====================================================
+                // NORMALIZED RADIAL POSITION
+                //
+                // 0 → cluster center
+                // 1 → cluster radius
+                // ====================================================
+
+                let normalizedRadius =
+                    radialDistance / radius
+
+                // ====================================================
+                // RADIAL TABLE POSITION
+                // ====================================================
+
+                let tablePosition =
+                    normalizedRadius *
+                    Float(
+                        radialGravityTable.count - 1
+                    )
+
+                let lowerIndex =
+                    max(
+                        0,
+                        min(
+                            Int(floor(tablePosition)),
+                            radialGravityTable.count - 1
+                        )
+                    )
+
+                let upperIndex =
+                    min(
+                        lowerIndex + 1,
+                        radialGravityTable.count - 1
+                    )
+
+                let fraction =
+                    tablePosition -
+                    Float(lowerIndex)
+
+                // ====================================================
+                // READ AUTHORITATIVE RADIAL VALUES
+                // ====================================================
+
+                let lower =
+                    radialGravityTable[lowerIndex]
+
+                let upper =
+                    radialGravityTable[upperIndex]
+
+                // ====================================================
+                // LINEAR INTERPOLATION
+                // ====================================================
+
+                let potential =
+                    lower.potential +
+                    (
+                        upper.potential -
+                        lower.potential
+                    ) * Double(fraction)
+                // ====================================================
+                // STORE VISUAL POTENTIAL
+                // ====================================================
+
+                spatialPotentialGrid[index] =
+                    potential.isFinite
+                    ? Float(potential)
+                    : 0.0
             }
         }
     }
@@ -543,6 +768,7 @@ final class QRTLField {
             return [
                 RadialGravitySample(
                     radius: 0.0,
+                    energyDensity: 0.0,
                     effectiveMassDensity: 0.0,
                     enclosedMass: 0.0,
                     potential: 0.0
@@ -554,16 +780,29 @@ final class QRTLField {
             clusterRadius /
             Double(count - 1)
 
-        // --------------------------------------------------------
+        // ============================================================
         // STEP 1
         //
-        // Sample effective QRTL mass density radially.
+        // Sample the QRTL field radially.
         //
-        // The current QRTL model is spherical, so evaluating along
-        // the X axis is sufficient.
-        // --------------------------------------------------------
+        // These arrays are the authoritative cached radial samples.
+        //
+        // energyDensities
+        //      ↓
+        // effectiveMassDensity
+        //      ↓
+        // enclosedMass
+        //      ↓
+        // potential
+        // ============================================================
 
         var radii =
+            [Double](
+                repeating: 0.0,
+                count: count
+            )
+
+        var energyDensities =
             [Double](
                 repeating: 0.0,
                 count: count
@@ -589,35 +828,56 @@ final class QRTLField {
                     0.0
                 )
 
-            // IMPORTANT:
-            // qrtlEnergyDensity is an instance method of QRTLField.
-            let energyDensity =
+            // --------------------------------------------------------
+            // QRTL ENERGY DENSITY
+            //
+            // Calculate this ONCE for this radial sample.
+            // --------------------------------------------------------
+
+            let rawEnergyDensity =
                 self.qrtlEnergyDensity(
                     at: position
                 )
-    
-            let effectiveMassDensity =
-                energyDensity.isFinite &&
-                energyDensity > 0.0
-                ? Double(energyDensity) /
-                  (299_792_458.0 * 299_792_458.0)
+
+            let energyDensity =
+                rawEnergyDensity.isFinite &&
+                rawEnergyDensity > 0.0
+                ? Double(rawEnergyDensity)
                 : 0.0
 
+            // Store the QRTL energy density.
+            energyDensities[i] =
+                energyDensity
+
+            // --------------------------------------------------------
+            // EFFECTIVE MASS DENSITY
+            //
+            // rho_eff = u_Q / c²
+            // --------------------------------------------------------
+
+            let c =
+                299_792_458.0
+
+            let effectiveMassDensity =
+                energyDensity /
+                (c * c)
+
             densities[i] =
-                effectiveMassDensity.isFinite
+                effectiveMassDensity.isFinite &&
+                effectiveMassDensity > 0.0
                 ? effectiveMassDensity
                 : 0.0
         }
 
-        // --------------------------------------------------------
+        // ============================================================
         // STEP 2
         //
-        // Calculate shell masses and cumulative enclosed mass.
+        // Calculate cumulative enclosed mass.
         //
         // dM = 4πr²ρdr
         //
-        // Trapezoidal integration is used between radial samples.
-        // --------------------------------------------------------
+        // Trapezoidal integration.
+        // ============================================================
 
         var enclosedMass =
             [Double](
@@ -661,24 +921,28 @@ final class QRTLField {
 
                 enclosedMass[i] =
                     enclosedMass[i - 1] +
-                    max(shellMass, 0.0)
+                    max(
+                        shellMass,
+                        0.0
+                    )
             }
         }
 
-        // --------------------------------------------------------
+        // ============================================================
         // STEP 3
         //
-        // Calculate gravitational potential at each radial sample.
+        // Calculate gravitational potential.
         //
         // Φ(r) = -G M(r) / r
         //
-        // The center is handled separately to avoid division by zero.
-        // --------------------------------------------------------
+        // ============================================================
 
         var samples =
             [RadialGravitySample]()
 
-        samples.reserveCapacity(count)
+        samples.reserveCapacity(
+            count
+        )
 
         let gravitationalConstant =
             6.67430e-11
@@ -705,12 +969,28 @@ final class QRTLField {
                 potential = 0.0
             }
 
+            // ========================================================
+            // STORE ALL RADIAL QRTL INFORMATION TOGETHER
+            // ========================================================
+
             samples.append(
+
                 RadialGravitySample(
-                    radius: radius,
-                    effectiveMassDensity: densities[i],
-                    enclosedMass: mass,
-                    potential: potential
+
+                    radius:
+                        radius,
+
+                    energyDensity:
+                        energyDensities[i],
+
+                    effectiveMassDensity:
+                        densities[i],
+
+                    enclosedMass:
+                        mass,
+
+                    potential:
+                        potential
                 )
             )
         }
