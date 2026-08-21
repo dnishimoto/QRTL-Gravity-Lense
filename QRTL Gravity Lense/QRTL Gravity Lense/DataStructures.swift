@@ -210,7 +210,12 @@ struct SourceGalaxyStar:
 import Foundation
 import simd
 
-
+struct RadialGravitySample {
+    let radius: Double
+    let effectiveMassDensity: Double
+    let enclosedMass: Double
+    let potential: Double
+}
 struct ControlsSheet:
     View {
 
