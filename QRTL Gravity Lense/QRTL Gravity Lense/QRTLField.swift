@@ -36,13 +36,24 @@ import simd
 
 final class QRTLField {
 
-    // ========================================================
-    // PHYSICAL INPUT
-    // ========================================================
-
+  
     let densitySource: GlobularClusterDensityMap
     let parameters: QRTLParameters
     let referenceDensity: Float
+    
+    private var clusterMassKg: Double {
+
+         QRTLUnits.solarMassesToKilograms(
+             parameters.clusterMassSolarMasses
+         )
+     }
+
+     private var clusterRadiusMeters: Double {
+
+         QRTLUnits.parsecsToMeters(
+             parameters.clusterRadiusParsecs
+         )
+     }
 
     // ========================================================
     // CONSTANTS
@@ -119,25 +130,7 @@ final class QRTLField {
         )
     }
 
-    // ========================================================
-    // PHYSICAL CLUSTER RADIUS
-    // ========================================================
-
-    private var clusterRadiusMeters: Double {
-
-        let radius =
-            Double(
-                densitySource.fieldRadiusMeters
-            )
-
-        guard radius.isFinite,
-              radius > 0.0
-        else {
-            return 1.0
-        }
-
-        return radius
-    }
+  
 
     // ========================================================
     // PHYSICAL TOTAL MASS

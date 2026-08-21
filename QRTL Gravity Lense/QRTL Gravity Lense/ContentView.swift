@@ -869,9 +869,7 @@ struct ContentView: View {
         lensingParameters.magneticBendingStrength =
             1.0
 
-        lensingParameters.projectionPlaneHalfExtent =
-            18.0
-
+   
         lensingParameters.currentCoupling =
             1.0
 

@@ -1,12 +1,3 @@
-//
-//  File.swift
-//  QRTL Gravity Lense
-//
-//  Created by David Nishimoto on 8/20/26.
-//
-
-import Foundation
-import simd
 
 // ============================================================
 // GLOBULAR CLUSTER DENSITY SOURCE PROTOCOL

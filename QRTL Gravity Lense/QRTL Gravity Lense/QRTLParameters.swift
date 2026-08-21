@@ -61,5 +61,12 @@ struct QRTLParameters {
         get { minimumStep }
         set { minimumStep = newValue }
     }
+    // Existing QRTL parameters...
+      
+    /// Globular cluster mass in solar masses.
+    var clusterMassSolarMasses: Double = 1.0e6
+
+    /// Globular cluster radius in parsecs.
+    var clusterRadiusParsecs: Double = 10.0
 }
 

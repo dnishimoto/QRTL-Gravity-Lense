@@ -21,39 +21,35 @@ import Foundation
 // ============================================================
 
 struct LensingParameters {
+    // ============================================================
+       // PHOTON PROPAGATION
+       // ============================================================
 
-    // ========================================================
-    // PROJECTION PLANE
-    // ========================================================
+       /// Photon integration step in meters.
+       let photonStepSize: Float
 
-    var targetPlaneX: Float = 10.0
+       /// Maximum photon propagation distance in meters.
+       let maximumPropagationRadius: Float
 
-    /// Half-width of the projection plane in Y/Z.
-    var projectionPlaneHalfExtent: Float = 18.0
+       // ============================================================
+       // PROJECTION PLANE
+       // ============================================================
 
-    // ========================================================
-    // PHOTON INTEGRATION
-    // ========================================================
+       /// Projection plane X coordinate in meters.
+       let targetPlaneX: Float
 
-    /// Maximum distance from the lens center before propagation stops.
-    var maximumPropagationRadius: Float = 20.0
+       /// Physical half-width of projection plane in meters.
+       let projectionPlaneHalfExtent: Float
 
-    /// Integration step in SceneKit coordinates.
-    ///
-    /// Increased from 0.14 to 0.20 to reduce
-    /// the number of expensive field evaluations.
-    var photonStepSize: Float = 0.20
+       // ============================================================
+       // LENSING
+       // ============================================================
 
-    /// Hard upper bound on integration steps per photon.
-    var maximumPhotonSteps: Int = 100
+       let maximumPhotonSteps: Int
 
-    // ========================================================
-    // PHOTON LENSING
-    // ========================================================
-
-    /// Overall multiplier applied to the combined photon bending.
-    var deflectionStrength: Float = 1.0
-
+       let deflectionStrength: Float
+  
+ 
     /// QRTL-specific lensing multiplier.
     var qrtlLensingStrength: Float = 1.0
 
