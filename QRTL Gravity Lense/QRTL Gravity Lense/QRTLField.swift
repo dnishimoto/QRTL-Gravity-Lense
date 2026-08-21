@@ -35,6 +35,12 @@ import simd
 // ============================================================
 
 final class QRTLField {
+    
+    private var spatialPotentialGrid: [Float] = []
+
+    private var spatialEnergyDensityGrid: [Float] = []
+
+    private let spatialGridResolution = 128
 
     var radialGravityTable: [RadialGravitySample] = []
     let densitySource: GlobularClusterDensityMap
@@ -101,15 +107,120 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> Float {
 
-        let qrtlSourceValue =
-            qrtlSource(at: position)
+        let positions =
+            densitySource.starPositions
 
-        let bolgarinoFluxValue =
-            bolgarinoFlux(at: position)
+        guard !positions.isEmpty else {
+            return 0.0
+        }
+
+        let softening =
+            Float(
+                max(
+                    densitySource.softeningLengthMeters,
+                    1.0
+                )
+            )
+
+        let softeningSquared =
+            softening * softening
+
+        var spatialWeight: Float = 0.0
+
+        for starPosition in positions {
+
+            let delta =
+                position -
+                starPosition
+
+            let distanceSquared =
+                simd_length_squared(delta)
+
+            let softenedDistanceSquared =
+                distanceSquared +
+                softeningSquared
+
+            let distance =
+                sqrt(
+                    softenedDistanceSquared
+                )
+
+            guard distance.isFinite,
+                  distance > 0.0
+            else {
+                continue
+            }
+
+            spatialWeight +=
+                1.0 / distance
+        }
+
+        guard spatialWeight.isFinite else {
+            return 0.0
+        }
+
+        // Normalize the spatial contribution so that the
+        // existing cluster-scale QRTL energy-density model
+        // remains the amplitude source.
+        let referenceEnergyDensity =
+            qrtlEnergyDensityFromClusterDensity(
+                at: position
+            )
+
+        guard referenceEnergyDensity.isFinite,
+              referenceEnergyDensity > 0.0
+        else {
+            return 0.0
+        }
+
+        return referenceEnergyDensity *
+               spatialWeight
+    }
+    private func qrtlEnergyDensityFromClusterDensity(
+        at position: SIMD3<Float>
+    ) -> Float {
+
+        let density =
+            densitySource.density(
+                at: position
+            )
+
+        guard density.isFinite,
+              density > 0.0
+        else {
+            return 0.0
+        }
+
+        // QRTL source term.
+        let source =
+            parameters.alphaQ *
+            Double(density)
+
+        guard source.isFinite,
+              source > 0.0
+        else {
+            return 0.0
+        }
+
+        // Bolgarino radial flux.
+        let flux =
+            bolgarinoFlux(
+                at: position
+            )
+
+        guard flux.isFinite,
+              flux > 0.0
+        else {
+            return 0.0
+        }
 
         let energyDensity =
-            qrtlSourceValue *
-            bolgarinoFluxValue
+            source *
+            flux
+
+        guard energyDensity.isFinite else {
+            return 0.0
+        }
 
         return Float(
             max(
@@ -117,6 +228,283 @@ final class QRTLField {
                 0.0
             )
         )
+    }
+    private func buildSpatialGravityField() {
+
+        let resolution =
+            spatialGridResolution
+
+        let totalSamples =
+            resolution *
+            resolution *
+            resolution
+
+        spatialPotentialGrid =
+            [Float](
+                repeating: 0.0,
+                count: totalSamples
+            )
+
+        spatialEnergyDensityGrid =
+            [Float](
+                repeating: 0.0,
+                count: totalSamples
+            )
+
+        let radius =
+            Float(
+                QRTLUnits.parsecsToMeters(
+                    parameters.clusterRadiusParsecs
+                )
+            )
+
+        let diameter =
+            radius * 2.0
+
+        let spacing =
+            diameter /
+            Float(resolution - 1)
+
+        for zIndex in 0..<resolution {
+
+            for yIndex in 0..<resolution {
+
+                for xIndex in 0..<resolution {
+
+                    let x =
+                        -radius +
+                        Float(xIndex) * spacing
+
+                    let y =
+                        -radius +
+                        Float(yIndex) * spacing
+
+                    let z =
+                        -radius +
+                        Float(zIndex) * spacing
+
+                    let position =
+                        SIMD3<Float>(
+                            x,
+                            y,
+                            z
+                        )
+
+                    let index =
+                        spatialGridIndex(
+                            x: xIndex,
+                            y: yIndex,
+                            z: zIndex
+                        )
+
+                    let energyDensity =
+                        qrtlEnergyDensity(
+                            at: position
+                        )
+
+                    spatialEnergyDensityGrid[index] =
+                        energyDensity.isFinite
+                        ? energyDensity
+                        : 0.0
+                }
+            }
+        }
+
+        buildSpatialPotentialFromEnergyDensity(
+            radius: radius,
+            spacing: spacing
+        )
+    }
+    private func spatialGridIndex(
+        x: Int,
+        y: Int,
+        z: Int
+    ) -> Int {
+
+        return
+            x +
+            spatialGridResolution *
+            (
+                y +
+                spatialGridResolution * z
+            )
+    }
+    private func buildSpatialPotentialFromEnergyDensity(
+        radius: Float,
+        spacing: Float
+    ) {
+
+        let resolution =
+            spatialGridResolution
+
+        let totalSamples =
+            resolution *
+            resolution *
+            resolution
+
+        guard spatialEnergyDensityGrid.count == totalSamples else {
+            spatialPotentialGrid =
+                [Float](
+                    repeating: 0.0,
+                    count: totalSamples
+                )
+            return
+        }
+
+        spatialPotentialGrid =
+            [Float](
+                repeating: 0.0,
+                count: totalSamples
+            )
+
+        let G = 6.67430e-11
+        let c = 299_792_458.0
+
+        // Convert QRTL energy density to effective mass density.
+        //
+        // rho_eff = u_Q / c²
+        //
+        // The potential is then obtained by summing the contribution
+        // of every spatial cell.
+
+        let cellVolume =
+            Double(spacing) *
+            Double(spacing) *
+            Double(spacing)
+
+        let cellMasses =
+            spatialEnergyDensityGrid.map { energyDensity -> Double in
+
+                guard energyDensity.isFinite,
+                      energyDensity > 0.0
+                else {
+                    return 0.0
+                }
+
+                let massDensity =
+                    Double(energyDensity) /
+                    (c * c)
+
+                return massDensity *
+                       cellVolume
+            }
+
+        for zIndex in 0..<resolution {
+
+            for yIndex in 0..<resolution {
+
+                for xIndex in 0..<resolution {
+
+                    let targetIndex =
+                        spatialGridIndex(
+                            x: xIndex,
+                            y: yIndex,
+                            z: zIndex
+                        )
+
+                    let targetX =
+                        -radius +
+                        Float(xIndex) * spacing
+
+                    let targetY =
+                        -radius +
+                        Float(yIndex) * spacing
+
+                    let targetZ =
+                        -radius +
+                        Float(zIndex) * spacing
+
+                    let target =
+                        SIMD3<Double>(
+                            Double(targetX),
+                            Double(targetY),
+                            Double(targetZ)
+                        )
+
+                    var potential = 0.0
+
+                    for sourceZ in 0..<resolution {
+
+                        for sourceY in 0..<resolution {
+
+                            for sourceX in 0..<resolution {
+
+                                let sourceIndex =
+                                    spatialGridIndex(
+                                        x: sourceX,
+                                        y: sourceY,
+                                        z: sourceZ
+                                    )
+
+                                let sourceMass =
+                                    cellMasses[sourceIndex]
+
+                                guard sourceMass > 0.0 else {
+                                    continue
+                                }
+
+                                let sourceXPosition =
+                                    -Double(radius) +
+                                    Double(sourceX) *
+                                    Double(spacing)
+
+                                let sourceYPosition =
+                                    -Double(radius) +
+                                    Double(sourceY) *
+                                    Double(spacing)
+
+                                let sourceZPosition =
+                                    -Double(radius) +
+                                    Double(sourceZ) *
+                                    Double(spacing)
+
+                                let dx =
+                                    target.x -
+                                    sourceXPosition
+
+                                let dy =
+                                    target.y -
+                                    sourceYPosition
+
+                                let dz =
+                                    target.z -
+                                    sourceZPosition
+
+                                let distanceSquared =
+                                    dx * dx +
+                                    dy * dy +
+                                    dz * dz
+
+                                // Softening prevents a cell from
+                                // producing an infinite potential
+                                // at its own center.
+                                let softening =
+                                    max(
+                                        Double(spacing) * 0.5,
+                                        1.0
+                                    )
+
+                                let distance =
+                                    sqrt(
+                                        distanceSquared +
+                                        softening * softening
+                                    )
+
+                                potential +=
+                                    -G *
+                                    sourceMass /
+                                    distance
+                            }
+                        }
+                    }
+
+                    spatialPotentialGrid[targetIndex] =
+                        potential.isFinite
+                        ? Float(potential)
+                        : 0.0
+                }
+            }
+        }
     }
     // ============================================================
     // RADIAL GRAVITY LOOKUP TABLE

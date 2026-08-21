@@ -24,6 +24,8 @@ import simd
 
 final class GlobularClusterDensityMap:
     GlobularClusterDensitySource {
+    
+    let stars: [GlobularClusterStar]
 
     // ========================================================
     // CONSTANTS
@@ -250,11 +252,19 @@ final class GlobularClusterDensityMap:
         softeningLengthMeters: Double? = nil
     ) {
 
+        // --------------------------------------------------------
+        // CLUSTER MASS
+        // --------------------------------------------------------
+
         self.clusterMassKg =
             max(
                 clusterMassKg,
                 0.0
             )
+
+        // --------------------------------------------------------
+        // CLUSTER RADIUS
+        // --------------------------------------------------------
 
         self.clusterRadiusMeters =
             max(
@@ -262,11 +272,52 @@ final class GlobularClusterDensityMap:
                 1.0
             )
 
+        // --------------------------------------------------------
+        // STAR POSITIONS
+        // --------------------------------------------------------
+
         self.starPositions =
             starPositions
 
         self.starCount =
             starPositions.count
+
+        // --------------------------------------------------------
+        // MASS PER STAR
+        // --------------------------------------------------------
+
+        let massPerStar: Double
+
+        if starPositions.isEmpty {
+
+            massPerStar = 0.0
+
+        } else {
+
+            massPerStar =
+                max(
+                    self.clusterMassKg /
+                    Double(starPositions.count),
+                    0.0
+                )
+        }
+
+        // --------------------------------------------------------
+        // BUILD STAR OBJECTS
+        // --------------------------------------------------------
+
+        self.stars =
+            starPositions.map { position in
+
+                GlobularClusterStar(
+                    position: position,
+                    massKg: massPerStar
+                )
+            }
+
+        // --------------------------------------------------------
+        // PLUMMER SCALE
+        // --------------------------------------------------------
 
         let safeFraction =
             min(
@@ -284,17 +335,9 @@ final class GlobularClusterDensityMap:
                 1.0
             )
 
-        // ----------------------------------------------------
-        // SOFTENING
-        // ----------------------------------------------------
-        //
-        // If no explicit value is supplied, use a fraction
-        // of the cluster radius.
-        //
-        // This avoids singular gravitational acceleration
-        // around individual stars.
-        //
-        // ----------------------------------------------------
+        // --------------------------------------------------------
+        // GRAVITATIONAL SOFTENING
+        // --------------------------------------------------------
 
         let defaultSoftening =
             Double(clusterRadiusMeters) *
@@ -307,7 +350,6 @@ final class GlobularClusterDensityMap:
                 1.0
             )
     }
-
     // ========================================================
     // CONVENIENCE INITIALIZER
     // ========================================================

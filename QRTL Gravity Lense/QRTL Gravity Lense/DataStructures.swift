@@ -209,6 +209,20 @@ struct SourceGalaxyStar:
 
 import Foundation
 import simd
+struct GlobularClusterStar {
+    let position: SIMD3<Float>
+    let massKg: Double
+}
+struct SpatialGravitySample {
+
+    let position: SIMD3<Float>
+
+    let energyDensity: Float
+
+    let effectiveMassDensity: Float
+
+    let potential: Float
+}
 
 struct RadialGravitySample {
     let radius: Double

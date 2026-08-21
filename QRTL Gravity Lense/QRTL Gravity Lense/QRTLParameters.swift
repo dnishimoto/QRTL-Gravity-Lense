@@ -19,6 +19,8 @@ import simd
 // ============================================================
 
 struct QRTLParameters {
+    var starSmoothingRadiusMeters: Double = 0.1
+    
     // Gravitational QRTL → photon coupling
     var qrtlFieldCoupling: Double = 1.0
     /// QRTL source strength (scene-unit visualization needs O(0.01–0.1))
