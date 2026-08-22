@@ -94,8 +94,8 @@
             filePath = "QRTL Gravity Lense/GlobularClusterDensityMap.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "620"
-            endingLineNumber = "620"
+            startingLineNumber = "614"
+            endingLineNumber = "614"
             landmarkName = "physicalMassDensity(at:)"
             landmarkType = "7">
          </BreakpointContent>
@@ -110,8 +110,8 @@
             filePath = "QRTL Gravity Lense/GlobularClusterDensityMap.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "497"
-            endingLineNumber = "497"
+            startingLineNumber = "491"
+            endingLineNumber = "491"
             landmarkName = "density(at:)"
             landmarkType = "7">
          </BreakpointContent>

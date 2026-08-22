@@ -1,5 +1,3 @@
-
-
 import Foundation
 import simd
 
@@ -266,11 +264,7 @@ final class GlobularClusterDensityMap:
         // CLUSTER RADIUS
         // --------------------------------------------------------
 
-        self.clusterRadiusMeters =
-            max(
-                clusterRadiusMeters,
-                1.0
-            )
+        self.clusterRadiusMeters = clusterRadiusMeters
 
         // --------------------------------------------------------
         // STAR POSITIONS
@@ -704,60 +698,54 @@ final class GlobularClusterDensityMap:
     //
     // ========================================================
 
+    // ========================================================
+    // ENCLOSED MASS — 10⁶ STAR RADIAL DISTRIBUTION
+    // ========================================================
+
+    // ========================================================
+    // ENCLOSED MASS — 10⁶ STAR RADIAL DISTRIBUTION
+    // ========================================================
+
+    // ========================================================
+    // ENCLOSED MASS — 10⁶ STAR RADIAL DISTRIBUTION
+    // ========================================================
+
     func enclosedMass(
         at position: SIMD3<Float>
     ) -> Double {
 
-        let queryRadius =
-            radius(
-                at:
-                    position
-            )
+        let x = Double(position.x)
+        let y = Double(position.y)
+        let z = Double(position.z)
 
-        guard
-            queryRadius > 0.0,
-            starCount > 0
-        else {
+        let r = sqrt(x * x + y * y + z * z)
+
+        guard r.isFinite, r >= 0.0 else {
             return 0.0
         }
 
-        let starMass =
-            clusterMassKg /
-            Double(starCount)
+        let a = plummerScaleMeters
+        let r2 = r * r
+        let a2 = a * a
 
-        var enclosedMass:
-            Double = 0.0
+        // Compute enclosed mass using Plummer profile formula:
+        // M(<r) = M_total * r^3 / (r^2 + a^2)^(3/2)
 
-        for star in starPositions {
+        let denominator = pow(r2 + a2, 1.5)
 
-            let starRadius =
-                radius(
-                    at:
-                        star
-                )
-
-            if starRadius <= queryRadius {
-
-                enclosedMass +=
-                    starMass
-            }
-        }
-
-        guard
-            enclosedMass.isFinite
-        else {
+        guard denominator.isFinite, denominator > 0.0 else {
             return 0.0
         }
 
-        return min(
-            max(
-                enclosedMass,
-                0.0
-            ),
-            clusterMassKg
-        )
+        let enclosed = clusterMassKg * (r * r * r) / denominator
+
+        guard enclosed.isFinite else {
+            return 0.0
+        }
+
+        // Clamp enclosed mass to [0, clusterMassKg]
+        return min(max(enclosed, 0.0), clusterMassKg)
     }
-
     // ========================================================
     // ENCLOSED MASS FRACTION
     // ========================================================
@@ -766,25 +754,25 @@ final class GlobularClusterDensityMap:
         at position: SIMD3<Float>
     ) -> Double {
 
-        guard
-            clusterMassKg > 0.0
+        guard clusterMassKg > 0.0,
+              clusterMassKg.isFinite
         else {
             return 0.0
         }
 
-        let mass =
-            enclosedMass(
-                at:
-                    position
-            )
+        let mass = enclosedMass(
+            at: position
+        )
 
-        let fraction =
-            mass /
-            clusterMassKg
-
-        guard
-            fraction.isFinite
+        guard mass.isFinite,
+              mass >= 0.0
         else {
+            return 0.0
+        }
+
+        let fraction = mass / clusterMassKg
+
+        guard fraction.isFinite else {
             return 0.0
         }
 
@@ -796,7 +784,6 @@ final class GlobularClusterDensityMap:
             1.0
         )
     }
-
     // ========================================================
     // 3D GRAVITATIONAL POTENTIAL
     // ========================================================
