@@ -307,64 +307,104 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // No gravity physics is performed here.
     // ============================================================
 
+    // ============================================================
+    // AUTHORITATIVE POTENTIAL SAMPLE
+    // ============================================================
+    //
+    // Display coordinates:
+    //
+    //     x -> physical Y
+    //     z -> physical Z
+    //
+    // Physical cross-section:
+    //
+    //     physical X = 0
+    //
+    // The radial distance is therefore:
+    //
+    //     r = sqrt(Y² + Z²)
+    //
+    // The physical radius is obtained by mapping the display
+    // radius [0 ... extent] onto the actual QRTL cluster radius.
+    //
+    // This function performs NO gravity calculation.
+    // It only samples the authoritative radial QRTL potential.
+    //
+    // It also updates maximumPotential for visualization
+    // normalization.
+    //
+    // ============================================================
+
     func samplePotentialMagnitude(
         x: Float,
         z: Float
     ) -> Float {
 
-        // ============================================================
-        // DISPLAY SPACE
-        //
-        // x and z are SceneKit/display coordinates.
-        // They are NOT physical meters.
-        // ============================================================
+        // ========================================================
+        // DISPLAY RADIUS
+        // ========================================================
 
-        let displayRadius =
-            sqrt(
-                x * x +
-                z * z
-            )
+        let displayRadius = sqrt(
+            x * x +
+            z * z
+        )
 
-        // ============================================================
-        // MAP DISPLAY RADIUS → PHYSICAL RADIUS
-        //
-        // The displayed surface has radius `extent`.
-        //
-        // displayRadius = 0
-        //     → physical radius = 0
-        //
-        // displayRadius = extent
-        //     → physical radius = clusterRadiusMeters
-        // ============================================================
+        // ========================================================
+        // DISPLAY -> NORMALIZED PHYSICAL RADIUS
+        // ========================================================
 
-        let normalizedRadius =
-            min(
-                max(
-                    displayRadius / extent,
-                    0.0
-                ),
-                1.0
-            )
+        let normalizedRadius = min(
+            max(
+                displayRadius / max(extent, 1.0e-6),
+                0.0
+            ),
+            1.0
+        )
+
+        // ========================================================
+        // NORMALIZED -> PHYSICAL METERS
+        // ========================================================
 
         let physicalRadius =
             Double(normalizedRadius) *
             Double(field.clusterRadiusMeters)
-        // ============================================================
-        // AUTHORITATIVE RADIAL QRTL POTENTIAL
-        // ============================================================
+
+        // ========================================================
+        // AUTHORITATIVE QRTL POTENTIAL
+        // ========================================================
 
         let potential =
             field.interpolateRadialPotential(
                 radius: physicalRadius
             )
 
-        // ============================================================
-        // VISUAL MAGNITUDE
-        // ============================================================
+        // ========================================================
+        // VALIDATE
+        // ========================================================
 
-        return Float(abs(
-            potential
-        ))
+        guard potential.isFinite else {
+            return 0.0
+        }
+
+        // ========================================================
+        // VISUAL MAGNITUDE
+        // ========================================================
+
+        let magnitude = Float(abs(potential))
+
+        guard magnitude.isFinite else {
+            return 0.0
+        }
+
+        // ========================================================
+        // UPDATE VISUALIZATION NORMALIZATION
+        // ========================================================
+
+        if magnitude > maximumPotential {
+            maximumPotential = magnitude
+        }
+
+        return magnitude
     }
     // ============================================================
     // CLEAR SCENE
@@ -617,19 +657,39 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             potentialMagnitudes.count
         )
 
+           
         // ============================================================
-        // SAFE NORMALIZATION
+        // SAFE POTENTIAL NORMALIZATION
+        // ============================================================
         //
-        // Visualization only.
+        // maximumPotential has now been collected from ALL surface
+        // samples.
         //
-        // This does NOT alter QRTL physics.
+        // This normalization affects visualization only.
+        //
         // ============================================================
 
-        let normalization =
-            max(
-                maximumPotential,
-                1.0e-30
-            )
+        let normalization: Float
+
+        if maximumPotential.isFinite &&
+            maximumPotential > 1.0e-30 {
+
+            normalization = maximumPotential
+
+        } else {
+
+            normalization = 1.0
+        }
+
+        print(
+            "QRTL GRAVITY SURFACE:",
+            "maximumPotential =",
+            maximumPotential,
+            "normalization =",
+            normalization,
+            "samples =",
+            potentialMagnitudes.count
+        )
 
         // ============================================================
         // CENTER VERTEX
