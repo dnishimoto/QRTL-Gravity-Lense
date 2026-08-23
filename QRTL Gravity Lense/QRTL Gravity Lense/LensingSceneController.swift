@@ -227,6 +227,22 @@ final class LensingSceneController:
     private var sourceGalaxyNode:
         SCNNode?
 
+    // ============================================================
+    // SOURCE GALAXY — single authoritative instance
+    // ============================================================
+    //
+    // Every consumer (visual star rendering, the initial trace
+    // batch, the continuous emitter, and the traveling-particle
+    // surface) reads from this SAME instance's starPositions, so
+    // they can no longer disagree about where the source galaxy
+    // actually is. sourceGalaxyStars and sourceGalaxyPositions are
+    // both derived from it — kept for source compatibility with
+    // existing readers, but no longer independently populated.
+    // ============================================================
+
+    private(set) var sourceGalaxy:
+        SourceGalaxy?
+
     var sourceGalaxyStars:
         [SourceGalaxyStar] = []
 
@@ -300,7 +316,7 @@ final class LensingSceneController:
                 extent: 18.0,
                 numberOfStars: 220,
                 curvatureScale: 1.0
-            )
+             )
 
         qrtlGravitySurface =
             entity
@@ -1258,256 +1274,7 @@ final class LensingSceneController:
         return positions
     }
 
-    // ============================================================
-    // MARK: - CONTINUOUS PHOTON SIMULATION
-    // ============================================================
-    //
-    // This is the single entry point for the photon pipeline.
-    //
-    // The controller owns:
-    //     1. QRTL photon tracing
-    //     2. authoritative PhotonTraceResult storage
-    //     3. continuous trajectory visualization
-    //     4. projection accumulation
-    //
-    // There is no second independent photon path generator.
-    //
-    // ============================================================
-
-    func startContinuousPhotonSimulation(
-        field: QRTLField,
-        parameters: LensingParameters,
-        progress: @escaping (PhotonSimulationProgress) -> Void
-    ) {
-
-        // ========================================================
-        // STOP ANY PREVIOUS SIMULATION
-        // ========================================================
-
-        stopContinuousPhotonSimulation()
-
-        // ========================================================
-        // STORE AUTHORITATIVE FIELD
-        // ========================================================
-
-        self.qrtlField = field
-
-        // ========================================================
-        // CREATE THE AUTHORITATIVE PHOTON TRACER
-        // ========================================================
-
-        let tracer =
-            QRTLPhotonTracer(
-                field: field
-            )
-
-        // ========================================================
-        // GET SOURCE-GALAXY POSITIONS
-        // ========================================================
-
-        let sources =
-            sourceGalaxyPositions
-
-        // ========================================================
-        // INITIAL PROGRESS
-        // ========================================================
-
-        progress(
-            PhotonSimulationProgress(
-                total:
-                    sources.count,
-
-                completed:
-                    0,
-
-                active:
-                    0,
-
-                projectionHits:
-                    0
-            )
-        )
-
-        // ========================================================
-        // TRACE PHOTONS
-        // ========================================================
-
-        var traces =
-            [PhotonTraceResult]()
-
-        traces.reserveCapacity(
-            sources.count
-        )
-
-        let initialDirection =
-            SIMD3<Float>(
-                1.0,
-                0.0,
-                0.0
-            )
-
-        for sourcePosition in sources {
-
-            let trace =
-                tracer.tracePhoton(
-                    origin:
-                        sourcePosition,
-
-                    direction:
-                        initialDirection,
-
-                    parameters:
-                        parameters,
-
-                      )
-
-            // ====================================================
-            // RETAIN ONLY VALID TRAJECTORIES
-            // ====================================================
-
-            guard
-                trace.positions.count > 1
-            else {
-                continue
-            }
-
-            traces.append(
-                trace
-            )
-
-            // ====================================================
-            // UPDATE PROGRESS
-            // ====================================================
-
-            progress(
-                PhotonSimulationProgress(
-                    total:
-                        sources.count,
-
-                    completed:
-                        traces.count,
-
-                    active:
-                        max(
-                            0,
-                            sources.count -
-                            traces.count
-                        ),
-
-                    projectionHits:
-                        traces.reduce(
-                            into: 0
-                        ) {
-                            count,
-                            trace in
-
-                            if trace.hitProjection {
-                                count += 1
-                            }
-                        }
-                )
-            )
-        }
-
-        // ========================================================
-        // STORE AUTHORITATIVE TRACES
-        // ========================================================
-        //
-        // These exact traces are now consumed by both:
-        //
-        //     photon visualization
-        //
-        // and
-        //
-        //     projection
-        //
-        // No second tracing pass is performed.
-        // ========================================================
-
-        photonTraceResults =
-            traces
-
-        // ========================================================
-        // REMOVE PREVIOUS TRAJECTORY VISUALIZATION
-        // ========================================================
-
-        photonEmitterNode?
-            .removeFromParentNode()
-
-        photonEmitterNode =
-            nil
-
-        // ========================================================
-        // CREATE VISUALIZATION FROM STORED TRAJECTORIES
-        // ========================================================
-
-        let emitter =
-            createContinuousPhotonEmitter(
-                traces:
-                    traces
-            )
-
-        photonEmitterNode =
-            emitter
-
-        scene.rootNode.addChildNode(
-            emitter
-        )
-
-        // ========================================================
-        // CREATE PROJECTION FROM THE SAME TRAJECTORIES
-        // ========================================================
-
-        projectionNode?
-            .removeFromParentNode()
-
-        projectionNode =
-            nil
-
-        let projection =
-            createProjectionFromPhotonTraces(
-                traces
-            )
-
-        projectionNode =
-            projection
-
-        scene.rootNode.addChildNode(
-            projection
-        )
-
-        // ========================================================
-        // FINAL PROGRESS
-        // ========================================================
-
-        let projectionHitCount =
-            traces.reduce(
-                into: 0
-            ) {
-                count,
-                trace in
-
-                if trace.hitProjection {
-                    count += 1
-                }
-            }
-
-        progress(
-            PhotonSimulationProgress(
-                total:
-                    sources.count,
-
-                completed:
-                    traces.count,
-
-                active:
-                    0,
-
-                projectionHits:
-                    projectionHitCount
-            )
-        )
-    }
+  
     // ============================================================
     // MARK: - PROJECTIVE MAP FROM AUTHORITATIVE PHOTON TRACES
     // ============================================================
@@ -4077,245 +3844,99 @@ final class LensingSceneController:
     }
 
     // ============================================================
-    // MARK: - EXISTING SOURCE GALAXY POSITION GENERATOR
+    // MARK: - SOURCE GALAXY
     // ============================================================
     //
-    // Generates the source-galaxy star positions used by the
-    // authoritative photon pipeline.
+    // Builds the single authoritative SourceGalaxy instance and
+    // uses its starPositions for EVERYTHING: the visible star
+    // nodes, sourceGalaxyPositions (read by the continuous photon
+    // emitter), and sourceGalaxyStars (read by traceSourceGalaxy).
     //
-    // Coordinate convention:
-    //
-    //     X = photon propagation direction
-    //     Y/Z = source-galaxy image plane
-    //
-    // The returned positions are SceneKit coordinates.
-    //
-    // IMPORTANT:
-    // - This function does NOT create photons.
-    // - This function does NOT trace photons.
-    // - This function does NOT apply gravitational lensing.
-    // - The QRTLPhotonTracer applies the QRTL field later.
+    // Previously these three consumers each had their own,
+    // independently-generated (and inconsistent) star positions —
+    // and the visual star nodes were never actually given geometry,
+    // so the source galaxy was never visible at all, and
+    // traceSourceGalaxy always traced zero photons since
+    // sourceGalaxyStars was declared but never populated. Building
+    // everything from one SourceGalaxy instance fixes both.
     // ============================================================
 
-    private func generateYourExistingSourceGalaxyPositions(
-        starCount: Int = 220
-    ) -> [SIMD3<Float>] {
-
-        guard starCount > 0 else {
-            return []
-        }
-
-        var positions: [SIMD3<Float>] = []
-        positions.reserveCapacity(starCount)
-
-        // --------------------------------------------------------
-        // SOURCE GALAXY LOCATION
-        // --------------------------------------------------------
-        //
-        // X is the photon travel direction.
-        // The source galaxy is therefore placed behind the lens.
-        //
-        let sourceX: Float = -8.0
-
-        // --------------------------------------------------------
-        // GALAXY DIMENSIONS
-        // --------------------------------------------------------
-
-        let majorRadius: Float = 2.8
-        let minorRadius: Float = 1.15
-
-        // --------------------------------------------------------
-        // DETERMINISTIC DISTRIBUTION
-        // --------------------------------------------------------
-        //
-        // Using the golden angle avoids random clustering while
-        // producing a visually natural spiral distribution.
-        //
-        let goldenAngle =
-            Float.pi * (3.0 - sqrt(5.0))
-
-        // --------------------------------------------------------
-        // CENTRAL BULGE
-        // --------------------------------------------------------
-        //
-        // A fraction of the stars are concentrated toward the
-        // center of the galaxy.
-        //
-        let bulgeFraction = 0.20
-        let bulgeCount = Int(
-            Float(starCount) * Float(bulgeFraction)
-        )
-
-        if bulgeCount > 0 {
-
-            for i in 0..<bulgeCount {
-
-                let t =
-                    Float(i) /
-                    Float(max(bulgeCount - 1, 1))
-
-                let radius =
-                    0.20 +
-                    0.75 * sqrt(t)
-
-                let angle =
-                    Float(i) * goldenAngle
-
-                let y =
-                    radius *
-                    0.55 *
-                    cos(angle)
-
-                let z =
-                    radius *
-                    0.55 *
-                    sin(angle)
-
-                positions.append(
-                    SIMD3<Float>(
-                        sourceX,
-                        y,
-                        z
-                    )
-                )
-            }
-        }
-
-        // --------------------------------------------------------
-        // SPIRAL DISK
-        // --------------------------------------------------------
-
-        let diskCount =
-            starCount - bulgeCount
-
-        if diskCount > 0 {
-
-            for i in 0..<diskCount {
-
-                let t =
-                    Float(i) /
-                    Float(max(diskCount - 1, 1))
-
-                // Concentrate more stars toward the inner disk.
-                let radialFraction =
-                    pow(t, 0.72)
-
-                let radius =
-                    majorRadius *
-                    radialFraction
-
-                // Two-arm spiral structure.
-                let spiralTurns: Float = 2.15
-
-                let baseAngle =
-                    Float(i) *
-                    goldenAngle
-
-                let spiralAngle =
-                    baseAngle +
-                    radialFraction *
-                    spiralTurns *
-                    2.0 *
-                    Float.pi
-
-                // Elliptical disk.
-                let y =
-                    radius *
-                    cos(spiralAngle)
-
-                let z =
-                    minorRadius *
-                    radialFraction *
-                    sin(spiralAngle)
-
-                // Small vertical thickness.
-                //
-                // Deterministic pseudo-thickness rather than random
-                // values so repeated pipeline runs produce the same
-                // source galaxy.
-                let thicknessPhase =
-                    Float(i) * 1.6180339887
-
-                let verticalOffset =
-                    0.08 *
-                    sin(thicknessPhase)
-
-                positions.append(
-                    SIMD3<Float>(
-                        sourceX,
-                        y,
-                        z + verticalOffset
-                    )
-                )
-            }
-        }
-
-        return positions
-    }
     func addSourceGalaxy() {
 
         // ========================================================
         // CLEAR PREVIOUS SOURCE GALAXY
         // ========================================================
 
+        sourceGalaxyNode?.removeFromParentNode()
+
+        let galaxyNode = SCNNode()
+
+        sourceGalaxyNode =
+            galaxyNode
+
         sourceGalaxyPositions.removeAll(
             keepingCapacity: true
         )
 
-        // Remove your existing source-galaxy visual node here
-        // using the node/property already present in your
-        // LensingSceneController.
-        //
-        // Example only if your existing controller has this node:
-        //
-        // sourceGalaxyNode?.removeFromParentNode()
-        // sourceGalaxyNode = SCNNode()
-        //
-        // DO NOT add a new node property if your current
-        // implementation already has one.
+        sourceGalaxyStars.removeAll(
+            keepingCapacity: true
+        )
 
         // ========================================================
-        // GENERATE SOURCE GALAXY POSITIONS
-        // ========================================================
-        //
-        // IMPORTANT:
-        //
-        // Replace `generatedPositions` below with the exact
-        // position-generation code already used by your current
-        // addSourceGalaxy().
-        //
-        // The critical requirement is that the positions used
-        // to render the visible stars are ALSO stored in
-        // sourceGalaxyPositions.
+        // BUILD THE AUTHORITATIVE SOURCE GALAXY
         // ========================================================
 
-        let generatedPositions: [SIMD3<Float>] =
-            generateYourExistingSourceGalaxyPositions()
+        let galaxy =
+            SourceGalaxy()
+
+        sourceGalaxy =
+            galaxy
 
         // ========================================================
         // STORE + RENDER THE SAME POSITIONS
         // ========================================================
 
-        for position in generatedPositions {
+        let starGeometry =
+            SCNSphere(radius: 0.035)
+
+        let starMaterial =
+            SCNMaterial()
+
+        starMaterial.diffuse.contents = UIColor.white
+        starMaterial.emission.contents = UIColor.white
+        starMaterial.isDoubleSided = true
+        starMaterial.lightingModel = .constant
+
+        starGeometry.materials = [starMaterial]
+
+        for (index, position) in galaxy.starPositions.enumerated() {
 
             // ----------------------------------------------------
             // AUTHORITATIVE PHOTON ORIGIN
+            //
+            // Both arrays are populated from the identical
+            // position, so the initial trace batch, the continuous
+            // emitter, and the visible stars can never disagree
+            // about where a given star actually is.
             // ----------------------------------------------------
 
             sourceGalaxyPositions.append(
                 position
             )
 
+            sourceGalaxyStars.append(
+                SourceGalaxyStar(
+                    id: index,
+                    position: position
+                )
+            )
+
             // ----------------------------------------------------
-            // EXISTING VISUAL STAR CREATION
+            // VISUAL STAR
             // ----------------------------------------------------
-            //
-            // Use your existing star geometry/material here.
-            // The visual star MUST use the exact same `position`.
-            //
 
             let starNode =
-                SCNNode()
+                SCNNode(geometry: starGeometry)
 
             starNode.position =
                 SCNVector3(
@@ -4324,177 +3945,15 @@ final class LensingSceneController:
                     position.z
                 )
 
-            // Your existing star geometry goes here.
-            //
-            // starNode.geometry = ...
-
-            scene.rootNode.addChildNode(
+            galaxyNode.addChildNode(
                 starNode
             )
         }
+
+        scene.rootNode.addChildNode(
+            galaxyNode
+        )
     }
-
-    // ============================================================
-    // MARK: - GENERATE SOURCE GALAXY POSITIONS
-    // ============================================================
-    //
-    // Creates the physical source-star positions used by the
-    // authoritative photon pipeline.
-    //
-    // IMPORTANT:
-    //
-    // These positions are stored in sourceGalaxyPositions.
-    //
-    // Later:
-    //
-    // sourceGalaxyPositions
-    //        ↓
-    // QRTLPhotonTracer
-    //        ↓
-    // PhotonTraceResult
-    //        ↓
-    // continuous photon emitter
-    //        ↓
-    // projection
-    //
-    // No photon is created here.
-    // This function ONLY creates source positions.
-    // ============================================================
-
-    private func generateSourceGalaxyPositions(
-        starCount: Int = 220,
-        radius: Float = 2.5
-    ) -> [SIMD3<Float>] {
-
-        guard starCount > 0 else {
-            return []
-        }
-
-        var positions = [SIMD3<Float>]()
-
-        positions.reserveCapacity(starCount)
-
-        // ========================================================
-        // SOURCE GALAXY PLANE
-        // ========================================================
-        //
-        // Photons travel primarily in +X.
-        //
-        // Therefore the source galaxy is distributed in the Y-Z
-        // plane.
-        //
-        // X = source depth
-        // Y = vertical galaxy coordinate
-        // Z = horizontal galaxy coordinate
-        //
-        // The small negative X offset places the source galaxy
-        // behind the gravitational lens relative to the photon
-        // propagation direction.
-        // ========================================================
-
-        let sourceX: Float = -8.0
-
-        // ========================================================
-        // DETERMINISTIC DISTRIBUTION
-        // ========================================================
-        //
-        // Use a golden-angle spiral rather than random positions.
-        //
-        // This makes the source galaxy reproducible every time
-        // the simulation runs.
-        // ========================================================
-
-        let goldenAngle =
-            Float.pi *
-            (3.0 - sqrt(5.0))
-
-        for index in 0..<starCount {
-
-            let fraction =
-                Float(index) /
-                Float(max(1, starCount - 1))
-
-            // ====================================================
-            // RADIAL DISTRIBUTION
-            // ====================================================
-            //
-            // sqrt(fraction) gives approximately uniform area
-            // density while still allowing a concentrated center
-            // when combined with the falloff below.
-            // ====================================================
-
-            let radialFraction =
-                sqrt(fraction)
-
-            let radialDistance =
-                radius *
-                radialFraction
-
-            let angle =
-                Float(index) *
-                goldenAngle
-
-            // ====================================================
-            // SPIRAL / GALAXY STRUCTURE
-            // ====================================================
-
-            let armWave =
-                sin(
-                    angle * 2.5
-                )
-
-            let armOffset =
-                0.18 *
-                armWave
-
-            let effectiveRadius =
-                radialDistance *
-                (
-                    1.0 +
-                    armOffset
-                )
-
-            // ====================================================
-            // Y-Z GALAXY PLANE
-            // ====================================================
-
-            let y =
-                cos(angle) *
-                effectiveRadius
-
-            let z =
-                sin(angle) *
-                effectiveRadius
-
-            // ====================================================
-            // CENTRAL CONCENTRATION
-            // ====================================================
-
-            let centerWeight =
-                1.0 -
-                0.25 *
-                radialFraction
-
-            let finalY =
-                y *
-                centerWeight
-
-            let finalZ =
-                z *
-                centerWeight
-
-            positions.append(
-                SIMD3<Float>(
-                    sourceX,
-                    finalY,
-                    finalZ
-                )
-            )
-        }
-
-        return positions
-    }
-
 
     func addGlobularCluster(
         radius: Double = 5.0,
