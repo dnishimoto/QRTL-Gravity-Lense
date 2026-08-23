@@ -1,4 +1,5 @@
 
+
 /*
  Here is the corrected pipeline for your current QRTL Gravity Lense architecture:
 
@@ -1934,30 +1935,47 @@ struct ContentView: View {
             //
             // We use ABSOLUTE magnitude because gravitational
             // potential may be negative.
+            //
+            // Normalized against the MAXIMUM magnitude across all
+            // four samples rather than the center specifically —
+            // if the center value were ever wrong (e.g. reads as
+            // ~0 due to an interior-potential bug), comparing
+            // everything else against it would force every other
+            // classification to LOW too, masking the real values
+            // instead of surfacing them.
             // ----------------------------------------------------
+
+            let maximumMagnitude =
+                max(
+                    abs(centerPotential),
+                    abs(quarterPotential),
+                    abs(halfPotential),
+                    abs(edgePotential),
+                    1e-30
+                )
 
             self.potentialCenterLevel =
                 self.potentialLevel(
                     centerPotential,
-                    reference: centerPotential
+                    reference: maximumMagnitude
                 )
 
             self.potentialQuarterLevel =
                 self.potentialLevel(
                     quarterPotential,
-                    reference: centerPotential
+                    reference: maximumMagnitude
                 )
 
             self.potentialHalfLevel =
                 self.potentialLevel(
                     halfPotential,
-                    reference: centerPotential
+                    reference: maximumMagnitude
                 )
 
             self.potentialEdgeLevel =
                 self.potentialLevel(
                     edgePotential,
-                    reference: centerPotential
+                    reference: maximumMagnitude
                 )
 
             // ----------------------------------------------------

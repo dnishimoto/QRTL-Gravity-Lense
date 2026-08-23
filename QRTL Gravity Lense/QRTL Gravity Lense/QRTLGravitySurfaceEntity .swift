@@ -95,22 +95,21 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
 
     private(set) var surfaceNode: SCNNode?
-    private(set) var photonANode: SCNNode?
-    private(set) var photonBNode: SCNNode?
-    private(set) var galaxyANode: SCNNode?
-    private(set) var galaxyBNode: SCNNode?
+    private(set) var photonNode: SCNNode?
+    private(set) var galaxyNode: SCNNode?
 
     // ============================================================
     // PHOTON RESULTS
     // ============================================================
+    //
+    // A single source galaxy. Every photon path stored here is the
+    // raw, unmodified output of QRTLPhotonTracer.tracePhoton — no
+    // spline fitting or smoothing is applied anywhere downstream.
+    // ============================================================
 
-    private(set) var photonPathsA: [[SIMD3<Double>]] = []
-    private(set) var photonPathsB: [[SIMD3<Double>]] = []
+    private(set) var photonPaths: [[SIMD3<Double>]] = []
 
-    private(set) var galaxyAProjectionPositions:
-        [SIMD3<Double>] = []
-
-    private(set) var galaxyBProjectionPositions:
+    private(set) var galaxyProjectionPositions:
         [SIMD3<Double>] = []
 
     private let lensingParameters = LensingParameters()
@@ -201,7 +200,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         )
 
         // ========================================================
-        // PHOTON PROJECTIONS
+        // PHOTON PROJECTION
         // ========================================================
 
         computeGalaxyProjections(
@@ -209,71 +208,40 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         )
 
         // ========================================================
-        // PHOTON A
+        // PHOTON PARTICLES
+        //
+        // Each particle is the raw path returned by
+        // QRTLPhotonTracer.tracePhoton — a real photon traveling
+        // from the source galaxy, through the deformed spacetime
+        // surface, onto the projection plane. No spline fitting,
+        // no smoothing: the particle moves through exactly the
+        // positions the tracer calculated.
         // ========================================================
 
-        let photonAGeometry = makePhotonGeometry(
-            paths: photonPathsA,
+        let photonGraphicsNode = makeTravelingPhotonParticles(
+            paths: photonPaths,
             color: .cyan
         )
 
-        let photonAGraphicsNode = SCNNode(
-            geometry: photonAGeometry
-        )
-
-        photonANode = photonAGraphicsNode
+        photonNode = photonGraphicsNode
 
         addChildNode(
-            photonAGraphicsNode
+            photonGraphicsNode
         )
 
         // ========================================================
-        // PHOTON B
+        // PROJECTED GALAXY
         // ========================================================
 
-        let photonBGeometry = makePhotonGeometry(
-            paths: photonPathsB,
-            color: .magenta
-        )
-
-        let photonBGraphicsNode = SCNNode(
-            geometry: photonBGeometry
-        )
-
-        photonBNode = photonBGraphicsNode
-
-        addChildNode(
-            photonBGraphicsNode
-        )
-
-        // ========================================================
-        // PROJECTED GALAXY A
-        // ========================================================
-
-        let galaxyA = makeProjectionNode(
-            positions: galaxyAProjectionPositions,
+        let galaxy = makeProjectionNode(
+            positions: galaxyProjectionPositions,
             color: .cyan
         )
 
-        galaxyANode = galaxyA
+        galaxyNode = galaxy
 
         addChildNode(
-            galaxyA
-        )
-
-        // ========================================================
-        // PROJECTED GALAXY B
-        // ========================================================
-
-        let galaxyB = makeProjectionNode(
-            positions: galaxyBProjectionPositions,
-            color: .magenta
-        )
-
-        galaxyBNode = galaxyB
-
-        addChildNode(
-            galaxyB
+            galaxy
         )
     }
 
@@ -307,104 +275,64 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // No gravity physics is performed here.
     // ============================================================
 
-    // ============================================================
-    // AUTHORITATIVE POTENTIAL SAMPLE
-    // ============================================================
-    //
-    // Display coordinates:
-    //
-    //     x -> physical Y
-    //     z -> physical Z
-    //
-    // Physical cross-section:
-    //
-    //     physical X = 0
-    //
-    // The radial distance is therefore:
-    //
-    //     r = sqrt(Y² + Z²)
-    //
-    // The physical radius is obtained by mapping the display
-    // radius [0 ... extent] onto the actual QRTL cluster radius.
-    //
-    // This function performs NO gravity calculation.
-    // It only samples the authoritative radial QRTL potential.
-    //
-    // It also updates maximumPotential for visualization
-    // normalization.
-    //
-    // ============================================================
-
     func samplePotentialMagnitude(
         x: Float,
         z: Float
     ) -> Float {
 
-        // ========================================================
-        // DISPLAY RADIUS
-        // ========================================================
+        // ============================================================
+        // DISPLAY SPACE
+        //
+        // x and z are SceneKit/display coordinates.
+        // They are NOT physical meters.
+        // ============================================================
 
-        let displayRadius = sqrt(
-            x * x +
-            z * z
-        )
+        let displayRadius =
+            sqrt(
+                x * x +
+                z * z
+            )
 
-        // ========================================================
-        // DISPLAY -> NORMALIZED PHYSICAL RADIUS
-        // ========================================================
+        // ============================================================
+        // MAP DISPLAY RADIUS → PHYSICAL RADIUS
+        //
+        // The displayed surface has radius `extent`.
+        //
+        // displayRadius = 0
+        //     → physical radius = 0
+        //
+        // displayRadius = extent
+        //     → physical radius = clusterRadiusMeters
+        // ============================================================
 
-        let normalizedRadius = min(
-            max(
-                displayRadius / max(extent, 1.0e-6),
-                0.0
-            ),
-            1.0
-        )
-
-        // ========================================================
-        // NORMALIZED -> PHYSICAL METERS
-        // ========================================================
+        let normalizedRadius =
+            min(
+                max(
+                    displayRadius / extent,
+                    0.0
+                ),
+                1.0
+            )
 
         let physicalRadius =
             Double(normalizedRadius) *
             Double(field.clusterRadiusMeters)
-
-        // ========================================================
-        // AUTHORITATIVE QRTL POTENTIAL
-        // ========================================================
+        // ============================================================
+        // AUTHORITATIVE RADIAL QRTL POTENTIAL
+        // ============================================================
 
         let potential =
             field.interpolateRadialPotential(
                 radius: physicalRadius
             )
 
-        // ========================================================
-        // VALIDATE
-        // ========================================================
-
-        guard potential.isFinite else {
-            return 0.0
-        }
-
-        // ========================================================
+        // ============================================================
         // VISUAL MAGNITUDE
-        // ========================================================
+        // ============================================================
 
-        let magnitude = Float(abs(potential))
-
-        guard magnitude.isFinite else {
-            return 0.0
-        }
-
-        // ========================================================
-        // UPDATE VISUALIZATION NORMALIZATION
-        // ========================================================
-
-        if magnitude > maximumPotential {
-            maximumPotential = magnitude
-        }
-
-        return magnitude
+        return Float(abs(
+            potential
+        ))
     }
     // ============================================================
     // CLEAR SCENE
@@ -417,24 +345,14 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         }
 
         surfaceNode = nil
-        photonANode = nil
-        photonBNode = nil
-        galaxyANode = nil
-        galaxyBNode = nil
+        photonNode = nil
+        galaxyNode = nil
 
-        photonPathsA.removeAll(
+        photonPaths.removeAll(
             keepingCapacity: true
         )
 
-        photonPathsB.removeAll(
-            keepingCapacity: true
-        )
-
-        galaxyAProjectionPositions.removeAll(
-            keepingCapacity: true
-        )
-
-        galaxyBProjectionPositions.removeAll(
+        galaxyProjectionPositions.removeAll(
             keepingCapacity: true
         )
     }
@@ -657,39 +575,19 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             potentialMagnitudes.count
         )
 
-           
         // ============================================================
-        // SAFE POTENTIAL NORMALIZATION
-        // ============================================================
+        // SAFE NORMALIZATION
         //
-        // maximumPotential has now been collected from ALL surface
-        // samples.
+        // Visualization only.
         //
-        // This normalization affects visualization only.
-        //
+        // This does NOT alter QRTL physics.
         // ============================================================
 
-        let normalization: Float
-
-        if maximumPotential.isFinite &&
-            maximumPotential > 1.0e-30 {
-
-            normalization = maximumPotential
-
-        } else {
-
-            normalization = 1.0
-        }
-
-        print(
-            "QRTL GRAVITY SURFACE:",
-            "maximumPotential =",
-            maximumPotential,
-            "normalization =",
-            normalization,
-            "samples =",
-            potentialMagnitudes.count
-        )
+        let normalization =
+            max(
+                maximumPotential,
+                1.0e-30
+            )
 
         // ============================================================
         // CENTER VERTEX
@@ -1114,19 +1012,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         // CLEAR PREVIOUS RESULTS
         // ============================================================
 
-        photonPathsA.removeAll(
+        photonPaths.removeAll(
             keepingCapacity: true
         )
 
-        photonPathsB.removeAll(
-            keepingCapacity: true
-        )
-
-        galaxyAProjectionPositions.removeAll(
-            keepingCapacity: true
-        )
-
-        galaxyBProjectionPositions.removeAll(
+        galaxyProjectionPositions.removeAll(
             keepingCapacity: true
         )
 
@@ -1148,22 +1038,14 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         //     Y = transverse coordinate
         //     Z = transverse coordinate
         //
-        // Each source galaxy is therefore a disk in
-        // the physical Y-Z plane.
+        // The source galaxy is a disk in the physical Y-Z plane.
         // ============================================================
 
-        let galaxyACenter =
+        let galaxyCenter =
             SIMD3<Float>(
                 -extent,
                 0.0,
-                -0.70 * extent
-            )
-
-        let galaxyBCenter =
-            SIMD3<Float>(
-                -extent,
-                0.0,
-                0.70 * extent
+                0.0
             )
 
         let galaxyRadius =
@@ -1182,7 +1064,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 Float(numberOfStars)
 
             // ========================================================
-            // GALAXY A
+            // SOURCE POINT
             //
             // Disk lies in physical Y-Z plane.
             //
@@ -1191,43 +1073,44 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             // Z = sin(angle)
             // ========================================================
 
-            let localA =
+            let local =
                 SIMD3<Float>(
                     0.0,
                     cos(angle),
                     sin(angle)
                 )
 
-            let sourceA =
-                galaxyACenter +
-                galaxyRadius * localA
+            let source =
+                galaxyCenter +
+                galaxyRadius * local
 
             // ========================================================
-            // PHOTON A TRAVELS +X
+            // PHOTON TRAVELS +X, THROUGH THE SPACETIME SURFACE,
+            // ONTO THE PROJECTION PLANE.
             // ========================================================
 
-            let directionA =
+            let direction =
                 SIMD3<Float>(
                     1.0,
                     0.0,
                     0.0
                 )
 
-            let resultA =
+            let result =
                 tracer.tracePhoton(
-                    origin: sourceA,
-                    direction: directionA,
+                    origin: source,
+                    direction: direction,
                     parameters: lensingParameters
                 )
 
             // ========================================================
-            // STORE PHOTON A PATH
+            // STORE THE RAW TRACED PATH
             // ========================================================
 
-            if resultA.positions.count > 1 {
+            if result.positions.count > 1 {
 
-                let pathA =
-                    resultA.positions.map { point in
+                let path =
+                    result.positions.map { point in
 
                         SIMD3<Double>(
                             Double(point.x),
@@ -1236,13 +1119,13 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                         )
                     }
 
-                photonPathsA.append(
-                    pathA
+                photonPaths.append(
+                    path
                 )
             }
 
             // ========================================================
-            // STORE GALAXY A PROJECTION
+            // STORE GALAXY PROJECTION
             //
             // Projection plane:
             //
@@ -1251,84 +1134,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             //     visual Z = projection.y
             // ========================================================
 
-            if resultA.hitProjection,
+            if result.hitProjection,
                let projection =
-                    resultA.projectionCoordinates {
+                    result.projectionCoordinates {
 
-                galaxyAProjectionPositions.append(
-                    SIMD3<Double>(
-                        Double(projection.x),
-                        0.0,
-                        Double(projection.y)
-                    )
-                )
-            }
-
-            // ========================================================
-            // GALAXY B
-            //
-            // Disk also lies in physical Y-Z plane.
-            // ========================================================
-
-            let localB =
-                SIMD3<Float>(
-                    0.0,
-                    sin(angle),
-                    cos(angle)
-                )
-
-            let sourceB =
-                galaxyBCenter +
-                galaxyRadius * localB
-
-            // ========================================================
-            // PHOTON B TRAVELS +X
-            // ========================================================
-
-            let directionB =
-                SIMD3<Float>(
-                    1.0,
-                    0.0,
-                    0.0
-                )
-
-            let resultB =
-                tracer.tracePhoton(
-                    origin: sourceB,
-                    direction: directionB,
-                    parameters: lensingParameters
-                )
-
-            // ========================================================
-            // STORE PHOTON B PATH
-            // ========================================================
-
-            if resultB.positions.count > 1 {
-
-                let pathB =
-                    resultB.positions.map { point in
-
-                        SIMD3<Double>(
-                            Double(point.x),
-                            Double(point.y),
-                            Double(point.z)
-                        )
-                    }
-
-                photonPathsB.append(
-                    pathB
-                )
-            }
-
-            // ========================================================
-            // STORE GALAXY B PROJECTION
-            // ========================================================
-
-            if resultB.hitProjection,
-               let projection =
-                    resultB.projectionCoordinates {
-
-                galaxyBProjectionPositions.append(
+                galaxyProjectionPositions.append(
                     SIMD3<Double>(
                         Double(projection.x),
                         0.0,
@@ -1341,16 +1151,35 @@ final class QRTLGravitySurfaceEntity: SCNNode {
  
 
     // ============================================================
-    // PHOTON GEOMETRY
+    // TRAVELING PHOTON PARTICLES
+    //
+    // Each traced path becomes ONE particle that physically moves
+    // through the exact sequence of positions QRTLPhotonTracer
+    // calculated — from the source galaxy, through the deformed
+    // spacetime surface, onto the projection plane. No spline
+    // fitting or smoothing is applied; the particle's motion IS
+    // the raw tracePhoton output.
     // ============================================================
 
-    private func makePhotonGeometry(
+    private func makeTravelingPhotonParticles(
         paths: [[SIMD3<Double>]],
         color: UIColor
-    ) -> SCNGeometry {
+    ) -> SCNNode {
 
-        var vertices: [SCNVector3] = []
-        var indices: [Int32] = []
+        let parent = SCNNode()
+
+        let particleRadius =
+            max(
+                0.008,
+                Double(extent) /
+                Double(gridSize) *
+                0.35
+            )
+
+        // Total travel time is shared across every particle so
+        // faster (shorter) paths and slower (longer, more bent)
+        // paths animate at a comparable, readable pace.
+        let secondsPerPoint = 0.012
 
         for path in paths {
 
@@ -1358,87 +1187,99 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 continue
             }
 
-            let startIndex =
-                Int32(vertices.count)
-
-            for point in path {
-
-                guard
-                    point.x.isFinite,
-                    point.y.isFinite,
-                    point.z.isFinite
-                else {
-                    continue
+            let validPoints =
+                path.filter {
+                    $0.x.isFinite &&
+                    $0.y.isFinite &&
+                    $0.z.isFinite
                 }
 
-                vertices.append(
-                    SCNVector3(
-                        Float(point.x),
-                        Float(point.y),
-                        Float(point.z)
-                    )
-                )
-            }
-
-            let count =
-                vertices.count -
-                Int(startIndex)
-
-            guard count > 1 else {
+            guard validPoints.count > 1 else {
                 continue
             }
 
-            for i in 0..<(count - 1) {
-
-                indices.append(
-                    startIndex +
-                    Int32(i)
+            let sphere =
+                SCNSphere(
+                    radius: CGFloat(particleRadius)
                 )
 
-                indices.append(
-                    startIndex +
-                    Int32(i + 1)
+            let material =
+                SCNMaterial()
+
+            material.diffuse.contents = color
+            material.emission.contents = color
+            material.isDoubleSided = true
+            material.lightingModel = .constant
+
+            sphere.materials = [
+                material
+            ]
+
+            let particleNode =
+                SCNNode(
+                    geometry: sphere
+                )
+
+            particleNode.position =
+                SCNVector3(
+                    Float(validPoints[0].x),
+                    Float(validPoints[0].y),
+                    Float(validPoints[0].z)
+                )
+
+            // ----------------------------------------------------
+            // BUILD THE TRAVEL SEQUENCE
+            //
+            // One move action per consecutive pair of traced
+            // positions — the particle passes through every
+            // point tracePhoton produced, in order.
+            // ----------------------------------------------------
+
+            var moves: [SCNAction] = []
+
+            for index in 1..<validPoints.count {
+
+                let point = validPoints[index]
+
+                let moveAction =
+                    SCNAction.move(
+                        to: SCNVector3(
+                            Float(point.x),
+                            Float(point.y),
+                            Float(point.z)
+                        ),
+                        duration: secondsPerPoint
+                    )
+
+                moves.append(
+                    moveAction
                 )
             }
+
+            guard !moves.isEmpty else {
+                continue
+            }
+
+            let travel =
+                SCNAction.sequence(
+                    moves
+                )
+
+            let loop =
+                SCNAction.repeatForever(
+                    travel
+                )
+
+            particleNode.runAction(
+                loop
+            )
+
+            parent.addChildNode(
+                particleNode
+            )
         }
 
-        guard
-            vertices.count > 1,
-            indices.count >= 2
-        else {
-            return SCNGeometry()
-        }
-
-        let source =
-            SCNGeometrySource(
-                vertices: vertices
-            )
-
-        let element =
-            SCNGeometryElement(
-                indices: indices,
-                primitiveType: .line
-            )
-
-        let geometry =
-            SCNGeometry(
-                sources: [source],
-                elements: [element]
-            )
-
-        let material =
-            SCNMaterial()
-
-        material.diffuse.contents = color
-        material.emission.contents = color
-        material.isDoubleSided = true
-        material.lightingModel = .constant
-
-        geometry.materials = [
-            material
-        ]
-
-        return geometry
+        return parent
     }
 
     // ============================================================
