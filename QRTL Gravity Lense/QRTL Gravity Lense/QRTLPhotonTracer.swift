@@ -204,8 +204,45 @@ final class QRTLPhotonTracer {
     func tracePhoton(
         origin: SIMD3<Float>,
         direction: SIMD3<Float>,
-        parameters: LensingParameters
+        parameters: LensingParameters,
+        sceneToPhysicalScale: Float = 1.0
     ) -> PhotonTraceResult {
+
+        // --------------------------------------------------------
+        // SCENE-SPACE vs. PHYSICAL-SPACE
+        //
+        // origin/direction/position/stepSize all live in the
+        // caller's SCENE coordinates (e.g. a visualization's
+        // -extent...+extent range). QRTLField's gravity table,
+        // however, is built over the cluster's REAL physical
+        // radius in meters (field.clusterRadiusMeters), which can
+        // be many orders of magnitude larger than any reasonable
+        // scene extent.
+        //
+        // Without a conversion, every scene-space query position
+        // — from a "far away" source galaxy to the point of
+        // closest approach — lands inside the very first, tiny
+        // sliver of the physical table, so the field always reads
+        // as if the photon were sitting at the exact center: no
+        // "before curvature starts" is representable, and a
+        // source galaxy can never be meaningfully positioned
+        // outside the cluster's influence.
+        //
+        // sceneToPhysicalScale converts a scene-space position to
+        // the equivalent physical position (in meters) ONLY for
+        // querying the field — the photon's actual integration
+        // (position, direction, step size) stays entirely in
+        // scene-space, so nothing about rendering, step size, or
+        // the projection plane needs to change. Default 1.0
+        // preserves prior behavior for any caller already passing
+        // literal physical positions.
+        // --------------------------------------------------------
+
+        let sceneToPhysical =
+            sceneToPhysicalScale.isFinite &&
+            sceneToPhysicalScale > 0.0
+            ? sceneToPhysicalScale
+            : 1.0
 
         var position =
             origin
@@ -353,12 +390,20 @@ final class QRTLPhotonTracer {
                 position
 
             // ====================================================
+            // CONVERT TO PHYSICAL SPACE FOR THE FIELD QUERY ONLY
+            // ====================================================
+
+            let physicalQueryPosition =
+                currentPosition *
+                sceneToPhysical
+
+            // ====================================================
             // QRTL GRAVITATIONAL LENSING
             // ====================================================
 
             let qrtlResponse =
                 field.qrtlLensingAcceleration(
-                    at: currentPosition,
+                    at: physicalQueryPosition,
                     direction: rayDirection
                 )
 
@@ -554,5 +599,7 @@ final class QRTLPhotonTracer {
         )
     }
 }
+
+
 
 

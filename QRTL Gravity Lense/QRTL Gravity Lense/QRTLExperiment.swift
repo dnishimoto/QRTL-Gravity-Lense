@@ -14,6 +14,21 @@ import simd
 //
 // Authoritative physics experiment.
 //
+// COORDINATE CONVENTION (authoritative — matches
+// QRTLGravitySurfaceEntity exactly):
+//
+//     X = photon propagation direction
+//     Y = transverse coordinate
+//     Z = transverse coordinate
+//
+// The stellar distribution generated below is a UNIFORM SPHERE —
+// symmetric under rotation about any axis — so it carries no
+// axis-specific assumption of its own and cannot conflict with
+// this convention. Any code that later samples the field along a
+// specific axis (e.g. QRTLField.buildRadialGravityTable, which
+// samples along physical X) relies on that same spherical
+// symmetry, not on any particular axis being "special."
+//
 // Physical pipeline:
 //
 // BARYONIC MASS
@@ -57,6 +72,49 @@ import simd
 final class QRTLExperiment {
 
     // ========================================================
+    // DETERMINISTIC RANDOM NUMBER GENERATOR (SplitMix64)
+    // ========================================================
+    //
+    // Swift's `Float.random(in:)` with no generator argument uses
+    // SystemRandomNumberGenerator, which is intentionally
+    // non-deterministic — a different stellar distribution (and
+    // therefore a different lens) every run. That makes QRTL-vs-GR
+    // comparisons impossible to reproduce.
+    //
+    // SeededGenerator is a small, fast, deterministic generator:
+    // the SAME seed always produces the SAME sequence of star
+    // positions, so an experiment can be re-run — or compared
+    // against a GR reference run — with an identical lens.
+    // ========================================================
+
+    struct SeededGenerator: RandomNumberGenerator {
+
+        private var state: UInt64
+
+        init(seed: UInt64) {
+
+            // Avoid a zero state, which would produce a degenerate
+            // (all-zero) sequence from SplitMix64.
+            self.state =
+                seed == 0
+                ? 0x9E3779B97F4A7C15
+                : seed
+        }
+
+        mutating func next() -> UInt64 {
+
+            state = state &+ 0x9E3779B97F4A7C15
+
+            var z = state
+
+            z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+            z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+
+            return z ^ (z >> 31)
+        }
+    }
+
+    // ========================================================
     // FIELD
     // ========================================================
 
@@ -86,7 +144,22 @@ final class QRTLExperiment {
 
     private let clusterRadiusMeters: Double
 
-    private let starCount: Int = 1000
+    private let starCount: Int
+
+    // ========================================================
+    // REPRODUCIBILITY
+    // ========================================================
+    //
+    // The seed actually used to generate starPositions (when no
+    // external distribution was supplied). Exposed so a caller can
+    // read back exactly what produced this experiment's lens, log
+    // it alongside results, and reuse it later.
+    //
+    // nil when an externally supplied star distribution was used
+    // instead — the seed is meaningless in that case.
+    // ========================================================
+
+    let starPositionSeed: UInt64?
 
     // ========================================================
     // STAR POSITIONS
@@ -101,11 +174,27 @@ final class QRTLExperiment {
     // ========================================================
     // INITIALIZATION
     // ========================================================
+    //
+    // For repeatable experiments (e.g. QRTL vs. GR comparisons
+    // that must use the same lens), either:
+    //
+    //   • pass `starPositions:` with an externally supplied
+    //     distribution — nothing is generated, and
+    //     starPositionSeed is nil, OR
+    //   • rely on the default deterministic `seed:` (or pass your
+    //     own) — the same seed always reproduces the same
+    //     distribution.
+    //
+    // The old behavior — a fresh, unseeded, unreproducible
+    // distribution every call — is no longer the default.
+    // ========================================================
 
     init(
         mass: Double,
         radius: Double,
-        parameters: QRTLParameters
+        parameters: QRTLParameters,
+        starPositions externalStarPositions: [SIMD3<Float>]? = nil,
+        seed: UInt64 = 42
     ) {
 
         self.parameters = parameters
@@ -165,72 +254,123 @@ final class QRTLExperiment {
         //
         // ====================================================
 
-        var positions:
-            [SIMD3<Float>] = []
+        let positions: [SIMD3<Float>]
 
-        positions.reserveCapacity(
-            starCount
-        )
+        if let externalStarPositions,
+           !externalStarPositions.isEmpty {
 
-        for _ in 0..<starCount {
+            // ------------------------------------------------
+            // EXTERNALLY SUPPLIED DISTRIBUTION
+            //
+            // No generation, no randomness at all — the caller
+            // is fully in control of the lens (e.g. reusing an
+            // exact distribution from a prior experiment).
+            // ------------------------------------------------
 
-            let theta =
-                Float.random(
-                    in: 0.0...(2.0 * Float.pi)
+            positions =
+                externalStarPositions
+
+            self.starCount =
+                externalStarPositions.count
+
+            self.starPositionSeed =
+                nil
+
+        } else {
+
+            // ------------------------------------------------
+            // DETERMINISTIC GENERATION
+            //
+            // Same seed → same sequence → same stellar
+            // distribution → same lens, every time.
+            // ------------------------------------------------
+
+            let resolvedStarCount = 1000
+
+            self.starCount =
+                resolvedStarCount
+
+            self.starPositionSeed =
+                seed
+
+            var rng =
+                SeededGenerator(
+                    seed: seed
                 )
 
-            let zDirection =
-                Float.random(
-                    in: -1.0...1.0
-                )
+            var generated:
+                [SIMD3<Float>] = []
 
-            let radialXY =
-                sqrt(
-                    max(
-                        0.0,
-                        1.0 -
-                        zDirection *
-                        zDirection
+            generated.reserveCapacity(
+                resolvedStarCount
+            )
+
+            for _ in 0..<resolvedStarCount {
+
+                let theta =
+                    Float.random(
+                        in: 0.0...(2.0 * Float.pi),
+                        using: &rng
+                    )
+
+                let zDirection =
+                    Float.random(
+                        in: -1.0...1.0,
+                        using: &rng
+                    )
+
+                let radialXY =
+                    sqrt(
+                        max(
+                            0.0,
+                            1.0 -
+                            zDirection *
+                            zDirection
+                        )
+                    )
+
+                let randomUnit =
+                    Float.random(
+                        in: 0.0...1.0,
+                        using: &rng
+                    )
+
+                // Uniform spherical-volume distribution.
+                let radialFraction =
+                    pow(
+                        randomUnit,
+                        Float(1.0 / 3.0)
+                    )
+
+                let r =
+                    clusterRadiusFloat *
+                    radialFraction
+
+                let x =
+                    r *
+                    radialXY *
+                    cos(theta)
+
+                let y =
+                    r *
+                    radialXY *
+                    sin(theta)
+
+                let z =
+                    r *
+                    zDirection
+
+                generated.append(
+                    SIMD3<Float>(
+                        x,
+                        y,
+                        z
                     )
                 )
+            }
 
-            let randomUnit =
-                Float.random(
-                    in: 0.0...1.0
-                )
-
-            // Uniform spherical-volume distribution.
-            let radialFraction =
-                pow(
-                    randomUnit,
-                    Float(1.0 / 3.0)
-                )
-
-            let r =
-                clusterRadiusFloat *
-                radialFraction
-
-            let x =
-                r *
-                radialXY *
-                cos(theta)
-
-            let y =
-                r *
-                radialXY *
-                sin(theta)
-
-            let z =
-                r *
-                zDirection
-
-            positions.append(
-                SIMD3<Float>(
-                    x,
-                    y,
-                    z
-                )
-            )
+            positions =
+                generated
         }
 
         self.starPositions =

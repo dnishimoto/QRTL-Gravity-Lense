@@ -59,19 +59,32 @@ final class QRTLField {
     private var radialBolgarinoFluxTable: [Double] = []
     private var radialMagneticMagnitudeTable: [Double] = []
     
+    // The density map is the SINGLE SOURCE OF TRUTH for both the
+    // cluster's physical mass and radius — it's what the star
+    // positions were actually generated within. QRTLField must not
+    // independently re-derive these from `parameters`, because
+    // nothing keeps parameters.clusterRadiusParsecs /
+    // clusterMassSolarMasses in sync with whatever radius/mass the
+    // caller actually built the star field with (ContentView never
+    // sets either — they silently sit at their struct defaults,
+    // e.g. 10 parsecs ≈ 3.09e17 m, while the real cluster may be
+    // built at a completely different scale, e.g. 35 solar radii
+    // ≈ 2.4e10 m). That ~7-order-of-magnitude mismatch was causing
+    // the radial table to sample almost entirely outside where any
+    // star actually is, zeroing the QRTL energy density — and
+    // therefore the enclosed mass and potential — everywhere except
+    // the exact center.
     private var clusterMassKg: Double {
 
-         QRTLUnits.solarMassesToKilograms(
-             parameters.clusterMassSolarMasses
-         )
-     }
+        densitySource.clusterMassKg
+    }
 
     var clusterRadiusMeters: Double {
 
-         QRTLUnits.parsecsToMeters(
-             parameters.clusterRadiusParsecs
-         )
-     }
+        Double(
+            densitySource.fieldRadiusMeters
+        )
+    }
 
     // ========================================================
     // CONSTANTS
@@ -1224,12 +1237,16 @@ final class QRTLField {
         // ------------------------------------------------------------
         // PHYSICAL CLUSTER RADIUS
         //
-        // This is used ONLY for the gravitational integration.
+        // Read from the density map — the actual physical extent the
+        // star positions were generated within — not independently
+        // re-derived from parameters.clusterRadiusParsecs, which is
+        // never kept in sync with the real cluster scale. See the
+        // note on clusterRadiusMeters above.
         // ------------------------------------------------------------
 
         let clusterRadiusMeters =
-            QRTLUnits.parsecsToMeters(
-                parameters.clusterRadiusParsecs
+            Double(
+                densitySource.fieldRadiusMeters
             )
 
         guard
@@ -1250,22 +1267,6 @@ final class QRTLField {
         let dr =
             clusterRadiusMeters /
             Double(count - 1)
-
-        // ------------------------------------------------------------
-        // FIELD-SPACE RADIUS
-        //
-        // IMPORTANT:
-        //
-        // qrtlEnergyDensity(at:) receives QRTL/Scene field
-        // coordinates, NOT the physical radius in meters.
-        //
-        // The field is sampled from 0 ... 1.
-        //
-        // Physical radius is maintained separately in meters.
-        // ------------------------------------------------------------
-
-        let fieldMin: Float = 0.0
-        let fieldMax: Float = 1.0
 
         // ------------------------------------------------------------
         // RADIAL ARRAYS
@@ -1294,35 +1295,25 @@ final class QRTLField {
         //
         // Sample the QRTL energy density.
         //
-        // IMPORTANT:
-        //
-        // physicalRadiusMeters
-        // and
-        // fieldRadius
-        // are deliberately different quantities.
+        // qrtlEnergyDensity(at:) — and everything it calls downstream
+        // (densitySource.density(at:), the per-star distance-weight
+        // loop) — operates in the SAME physical-meter coordinate
+        // system as starPositions. There is no separate "field-space"
+        // 0...1 coordinate: a query position must be the real
+        // physical position in meters, or it queries a point that
+        // has no relationship to where the stars actually are.
         // ============================================================
 
         for i in 0..<count {
 
-            // Physical radius used by gravity.
             let physicalRadius =
                 Double(i) * dr
 
             radii[i] =
                 physicalRadius
 
-            // Normalized QRTL field coordinate.
-            let normalizedRadius =
-                Float(i) /
-                Float(count - 1)
-
-            let fieldRadius =
-                fieldMin +
-                (fieldMax - fieldMin) *
-                normalizedRadius
-
             guard
-                fieldRadius.isFinite
+                physicalRadius.isFinite
             else {
                 energyDensities[i] = 0.0
                 densities[i] = 0.0
@@ -1330,18 +1321,13 @@ final class QRTLField {
             }
 
             // --------------------------------------------------------
-            // QRTL FIELD POSITION
-            //
-            // This is intentionally NOT:
-            //
-            // SIMD3<Float>(Float(physicalRadius), 0, 0)
-            //
-            // because physicalRadius is measured in meters.
+            // QRTL FIELD POSITION — real physical meters, matching
+            // starPositions and densitySource.density(at:).
             // --------------------------------------------------------
 
             let position =
                 SIMD3<Float>(
-                    fieldRadius,
+                    Float(physicalRadius),
                     0.0,
                     0.0
                 )
@@ -2130,13 +2116,15 @@ final class QRTLField {
         // ------------------------------------------------------------
         // CHARACTERISTIC QRTL INTERACTION LENGTH
         //
-        // This must be a physical length in meters.
+        // This must be a physical length in meters. Uses the same
+        // authoritative clusterRadiusMeters (sourced from the
+        // density map) as everywhere else — not an independent
+        // parameters.clusterRadiusParsecs derivation, which is the
+        // same stale/unsynced value already fixed above.
         // ------------------------------------------------------------
 
         let interactionLength =
-            QRTLUnits.parsecsToMeters(
-                parameters.clusterRadiusParsecs
-            )
+            clusterRadiusMeters
 
         guard interactionLength.isFinite,
               interactionLength > 0.0

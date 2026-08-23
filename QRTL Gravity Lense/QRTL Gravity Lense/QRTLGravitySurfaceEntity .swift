@@ -335,6 +335,177 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         ))
     }
     // ============================================================
+    // SURFACE HEIGHT AT AN ARBITRARY POINT
+    // ============================================================
+    //
+    // Returns the exact Y offset a mesh vertex at (x, z) would have
+    // — same formula as the surface geometry itself: sample the
+    // authoritative QRTL potential, normalize against the surface's
+    // real maximum, apply the same pow(0.45) visual enhancement,
+    // negate, and scale by curvatureScale.
+    //
+    // This lets anything that draws a photon path (traveling
+    // particles here, or LensingSceneController's line renderer)
+    // make the path visually sit on the same exaggerated bowl the
+    // surface mesh renders — rather than the path's real (tiny,
+    // un-amplified) physics deflection being drawn on a completely
+    // different visual scale than the million-times-amplified
+    // surface, which is why paths were passing straight through the
+    // bowl regardless of how much they'd actually bent.
+    //
+    // No spline, no smoothing — a direct per-point offset.
+    // ============================================================
+
+    func surfaceHeight(
+        x: Float,
+        z: Float
+    ) -> Float {
+
+        let potential =
+            samplePotentialMagnitude(
+                x: x,
+                z: z
+            )
+
+        let normalization =
+            max(
+                maximumPotential,
+                1.0e-30
+            )
+
+        let normalized =
+            min(
+                max(
+                    potential /
+                    normalization,
+                    0.0
+                ),
+                1.0
+            )
+
+        let visualPotential =
+            pow(
+                normalized,
+                0.45
+            )
+
+        return -visualPotential *
+            curvatureScale
+    }
+
+    // ============================================================
+    // CURVATURE INTENSITY (0...1)
+    // ============================================================
+    //
+    // Same normalization and pow(0.45) visual enhancement as
+    // surfaceHeight — so intensity and height stay visually
+    // consistent, both reaching their extreme at the same point —
+    // but returned as a plain 0...1 value rather than a negated,
+    // curvatureScale-scaled offset. This is what a photon-path
+    // renderer uses to blend its color from "calm" (far from the
+    // mass, near 0) to "hot" (deep in the curvature, near 1) as it
+    // travels, so a path visibly changes appearance exactly where
+    // it's actually entering the strongly curved region — not just
+    // riding a surface that's shaped that way.
+    // ============================================================
+
+    func curvatureIntensity(
+        x: Float,
+        z: Float
+    ) -> Float {
+
+        let potential =
+            samplePotentialMagnitude(
+                x: x,
+                z: z
+            )
+
+        let normalization =
+            max(
+                maximumPotential,
+                1.0e-30
+            )
+
+        let normalized =
+            min(
+                max(
+                    potential /
+                    normalization,
+                    0.0
+                ),
+                1.0
+            )
+
+        return pow(
+            normalized,
+            0.45
+        )
+    }
+
+    // ============================================================
+    // CURVATURE COLOR RAMP
+    // ============================================================
+    //
+    // Blends linearly, per RGB channel, from `calmColor` (intensity
+    // 0 — far from the mass, negligible curvature) to `hotColor`
+    // (intensity 1 — deep in the well) so a photon visibly "heats
+    // up" as it enters strong curvature and cools back down as it
+    // leaves.
+    // ============================================================
+
+    static func curvatureColor(
+        intensity: Float,
+        calmColor: UIColor,
+        hotColor: UIColor = .white
+    ) -> UIColor {
+
+        let t =
+            CGFloat(
+                min(
+                    max(
+                        intensity,
+                        0.0
+                    ),
+                    1.0
+                )
+            )
+
+        var calmRed: CGFloat = 0.0
+        var calmGreen: CGFloat = 0.0
+        var calmBlue: CGFloat = 0.0
+        var calmAlpha: CGFloat = 0.0
+
+        calmColor.getRed(
+            &calmRed,
+            green: &calmGreen,
+            blue: &calmBlue,
+            alpha: &calmAlpha
+        )
+
+        var hotRed: CGFloat = 0.0
+        var hotGreen: CGFloat = 0.0
+        var hotBlue: CGFloat = 0.0
+        var hotAlpha: CGFloat = 0.0
+
+        hotColor.getRed(
+            &hotRed,
+            green: &hotGreen,
+            blue: &hotBlue,
+            alpha: &hotAlpha
+        )
+
+        return UIColor(
+            red: calmRed +
+                (hotRed - calmRed) * t,
+            green: calmGreen +
+                (hotGreen - calmGreen) * t,
+            blue: calmBlue +
+                (hotBlue - calmBlue) * t,
+            alpha: 1.0
+        )
+    }
+
+    // ============================================================
     // CLEAR SCENE
     // ============================================================
 
@@ -562,6 +733,21 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 )
             }
         }
+
+        // ============================================================
+        // COMPUTE THE ACTUAL MAXIMUM
+        //
+        // Previously this stayed at its reset value (0.0) and was
+        // never updated, so normalization always divided by
+        // effectively zero (max(0.0, 1e-30)) — every vertex's ratio
+        // clamped to 1.0 regardless of its real potential, making
+        // the surface render as a flat plate at a constant depth
+        // instead of a real contoured bowl.
+        // ============================================================
+
+        maximumPotential =
+            potentialMagnitudes.max() ??
+            0.0
 
         // ============================================================
         // VERIFY LOOKUP RESULT
@@ -1052,6 +1238,29 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             0.25 * extent
 
         // ============================================================
+        // SCENE-TO-PHYSICAL SCALE
+        //
+        // The scene is rendered at display scale (extent, e.g. 18),
+        // but the QRTL field's gravity table is built over the
+        // cluster's real physical radius (field.clusterRadiusMeters,
+        // potentially 10^10–10^17 meters). Without converting scene
+        // positions to physical space before querying the field, the
+        // source galaxy — and every point along the trace — would
+        // always sample as if sitting at the exact center, no matter
+        // how "far away" it looks on screen. This maps scene extent
+        // → the cluster's actual outer radius, so a source galaxy
+        // near -extent genuinely sits near/beyond the cluster's real
+        // edge (negligible curvature) and only curves meaningfully
+        // near closest approach to the center.
+        // ============================================================
+
+        let sceneToPhysicalScale =
+            Float(
+                field.clusterRadiusMeters
+            ) /
+            extent
+
+        // ============================================================
         // TRACE EVERY SOURCE STAR
         // ============================================================
 
@@ -1100,7 +1309,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 tracer.tracePhoton(
                     origin: source,
                     direction: direction,
-                    parameters: lensingParameters
+                    parameters: lensingParameters,
+                    sceneToPhysicalScale: sceneToPhysicalScale
                 )
 
             // ========================================================
@@ -1206,8 +1416,20 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             let material =
                 SCNMaterial()
 
-            material.diffuse.contents = color
-            material.emission.contents = color
+            let initialIntensity =
+                curvatureIntensity(
+                    x: Float(validPoints[0].x),
+                    z: Float(validPoints[0].z)
+                )
+
+            let initialColor =
+                Self.curvatureColor(
+                    intensity: initialIntensity,
+                    calmColor: color
+                )
+
+            material.diffuse.contents = initialColor
+            material.emission.contents = initialColor
             material.isDoubleSided = true
             material.lightingModel = .constant
 
@@ -1223,7 +1445,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             particleNode.position =
                 SCNVector3(
                     Float(validPoints[0].x),
-                    Float(validPoints[0].y),
+                    Float(validPoints[0].y) +
+                        surfaceHeight(
+                            x: Float(validPoints[0].x),
+                            z: Float(validPoints[0].z)
+                        ),
                     Float(validPoints[0].z)
                 )
 
@@ -1232,7 +1458,22 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             //
             // One move action per consecutive pair of traced
             // positions — the particle passes through every
-            // point tracePhoton produced, in order.
+            // point tracePhoton produced, in order. Each point's
+            // Y is offset by the surface's own height at that
+            // (x, z) — same formula the mesh vertices use — so
+            // the particle visually rides the exaggerated bowl
+            // instead of passing straight through it. This is a
+            // per-point offset, not a fitted curve: every original
+            // traced point is preserved exactly, just raised or
+            // lowered to sit on the surface.
+            //
+            // Alongside the move, each step also updates the
+            // particle's color — blended from `color` (calm, far
+            // from the mass) toward white-hot as curvatureIntensity
+            // at that point increases — so the particle visibly
+            // changes appearance exactly where it enters strong
+            // curvature, not just where the surface happens to be
+            // tall.
             // ----------------------------------------------------
 
             var moves: [SCNAction] = []
@@ -1241,18 +1482,52 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
                 let point = validPoints[index]
 
+                let ride =
+                    surfaceHeight(
+                        x: Float(point.x),
+                        z: Float(point.z)
+                    )
+
                 let moveAction =
                     SCNAction.move(
                         to: SCNVector3(
                             Float(point.x),
-                            Float(point.y),
+                            Float(point.y) +
+                                ride,
                             Float(point.z)
                         ),
                         duration: secondsPerPoint
                     )
 
+                let intensity =
+                    curvatureIntensity(
+                        x: Float(point.x),
+                        z: Float(point.z)
+                    )
+
+                let stepColor =
+                    Self.curvatureColor(
+                        intensity: intensity,
+                        calmColor: color
+                    )
+
+                let colorAction =
+                    SCNAction.run { _ in
+
+                        material.diffuse.contents =
+                            stepColor
+
+                        material.emission.contents =
+                            stepColor
+                    }
+
                 moves.append(
-                    moveAction
+                    SCNAction.group(
+                        [
+                            moveAction,
+                            colorAction
+                        ]
+                    )
                 )
             }
 
@@ -1354,4 +1629,3 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         return parent
     }
 }
-
