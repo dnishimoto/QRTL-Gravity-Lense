@@ -1,8 +1,10 @@
-
+//
+//  LensingParameters.swift
+//  QRTL Gravity Lense
 //
 //  Canonical parameters for QRTL photon propagation,
 //  gravitational lensing, electromagnetic refraction,
-//  and projection-plane geometry.
+//  continuous photon emission, and projection-plane geometry.
 //
 
 import Foundation
@@ -21,35 +23,40 @@ import Foundation
 // ============================================================
 
 struct LensingParameters {
-    // ============================================================
-       // PHOTON PROPAGATION
-       // ============================================================
 
-       /// Photon integration step in meters.
-       let photonStepSize: Float
+    // ========================================================
+    // PHOTON PROPAGATION
+    // ========================================================
 
-       /// Maximum photon propagation distance in meters.
-       let maximumPropagationRadius: Float
+    /// Continuous photon emission rate in photons per second.
+    let photonEmissionRate: Float
 
-       // ============================================================
-       // PROJECTION PLANE
-       // ============================================================
+    /// Photon integration step in meters.
+    let photonStepSize: Float
 
-       /// Projection plane X coordinate in meters.
-       let targetPlaneX: Float
+    /// Maximum photon propagation distance in meters.
+    let maximumPropagationRadius: Float
 
-       /// Physical half-width of projection plane in meters.
-       let projectionPlaneHalfExtent: Float
+    // ========================================================
+    // PROJECTION PLANE
+    // ========================================================
 
-       // ============================================================
-       // LENSING
-       // ============================================================
+    /// Projection plane X coordinate in meters.
+    let targetPlaneX: Float
 
-       let maximumPhotonSteps: Int
+    /// Physical half-width of projection plane in meters.
+    let projectionPlaneHalfExtent: Float
 
-       let deflectionStrength: Float
-  
- 
+    // ========================================================
+    // LENSING
+    // ========================================================
+
+    /// Maximum number of photon integration steps.
+    let maximumPhotonSteps: Int
+
+    /// Base gravitational deflection multiplier.
+    let deflectionStrength: Float
+
     /// QRTL-specific lensing multiplier.
     var qrtlLensingStrength: Float = 1.0
 
@@ -95,6 +102,7 @@ struct LensingParameters {
     init(
         maximumPropagationRadius: Float = 20.0,
         photonStepSize: Float = 0.20,
+        photonEmissionRate: Float = 60.0,
         maximumPhotonSteps: Int = 100,
         deflectionStrength: Float = 1.0,
         qrtlLensingStrength: Float = 1.0,
@@ -109,6 +117,16 @@ struct LensingParameters {
         projectionPlaneHalfExtent: Float = 18.0,
         interactionRate: Float = 0.0
     ) {
+
+        // ====================================================
+        // PHOTON PROPAGATION
+        // ====================================================
+
+        self.photonEmissionRate =
+            max(
+                photonEmissionRate,
+                0.0
+            )
 
         self.maximumPropagationRadius =
             max(
@@ -128,6 +146,10 @@ struct LensingParameters {
                 1
             )
 
+        // ====================================================
+        // LENSING
+        // ====================================================
+
         self.deflectionStrength =
             max(
                 deflectionStrength,
@@ -146,6 +168,10 @@ struct LensingParameters {
                 0.0
             )
 
+        // ====================================================
+        // QRTL FIELD COUPLING
+        // ====================================================
+
         self.qrtlFieldCoupling =
             max(
                 qrtlFieldCoupling,
@@ -157,6 +183,10 @@ struct LensingParameters {
                 qrtlPhotonCoupling,
                 0.0
             )
+
+        // ====================================================
+        // ELECTROMAGNETIC COUPLING
+        // ====================================================
 
         self.electromagneticCoupling =
             max(
@@ -182,6 +212,10 @@ struct LensingParameters {
                 0.0
             )
 
+        // ====================================================
+        // PROJECTION PLANE
+        // ====================================================
+
         self.targetPlaneX =
             targetPlaneX
 
@@ -190,6 +224,10 @@ struct LensingParameters {
                 projectionPlaneHalfExtent,
                 0.001
             )
+
+        // ====================================================
+        // OPTIONAL INTERACTION
+        // ====================================================
 
         self.interactionRate =
             max(

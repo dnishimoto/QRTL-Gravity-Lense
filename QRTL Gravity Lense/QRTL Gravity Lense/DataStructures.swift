@@ -10,6 +10,265 @@ import simd
 import SceneKit
 import SwiftUI
 
+
+struct PhotonSimulationProgress {
+
+    /// Total number of photons emitted during the simulation.
+    var total: Int
+
+    /// Number of photons that have completed propagation.
+    var completed: Int
+
+    /// Number of photons currently propagating through the QRTL field.
+    var active: Int
+
+    /// Number of photons that reached the projection plane.
+    var projectionHits: Int
+
+    init(
+        total: Int = 0,
+        completed: Int = 0,
+        active: Int = 0,
+        projectionHits: Int = 0
+    ) {
+        self.total = total
+        self.completed = completed
+        self.active = active
+        self.projectionHits = projectionHits
+    }
+}
+
+// ============================================================
+// CONTINUOUS PHOTON
+// ============================================================
+
+// ============================================================
+// CONTINUOUS PHOTON
+// ============================================================
+//
+// Represents one photon continuously emitted from the source
+// galaxy and propagated through the QRTL field toward the
+// projection plane.
+//
+// This is the runtime state for the continuous photon emitter.
+// ============================================================
+
+struct ContinuousPhoton {
+
+    // ========================================================
+    // PROPAGATION STATE
+    // ========================================================
+
+    /// Current physical position of the photon.
+    var position: SIMD3<Float>
+
+    /// Current normalized propagation direction.
+    var direction: SIMD3<Float>
+
+    /// Total physical distance traveled by the photon.
+    var traveledDistance: Float
+
+    /// Number of integration steps completed.
+    var stepCount: Int
+
+    /// Complete photon trajectory.
+    var path: [SIMD3<Float>]
+
+    // ========================================================
+    // QRTL INTERACTION
+    // ========================================================
+
+    /// Maximum QRTL field influence encountered by this photon.
+    var maximumQRTLInfluence: Float
+
+    // ========================================================
+    // LIFETIME / PROJECTION STATE
+    // ========================================================
+
+    /// True while the photon is still propagating.
+    var alive: Bool
+
+    /// True when the photon reaches the projection plane.
+    var hitProjectionPlane: Bool
+
+    /// Physical position where the photon struck the
+    /// projection plane.
+    var projectionPosition: SIMD3<Float>?
+
+    // ========================================================
+    // SCENEKIT REPRESENTATION
+    // ========================================================
+
+    /// SceneKit node used to visualize this photon.
+    ///
+    /// The node is optional because photons can exist in the
+    /// simulation before their visual representation is created.
+    var node: SCNNode?
+}
+// ============================================================
+// ADVANCE CONTINUOUS PHOTON
+// ============================================================
+
+private func advanceContinuousPhoton(
+    photon: inout ContinuousPhoton,
+    field: QRTLField,
+    parameters: LensingParameters,
+    deltaTime: Float
+) -> Bool {
+
+    guard photon.alive else {
+        return false
+    }
+
+    let stepDistance =
+        parameters.photonStepSize
+
+    let position =
+        photon.position
+
+    let direction =
+        simd_normalize(photon.direction)
+
+    // --------------------------------------------------------
+    // Maximum propagation distance
+    // --------------------------------------------------------
+
+    if photon.traveledDistance >=
+        parameters.maximumPropagationRadius {
+
+        photon.alive = false
+        return false
+    }
+
+    // --------------------------------------------------------
+    // QRTL lensing acceleration
+    // --------------------------------------------------------
+
+    let acceleration =
+        field.qrtlLensingAcceleration(
+            at: position,
+            direction: direction
+        )
+
+    let influence =
+        simd_length(acceleration)
+
+    photon.maximumQRTLInfluence =
+        max(
+            photon.maximumQRTLInfluence,
+            influence
+        )
+
+    // --------------------------------------------------------
+    // QRTL bending
+    // --------------------------------------------------------
+
+    var bend =
+        acceleration *
+        parameters.qrtlLensingStrength
+
+    let bendMagnitude =
+        simd_length(bend)
+
+    if bendMagnitude >
+        parameters.maximumPhotonBend {
+
+        if bendMagnitude > 0 {
+
+            bend =
+                simd_normalize(bend) *
+                parameters.maximumPhotonBend
+        }
+    }
+
+    // --------------------------------------------------------
+    // Direction update
+    // --------------------------------------------------------
+
+    var newDirection =
+        direction +
+        bend * deltaTime
+
+    let directionMagnitude =
+        simd_length(newDirection)
+
+    if directionMagnitude > 0 {
+
+        newDirection =
+            simd_normalize(newDirection)
+
+    } else {
+
+        newDirection =
+            direction
+    }
+
+    // --------------------------------------------------------
+    // Position update
+    // --------------------------------------------------------
+
+    let newPosition =
+        position +
+        newDirection *
+        stepDistance
+
+    // --------------------------------------------------------
+    // Store path
+    // --------------------------------------------------------
+
+    photon.path.append(
+        newPosition
+    )
+
+    // --------------------------------------------------------
+    // Projection-plane crossing
+    // --------------------------------------------------------
+
+    let crossedProjectionPlane =
+        position.x <
+        parameters.targetPlaneX &&
+        newPosition.x >=
+        parameters.targetPlaneX
+
+    // --------------------------------------------------------
+    // Update photon
+    // --------------------------------------------------------
+
+    photon.position =
+        newPosition
+
+    photon.direction =
+        newDirection
+
+    photon.traveledDistance +=
+        stepDistance
+
+    // --------------------------------------------------------
+    // Photon reached projection plane
+    // --------------------------------------------------------
+
+    if crossedProjectionPlane {
+
+        photon.alive = false
+
+        return false
+    }
+
+    // --------------------------------------------------------
+    // Maximum propagation distance
+    // --------------------------------------------------------
+
+    if photon.traveledDistance >=
+        parameters.maximumPropagationRadius {
+
+        photon.alive = false
+
+        return false
+    }
+
+    return true
+}
+
 struct QRTLUnifiedSpacetimeSample {
 
     let position: SIMD3<Float>

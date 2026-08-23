@@ -20,6 +20,35 @@ import simd
 
 final class LensingSceneController:
     ObservableObject {
+    
+    private var totalPhotonCount: Int = 0
+    private var photonNodes: [SCNNode] = []
+    private var continuousPhotonField: QRTLField?
+    private var continuousPhotonParameters: LensingParameters?
+    private var continuousPhotonSimulationRunning: Bool = false
+    private var photonSimulationDisplayLink: CADisplayLink?
+    private var lastPhotonSimulationTime: CFTimeInterval = 0.0
+    private var photonEmissionAccumulator: Double = 0.0
+    private var activePhotons: [ContinuousPhoton] = []
+    
+    private var activePhotonCount: Int = 0
+
+    private var completedPhotonCount: Int = 0
+
+    var projectionHitCount: Int = 0
+
+    var continuousPhotonEmissionIndex: Int = 0
+
+    var sceneSourceGalaxyPositions: [SIMD3<Float>] = []
+    
+    private var photonSimulationProgress =
+        PhotonSimulationProgress(
+            total: 0,
+            completed: 0,
+            active: 0,
+            projectionHits: 0
+        )
+
 
     @Published private(set) var isRunning:
         Bool = false
@@ -265,6 +294,823 @@ final class LensingSceneController:
         scene.rootNode.addChildNode(
             entity
         )
+    }
+    
+    // ============================================================
+    // MARK: - STOP CONTINUOUS PHOTON SIMULATION
+    // ============================================================
+
+    func stopContinuousPhotonSimulation() {
+
+        // --------------------------------------------------------
+        // Stop the display-link driven simulation loop.
+        // --------------------------------------------------------
+
+        photonSimulationDisplayLink?.invalidate()
+        photonSimulationDisplayLink = nil
+
+        // --------------------------------------------------------
+        // Mark the continuous emitter as stopped.
+        // --------------------------------------------------------
+
+        continuousPhotonSimulationRunning = false
+
+        // --------------------------------------------------------
+        // Reset the emission clock/accumulator.
+        //
+        // This prevents the next simulation from inheriting
+        // elapsed time from the previous run.
+        // --------------------------------------------------------
+
+        lastPhotonSimulationTime = 0.0
+        photonEmissionAccumulator = 0.0
+
+        // --------------------------------------------------------
+        // Remove all photons that are still traveling.
+        //
+        // IMPORTANT:
+        //
+        // This stops the continuous stream immediately. It does
+        // not modify the authoritative QRTLField.
+        // --------------------------------------------------------
+
+        activePhotons.removeAll()
+
+        // --------------------------------------------------------
+        // Reset the continuous-emission bookkeeping.
+        // --------------------------------------------------------
+
+        activePhotonCount = 0
+
+        // --------------------------------------------------------
+        // Keep completed/projection counters intact unless your
+        // design specifically wants STOP to represent a complete
+        // reset.
+        //
+        // Therefore we do NOT reset:
+        //
+        // completedPhotonCount
+        // projectionHitCount
+        //
+        // Those represent what happened during the simulation.
+        // --------------------------------------------------------
+
+        // --------------------------------------------------------
+        // Optional status update on the main thread.
+        // --------------------------------------------------------
+
+        DispatchQueue.main.async { [weak self] in
+
+            guard let self else {
+                return
+            }
+
+       
+        }
+    }
+    // ============================================================
+    // MARK: - PHOTON SIMULATION DISPLAY LINK TICK
+    // ============================================================
+
+    @objc
+    private func photonSimulationDisplayLinkTick(
+        _ displayLink: CADisplayLink
+    ) {
+
+        // ============================================================
+        // SIMULATION RUNNING?
+        // ============================================================
+
+        guard continuousPhotonSimulationRunning else {
+            return
+        }
+
+        // ============================================================
+        // CURRENT DISPLAY-LINK TIME
+        // ============================================================
+
+        let currentTime =
+            displayLink.timestamp
+
+        // ============================================================
+        // FIRST FRAME
+        // ============================================================
+
+        if lastPhotonSimulationTime == 0.0 {
+
+            lastPhotonSimulationTime =
+                currentTime
+
+            return
+        }
+
+        // ============================================================
+        // ELAPSED TIME
+        // ============================================================
+
+        let deltaTime =
+            currentTime -
+            lastPhotonSimulationTime
+
+        lastPhotonSimulationTime =
+            currentTime
+
+        // ============================================================
+        // CLAMP FRAME TIME
+        // ============================================================
+
+        let clampedDeltaTime =
+            min(
+                max(
+                    deltaTime,
+                    0.0
+                ),
+                1.0 / 20.0
+            )
+
+        // ============================================================
+        // UPDATE CONTINUOUS PHOTON FIELD
+        // ============================================================
+
+        updateContinuousPhotonSimulation(
+            deltaTime:
+                clampedDeltaTime
+        )
+    }
+    // ============================================================
+    // MARK: - UPDATE CONTINUOUS PHOTON SIMULATION
+    // ============================================================
+
+    private func updateContinuousPhotonSimulation(
+        deltaTime: CFTimeInterval
+    ) {
+
+        // ============================================================
+        // SIMULATION RUNNING?
+        // ============================================================
+
+        guard continuousPhotonSimulationRunning else {
+            return
+        }
+
+        // ============================================================
+        // QRTL FIELD
+        // ============================================================
+
+        guard let field =
+            continuousPhotonField
+        else {
+            return
+        }
+
+        // ============================================================
+        // LENSING PARAMETERS
+        // ============================================================
+
+        guard let parameters =
+            continuousPhotonParameters
+        else {
+            return
+        }
+
+        // ============================================================
+        // 1. CONTINUOUS PHOTON EMISSION
+        // ============================================================
+
+        let emissionRate =
+            max(
+                parameters.photonEmissionRate,
+                0.0
+            )
+
+        photonEmissionAccumulator +=
+            Double(emissionRate) *
+            deltaTime
+
+        let photonsToEmit =
+            Int(
+                floor(
+                    photonEmissionAccumulator
+                )
+            )
+
+        if photonsToEmit > 0 {
+
+            photonEmissionAccumulator -=
+                Double(photonsToEmit)
+
+            for _ in 0..<photonsToEmit {
+
+                emitContinuousPhoton(
+                    field:
+                        field,
+                    parameters:
+                        parameters
+                )
+            }
+        }
+
+        // ============================================================
+        // 2. NO ACTIVE PHOTONS
+        // ============================================================
+
+        guard !activePhotons.isEmpty else {
+
+            activePhotonCount =
+                0
+
+            updateContinuousPhotonCounters()
+
+            updateContinuousPhotonNodes()
+
+            return
+        }
+
+        // ============================================================
+        // 3. NEXT ACTIVE PHOTON ARRAY
+        // ============================================================
+
+        var photonsThatRemain:
+            [ContinuousPhoton] = []
+
+        photonsThatRemain.reserveCapacity(
+            activePhotons.count
+        )
+
+        // ============================================================
+        // 4. FRAME COMPLETION COUNTERS
+        // ============================================================
+
+        var completedThisFrame =
+            0
+
+        // ============================================================
+        // 5. ADVANCE ACTIVE PHOTONS
+        // ============================================================
+
+        for var photon in activePhotons {
+
+            // --------------------------------------------------------
+            // Advance the photon through the physical QRTL field.
+            // --------------------------------------------------------
+
+            let photonContinues =
+                advanceContinuousPhoton(
+                    &photon,
+                    field:
+                        field,
+                    parameters:
+                        parameters,
+                    deltaTime:
+                        Float(deltaTime)
+                )
+
+            // --------------------------------------------------------
+            // Photon reached the projection plane.
+            // --------------------------------------------------------
+
+            if photon.hitProjectionPlane {
+
+                completedThisFrame += 1
+
+                projectionHitCount += 1
+
+                continue
+            }
+
+            // --------------------------------------------------------
+            // Photon has reached a termination condition.
+            // --------------------------------------------------------
+
+            if !photonContinues ||
+                !photon.alive {
+
+                completedThisFrame += 1
+
+                continue
+            }
+
+            // --------------------------------------------------------
+            // Photon is still traveling through the QRTL field.
+            // --------------------------------------------------------
+
+            photonsThatRemain.append(
+                photon
+            )
+        }
+
+        // ============================================================
+        // 6. REPLACE ACTIVE PHOTON ARRAY
+        // ============================================================
+
+        activePhotons =
+            photonsThatRemain
+
+        // ============================================================
+        // 7. UPDATE COMPLETED PHOTON COUNT
+        // ============================================================
+
+        completedPhotonCount +=
+            completedThisFrame
+
+        // ============================================================
+        // 8. UPDATE ACTIVE PHOTON COUNT
+        // ============================================================
+
+        activePhotonCount =
+            activePhotons.count
+
+        // ============================================================
+        // 9. UPDATE PHOTON SIMULATION PROGRESS
+        // ============================================================
+
+        updateContinuousPhotonCounters()
+
+        // ============================================================
+        // 10. UPDATE SCENE NODES
+        // ============================================================
+
+        updateContinuousPhotonNodes()
+    }
+    // ============================================================
+    // ADVANCE CONTINUOUS PHOTON
+    // ============================================================
+
+    private func advanceContinuousPhoton(
+        _ photon: inout ContinuousPhoton,
+        field: QRTLField,
+        parameters: LensingParameters,
+        deltaTime: Float
+    ) -> Bool {
+
+        // --------------------------------------------------------
+        // PROPAGATION DISTANCE
+        // --------------------------------------------------------
+
+        let stepDistance =
+            parameters.photonStepSize
+
+        // --------------------------------------------------------
+        // CURRENT PHOTON STATE
+        // --------------------------------------------------------
+
+        let position = photon.position
+        let direction = simd_normalize(photon.direction)
+
+        // --------------------------------------------------------
+        // STOP CONDITIONS
+        // --------------------------------------------------------
+
+        let traveledDistance =
+            photon.traveledDistance
+
+        if traveledDistance >=
+            parameters.maximumPropagationRadius {
+
+            return false
+        }
+
+        if photon.stepCount >=
+            parameters.maximumPhotonSteps {
+
+            return false
+        }
+
+        // --------------------------------------------------------
+        // PROJECTION PLANE
+        //
+        // The photon travels primarily in +X.
+        // Detect crossing of the projection plane rather than
+        // requiring the photon to land exactly on targetPlaneX.
+        // --------------------------------------------------------
+
+        let targetX =
+            parameters.targetPlaneX
+
+        let previousX =
+            position.x
+
+        // --------------------------------------------------------
+        // QRTL LENSING ACCELERATION
+        // --------------------------------------------------------
+
+        let acceleration =
+            field.qrtlLensingAcceleration(
+                at: position,
+                direction: direction
+            )
+
+        // --------------------------------------------------------
+        // LIMIT THE BENDING CONTRIBUTION
+        // --------------------------------------------------------
+
+        let accelerationMagnitude =
+            simd_length(acceleration)
+
+        var bend =
+            acceleration * parameters.qrtlLensingStrength
+
+        if accelerationMagnitude > 0 {
+
+            let maximumBend =
+                parameters.maximumPhotonBend
+
+            let bendMagnitude =
+                simd_length(bend)
+
+            if bendMagnitude > maximumBend {
+
+                bend =
+                    simd_normalize(bend) *
+                    maximumBend
+            }
+        }
+
+        // --------------------------------------------------------
+        // UPDATE DIRECTION
+        // --------------------------------------------------------
+
+        var newDirection =
+            direction + bend * deltaTime
+
+        let newDirectionMagnitude =
+            simd_length(newDirection)
+
+        if newDirectionMagnitude > 0 {
+
+            newDirection =
+                simd_normalize(newDirection)
+
+        } else {
+
+            newDirection =
+                direction
+        }
+
+        // --------------------------------------------------------
+        // ADVANCE PHOTON
+        // --------------------------------------------------------
+
+        let newPosition =
+            position +
+            newDirection * stepDistance
+
+        // --------------------------------------------------------
+        // CHECK PROJECTION-PLANE CROSSING
+        // --------------------------------------------------------
+
+        let crossedProjectionPlane =
+            previousX < targetX &&
+            newPosition.x >= targetX
+
+        if crossedProjectionPlane {
+
+            // ----------------------------------------------------
+            // Interpolate the exact projection-plane intersection.
+            // ----------------------------------------------------
+
+            let dx =
+                newPosition.x - previousX
+
+            var fraction: Float = 1.0
+
+            if abs(dx) > 0.000001 {
+
+                fraction =
+                    (targetX - previousX) / dx
+            }
+
+            fraction =
+                max(
+                    0.0,
+                    min(
+                        fraction,
+                        1.0
+                    )
+                )
+
+            let projectionPosition =
+                position +
+                (newPosition - position) * fraction
+
+            // ----------------------------------------------------
+            // Store projection result.
+            // ----------------------------------------------------
+
+            photon.position =
+                projectionPosition
+
+            photon.direction =
+                newDirection
+
+            photon.traveledDistance +=
+                stepDistance * fraction
+
+            photon.stepCount += 1
+
+            photon.hitProjectionPlane = true
+
+            photon.projectionPosition =
+                projectionPosition
+
+            return false
+        }
+
+        // --------------------------------------------------------
+        // STORE UPDATED PHOTON STATE
+        // --------------------------------------------------------
+
+        photon.position =
+            newPosition
+
+        photon.direction =
+            newDirection
+
+        photon.traveledDistance +=
+            stepDistance
+
+        photon.stepCount += 1
+
+        photon.hitProjectionPlane = false
+
+        // --------------------------------------------------------
+        // CONTINUE PROPAGATION
+        // --------------------------------------------------------
+
+        return true
+    }
+    // ============================================================
+    // UPDATE CONTINUOUS PHOTON NODES
+    // ============================================================
+
+    private func updateContinuousPhotonNodes() {
+
+        // --------------------------------------------------------
+        // Keep a node for every active photon.
+        // --------------------------------------------------------
+
+        for photon in activePhotons {
+
+            guard let node = photon.node else {
+                continue
+            }
+
+            // ----------------------------------------------------
+            // Photon position
+            // ----------------------------------------------------
+
+            node.position = SCNVector3(
+                photon.position.x,
+                photon.position.y,
+                photon.position.z
+            )
+
+            // ----------------------------------------------------
+            // Make sure the photon is visible.
+            // ----------------------------------------------------
+
+            node.isHidden = false
+        }
+
+        // --------------------------------------------------------
+        // Remove nodes belonging to photons that are no longer
+        // active.
+        //
+        // This prevents completed photons from remaining visually
+        // frozen in the SceneKit scene.
+        // --------------------------------------------------------
+
+        // ============================================================
+        // SYNCHRONIZE PHOTON NODES WITH ACTIVE PHOTONS
+        // ============================================================
+
+        while photonNodes.count > activePhotons.count {
+
+            let node = photonNodes.removeLast()
+
+            node.removeFromParentNode()
+        }
+
+        // ------------------------------------------------------------
+        // Create missing SceneKit nodes.
+        // ------------------------------------------------------------
+
+        while photonNodes.count < activePhotons.count {
+
+            let node = SCNNode()
+
+            let geometry = SCNSphere(
+                radius: 0.015
+            )
+
+            node.geometry = geometry
+
+            scene.rootNode.addChildNode(node)
+
+            photonNodes.append(node)
+        }
+    }
+    // ============================================================
+    // UPDATE CONTINUOUS PHOTON COUNTERS
+    // ============================================================
+
+    private func updateContinuousPhotonCounters() {
+
+        let activeCount = activePhotons.count
+
+        photonSimulationProgress.active = activeCount
+    }
+    // ============================================================
+    // MARK: - EMIT CONTINUOUS PHOTON
+    // ============================================================
+
+    private func emitContinuousPhoton(
+        field: QRTLField,
+        parameters: LensingParameters
+    ) {
+
+        // --------------------------------------------------------
+        // Source galaxy must exist before photons can be emitted.
+        // --------------------------------------------------------
+
+        guard !sceneSourceGalaxyPositions.isEmpty else {
+            return
+        }
+
+        // --------------------------------------------------------
+        // Select the next source-galaxy star.
+        //
+        // This keeps emission distributed across the source galaxy
+        // rather than creating every photon at one point.
+        // --------------------------------------------------------
+
+        let sourceIndex =
+            continuousPhotonEmissionIndex %
+            sceneSourceGalaxyPositions.count
+
+        continuousPhotonEmissionIndex += 1
+
+        let sourcePosition =
+            sceneSourceGalaxyPositions[sourceIndex]
+
+        // --------------------------------------------------------
+        // Photon travels toward the QRTL lens / projection plane.
+        //
+        // Your source galaxy is positioned behind the lens, so
+        // calculate the initial direction from the source position
+        // toward the lens center.
+        // --------------------------------------------------------
+
+        let target =
+            SIMD3<Float>(
+                0.0,
+                0.0,
+                0.0
+            )
+
+        let directionVector =
+            target -
+            sourcePosition
+
+        let directionLength =
+            simd_length(directionVector)
+
+        guard directionLength > 1e-6 else {
+            return
+        }
+
+        let initialDirection =
+            simd_normalize(directionVector)
+
+        // --------------------------------------------------------
+        // Create one continuous photon.
+        // --------------------------------------------------------
+
+        let photon = ContinuousPhoton(
+
+            position:
+                sourcePosition,
+
+            direction:
+                initialDirection,
+
+            traveledDistance:
+                0.0,
+            stepCount:
+                0,
+
+            path:
+                [sourcePosition],
+
+        
+            maximumQRTLInfluence:
+                0.0,
+
+            alive:
+                true,
+
+            hitProjectionPlane:
+                false,
+
+            projectionPosition:
+                nil
+        )
+        // --------------------------------------------------------
+        // Add photon to the live simulation.
+        //
+        // The photon will now be advanced by
+        // updateContinuousPhotonSimulation().
+        // --------------------------------------------------------
+
+        activePhotons.append(
+            photon
+        )
+
+        // --------------------------------------------------------
+        // Update bookkeeping.
+        // --------------------------------------------------------
+
+        activePhotonCount =
+            activePhotons.count
+
+        totalPhotonCount += 1
+    }
+    private func startPhotonSimulationDisplayLink() {
+
+        // Prevent multiple display links from being created.
+        photonSimulationDisplayLink?.invalidate()
+        photonSimulationDisplayLink = nil
+
+        // Reset timing for the new simulation.
+        lastPhotonSimulationTime = 0.0
+
+        // Reset emission accumulator so the first frame starts clean.
+        photonEmissionAccumulator = 0.0
+
+        // Create the display-link callback.
+        let displayLink = CADisplayLink(
+            target: self,
+            selector: #selector(
+                photonSimulationDisplayLinkTick(_:)
+            )
+        )
+
+        // Run continuously with the screen refresh.
+        displayLink.add(
+            to: .main,
+            forMode: .common
+        )
+
+        photonSimulationDisplayLink = displayLink
+    }
+    func startContinuousPhotonSimulation(
+        field: QRTLField,
+        parameters: LensingParameters,
+        progress: @escaping (PhotonSimulationProgress) -> Void
+    ) {
+
+        continuousPhotonField =
+            field
+
+        continuousPhotonParameters =
+            parameters
+
+        continuousPhotonSimulationRunning =
+            true
+
+        lastPhotonSimulationTime =
+            0.0
+
+        photonEmissionAccumulator =
+            0.0
+
+        // Reset counters for this simulation run.
+        totalPhotonCount =
+            0
+
+        activePhotonCount =
+            0
+
+        completedPhotonCount =
+            0
+
+        projectionHitCount =
+            0
+
+        photonSimulationProgress =
+            PhotonSimulationProgress(
+                total: 0,
+                completed: 0,
+                active: 0,
+                projectionHits: 0
+            )
+
+        // Send initial progress to ContentView.
+        progress(
+            photonSimulationProgress
+        )
+
+        startPhotonSimulationDisplayLink()
     }
     // ============================================================
     // GENERATE GLOBULAR CLUSTER STAR POSITIONS
