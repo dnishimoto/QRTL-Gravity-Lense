@@ -116,6 +116,20 @@
 
 
 
+//
+//  ContentView.swift
+//  QRTL Gravity Lense
+//
+//  Created by David Nishimoto on 8/18/26.
+//
+
+//
+//  ContentView.swift
+//  QRTL Gravity Lense
+//
+//  Created by David Nishimoto on 8/18/26.
+//
+
 import SwiftUI
 import SceneKit
 import simd
@@ -123,7 +137,7 @@ import Combine
 import UIKit
 
 struct ContentView: View {
-    
+
     // ============================================================
     // MARK: - SIMPLE GRAVITY POTENTIAL DEBUG
     // ============================================================
@@ -145,152 +159,147 @@ struct ContentView: View {
 
     @State private var potentialExplanation: String =
         "The QRTL gravitational potential has not been sampled yet."
-    
+
     // ============================================================
     // MARK: - PHYSICAL CLUSTER PARAMETERS
     // ============================================================
-    
+
     @State private var massSolar: Double = 1_000_000.0
     @State private var radiusSolar: Double = 35.0
-    
+
     // ============================================================
     // MARK: - QRTL PARAMETERS
     // ============================================================
-    
+
     @State private var alphaQ: Double = 5e-6
     @State private var etaQ: Double = 3.0
     @State private var gammaQ: Double = 1.0
-    
     @State private var electromagneticCoupling: Double = 2e-11
     @State private var photonEMCoupling: Double = 5e-21
-    
     @State private var chiQ: Double = 1.0
     @State private var interactionRate: Double = 0.0
-    
+
     // ============================================================
     // MARK: - UI STATE
     // ============================================================
-    
+
     @State private var result: QRTLExperimentResult?
-    
     @State private var isRunning: Bool = false
-    
+
     @State private var statusMessage: String =
-    "Ready — source galaxy → QRTL lens → observation plane"
-    
+        "Ready — source galaxy → QRTL lens → observation plane"
+
     @State private var showControls: Bool = false
-    
     @State private var showPhotonPaths: Bool = true
-    
+
     // ============================================================
     // MARK: - LIVE COMPUTATION OVERLAY
     // ============================================================
-    
+
     @State private var computationStage: String =
-    "Idle"
-    
+        "Idle"
+
     @State private var computationDetail: String =
-    "Ready to begin QRTL lensing computation."
-    
+        "Ready to begin QRTL lensing computation."
+
     @State private var photonsCreated: Int = 0
-    
     @State private var photonsTraced: Int = 0
-    
     @State private var photonPathPoints: Int = 0
-    
     @State private var projectionHits: Int = 0
-    
+
     @State private var computationElapsed: Double = 0.0
-    
     @State private var computationProgress: Double = 0.0
-    
+
     @State private var maximumQRTLInfluence: Float = 0.0
-    
-    
+
     @State private var showComputationOverlay: Bool = true
-    
+
     // ============================================================
     // MARK: - GRAVITY METRICS OVERLAY
     // ============================================================
     //
-    // Populated once the QRTLField exists (Stage 1 of
-    // runFullPipeline), so you can confirm the cluster mass —
-    // and the per-star mass sourcing the gravity surface — are
-    // what you expect, independent of the transient computation
-    // overlay above.
+    // IMPORTANT:
+    //
+    // These values may be calculated during Stage 1, but the
+    // overlay itself remains hidden until Stage 5 has completed.
+    //
     // ============================================================
-    
-    @State private var showGravityMetrics: Bool = true
-    
+
+    @State private var showGravityMetrics: Bool = false
+
     @State private var gravityRequestedMassSolar: Double = 0.0
-    
     @State private var gravityFieldMassKg: Double = 0.0
-    
     @State private var gravityRelativeMassError: Double = 0.0
-    
+
     @State private var gravityStarCount: Int = 0
-    
+
     @State private var gravityPerStarMassSolar: Double = 0.0
-    
     @State private var gravityPerStarMassKg: Double = 0.0
-    
+
     @State private var gravityClusterRadiusMeters: Double = 0.0
+
     // ============================================================
     // MARK: - SCENE CONTROLLER
     // ============================================================
-    
+
     @StateObject private var scene =
-    LensingSceneController()
-    
+        LensingSceneController()
+
     // ============================================================
     // MARK: - BODY
     // ============================================================
-    
+
     var body: some View {
-        
+
         ZStack {
-            
+
             // ====================================================
             // SCENE
             // ====================================================
-            
+
             LensingSceneView(
                 controller: scene
             )
             .ignoresSafeArea()
-            
+
             // ====================================================
             // COMPUTATION OVERLAY
             // ====================================================
-            
+
             if showComputationOverlay {
-                
                 computationOverlay
             }
-            
+
             // ====================================================
             // GRAVITY METRICS OVERLAY
+            //
+            // IMPORTANT:
+            //
+            // This is FALSE until Stage 5 completes.
             // ====================================================
-            
+
             if showGravityMetrics {
-                
                 gravityMetricsOverlay
             }
-            
+
             // ====================================================
             // BOTTOM CONTROLS
             // ====================================================
-            
+
             VStack {
-           
+
+                Spacer()
+
                 HStack {
-                 
+
+                    Spacer()
+
                     Button {
-                        
+
                         showControls = true
-                        
+
                     } label: {
-                        
+
                         Image(
                             systemName:
                                 "slider.horizontal.3"
@@ -314,56 +323,55 @@ struct ContentView: View {
                 }
             }
         }
-        
+
         // ========================================================
         // MARK: - CONTROL SHEET
         // ========================================================
-        
+
         .sheet(
             isPresented: $showControls
         ) {
-            
+
             ControlsSheet(
-                
                 massSolar:
                     $massSolar,
-                
+
                 radiusSolar:
                     $radiusSolar,
-                
+
                 alphaQ:
                     $alphaQ,
-                
+
                 etaQ:
                     $etaQ,
-                
+
                 gammaQ:
                     $gammaQ,
-                
+
                 electromagneticCoupling:
                     $electromagneticCoupling,
-                
+
                 photonEMCoupling:
                     $photonEMCoupling,
-                
+
                 chiQ:
                     $chiQ,
-                
+
                 interactionRate:
                     $interactionRate,
-                
+
                 result:
                     $result,
-                
+
                 isRunning:
                     $isRunning,
-                
+
                 statusMessage:
                     $statusMessage,
-                
+
                 onRun:
                     runFullPipeline,
-                
+
                 onReset:
                     reset
             )
@@ -374,40 +382,44 @@ struct ContentView: View {
                 .visible
             )
         }
-        
+
         // ========================================================
         // MARK: - INITIAL SCENE
         // ========================================================
-        
+
         .onAppear {
-            
-            
+
             runFullPipeline()
         }
-        
+
         // ========================================================
         // MARK: - PHOTON PATH VISIBILITY
         // ========================================================
-        
+
         .onChange(
             of: showPhotonPaths
         ) { _, visible in
-            
+
             guard
                 let output =
                     scene.lastPipelineOutput
             else {
                 return
             }
-            
-            if visible { scene.displayPhotonPaths( output.photonPaths ) } else { scene.clearPhotonPaths() }
+
+            if visible {
+
+                scene.displayPhotonPaths(
+                    output.photonPaths
+                )
+
+            } else {
+
+                scene.clearPhotonPaths()
+            }
         }
     }
-    
-    // ============================================================
-    // MARK: - COMPUTATION OVERLAY
-    // ============================================================
-    
+
     // ============================================================
     // MARK: - COMPUTATION OVERLAY
     // ============================================================
@@ -428,8 +440,8 @@ struct ContentView: View {
                 Image(
                     systemName:
                         isRunning
-                    ? "gearshape.2.fill"
-                    : "checkmark.circle.fill"
+                        ? "gearshape.2.fill"
+                        : "checkmark.circle.fill"
                 )
 
                 Text(
@@ -547,9 +559,9 @@ struct ContentView: View {
                 Spacer()
             }
 
-            // --------------------------------------------------------
+            // ========================================================
             // OVERALL POTENTIAL STATUS
-            // --------------------------------------------------------
+            // ========================================================
 
             Text(
                 potentialStatus
@@ -567,9 +579,9 @@ struct ContentView: View {
                 vertical: true
             )
 
-            // --------------------------------------------------------
+            // ========================================================
             // POTENTIAL BY RADIUS
-            // --------------------------------------------------------
+            // ========================================================
 
             potentialLevelRow(
                 "Center",
@@ -603,9 +615,9 @@ struct ContentView: View {
                     potentialEdge
             )
 
-            // --------------------------------------------------------
+            // ========================================================
             // INTERPRETATION
-            // --------------------------------------------------------
+            // ========================================================
 
             Text(
                 "Expected gravity-well pattern:"
@@ -652,6 +664,11 @@ struct ContentView: View {
             alignment: .top
         )
     }
+
+    // ============================================================
+    // MARK: - POTENTIAL LEVEL ROW
+    // ============================================================
+
     private func potentialLevelRow(
         _ name: String,
         level: String,
@@ -679,46 +696,47 @@ struct ContentView: View {
         }
         .font(.caption)
     }
-    
+
     // ============================================================
     // MARK: - GRAVITY METRICS OVERLAY
     // ============================================================
     //
-    // Shows the actual mass driving the cluster, so you can
-    // confirm it against what you dialed in: requested vs. field
-    // mass, the relative error between them, star count, and the
-    // per-star mass (10^6 M☉ / star count) that sources every
-    // occupied cell of the gravity surface.
+    // This overlay is intentionally controlled independently from
+    // the computation overlay.
+    //
+    // It is populated during Stage 1 but remains invisible until
+    // Stage 5 completes.
+    //
     // ============================================================
-    
+
     private var gravityMetricsOverlay: some View {
-        
+
         VStack(
             alignment: .leading,
             spacing: 8
         ) {
-            
+
             HStack {
-                
+
                 Image(
                     systemName:
                         "atom"
                 )
-                
+
                 Text(
                     "GRAVITY METRICS"
                 )
                 .font(.headline)
-                
+
                 Spacer()
-                
+
                 Button {
-                    
+
                     showGravityMetrics =
-                    false
-                    
+                        false
+
                 } label: {
-                    
+
                     Image(
                         systemName:
                             "xmark.circle.fill"
@@ -728,9 +746,9 @@ struct ContentView: View {
                     )
                 }
             }
-            
+
             Divider()
-            
+
             computationRow(
                 "Requested mass",
                 String(
@@ -739,7 +757,7 @@ struct ContentView: View {
                     gravityRequestedMassSolar
                 )
             )
-            
+
             computationRow(
                 "Field mass",
                 String(
@@ -748,24 +766,23 @@ struct ContentView: View {
                     gravityFieldMassKg
                 )
             )
-            
+
             computationRow(
                 "Mass error",
                 String(
                     format:
                         "%.4g %%",
-                    gravityRelativeMassError *
-                    100.0
+                    gravityRelativeMassError * 100.0
                 )
             )
-            
+
             Divider()
-            
+
             computationRow(
                 "Star count",
                 "\(gravityStarCount)"
             )
-            
+
             computationRow(
                 "Mass per star",
                 String(
@@ -774,7 +791,7 @@ struct ContentView: View {
                     gravityPerStarMassSolar
                 )
             )
-            
+
             computationRow(
                 "Mass per star (kg)",
                 String(
@@ -783,9 +800,9 @@ struct ContentView: View {
                     gravityPerStarMassKg
                 )
             )
-            
+
             Divider()
-            
+
             computationRow(
                 "Cluster radius",
                 String(
@@ -801,9 +818,10 @@ struct ContentView: View {
         )
         .background(
             .ultraThinMaterial,
-            in: RoundedRectangle(
-                cornerRadius: 18
-            )
+            in:
+                RoundedRectangle(
+                    cornerRadius: 18
+                )
         )
         .foregroundStyle(.white)
         .padding(.bottom, 24)
@@ -811,104 +829,111 @@ struct ContentView: View {
         .frame(
             maxWidth: .infinity,
             maxHeight: .infinity,
-            
             alignment: .bottomTrailing
         )
     }
-    
+
     // ============================================================
     // MARK: - COMPUTATION ROW
     // ============================================================
-    
+
     private func computationRow(
         _ title: String,
         _ value: String
     ) -> some View {
-        
+
         HStack {
-            
+
             Text(title)
                 .foregroundStyle(
                     .secondary
                 )
-            
+
             Spacer()
-            
+
             Text(value)
                 .fontWeight(.medium)
         }
         .font(.caption)
     }
-    
+
     // ============================================================
     // MARK: - RESET
     // ============================================================
-    
+
     private func reset() {
-        
+
         guard !isRunning else {
             return
         }
-        
+
         alphaQ = 0.0
         etaQ = 0.0
         gammaQ = 1.0
-        
         electromagneticCoupling = 0.0
         photonEMCoupling = 0.0
-        
         chiQ = 1.0
         interactionRate = 0.0
-        
+
         result = nil
-        
-        // --------------------------------------------------------
+
+        // ========================================================
         // RESET COMPUTATION OVERLAY
-        // --------------------------------------------------------
-        
+        // ========================================================
+
         computationStage =
-        "Idle"
-        
+            "Idle"
+
         computationDetail =
-        "Reset to QRTL gravity-only mode."
-        
+            "Reset to QRTL gravity-only mode."
+
         photonsCreated = 0
         photonsTraced = 0
         photonPathPoints = 0
         projectionHits = 0
-        
+
         computationElapsed = 0.0
         computationProgress = 0.0
         maximumQRTLInfluence = 0.0
-        
+
         statusMessage =
-        "Reset to QRTL gravity-only mode"
-        
-        // --------------------------------------------------------
-        // RESET GRAVITY METRICS OVERLAY
-        // --------------------------------------------------------
-        
+            "Reset to QRTL gravity-only mode"
+
+        // ========================================================
+        // RESET GRAVITY METRICS
+        //
+        // IMPORTANT:
+        //
+        // Hide immediately. They will not appear again until
+        // Stage 5 of the next run has completed.
+        // ========================================================
+
+        showGravityMetrics = false
+
         gravityRequestedMassSolar = 0.0
         gravityFieldMassKg = 0.0
         gravityRelativeMassError = 0.0
+
         gravityStarCount = 0
+
         gravityPerStarMassSolar = 0.0
         gravityPerStarMassKg = 0.0
+
         gravityClusterRadiusMeters = 0.0
-        
-        // --------------------------------------------------------
+
+        // ========================================================
         // CLEAR SCENE
-        // --------------------------------------------------------
-        
+        // ========================================================
+
         scene.clearDynamic()
-        
+
         scene.addGlobularCluster(
             radius: 4.0
         )
-        
+
         scene.addSourceGalaxy()
-        
     }
+
     // ============================================================
     // MARK: - FULL PHYSICS PIPELINE
     // ============================================================
@@ -926,10 +951,22 @@ struct ContentView: View {
         isRunning = true
         result = nil
 
+        // ========================================================
+        // IMPORTANT:
+        //
+        // Gravity metrics MUST remain hidden until Stage 5.
+        //
+        // Even though their values may be populated during
+        // Stage 1, the overlay cannot become visible here.
+        // ========================================================
+
+        showGravityMetrics = false
+
         photonsCreated = 0
         photonsTraced = 0
         photonPathPoints = 0
         projectionHits = 0
+
         computationProgress = 0.0
         computationElapsed = 0.0
         maximumQRTLInfluence = 0.0
@@ -1067,10 +1104,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // CREATE SOURCE STAR POSITIONS
-                    //
-                    // These positions are the authoritative physical
-                    // source distribution used by the visualization and
-                    // the QRTL field construction.
                     // ====================================================
 
                     let starPositions =
@@ -1098,11 +1131,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // VISUAL SOURCE
-                    //
-                    // Rendering only.
-                    //
-                    // These SceneKit objects are NOT the physical QRTL
-                    // field and are NOT used by photon propagation.
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1146,12 +1174,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // CREATE AUTHORITATIVE QRTL FIELD
-                    //
-                    // IMPORTANT:
-                    //
-                    // QRTLExperiment creates the authoritative field.
-                    //
-                    // There is NO GaussianMassModel here.
                     // ====================================================
 
                     let experiment =
@@ -1167,23 +1189,9 @@ struct ContentView: View {
                     let field =
                         experiment.field
 
-                    // ========================================================
+                    // ====================================================
                     // UPDATE SIMPLE GRAVITY POTENTIAL OVERLAY
-                    // ========================================================
-                    //
-                    // IMPORTANT:
-                    //
-                    // This samples the SAME authoritative QRTLField that is
-                    // subsequently used for:
-                    //
-                    //   QRTL gravitational potential
-                    //   QRTL spacetime metric
-                    //   photon tracing
-                    //   gravity surface
-                    //   deformed spacetime visualization
-                    //
-                    // No separate gravity model is used here.
-                    // ========================================================
+                    // ====================================================
 
                     updatePotentialOverlay(
                         field:
@@ -1191,29 +1199,9 @@ struct ContentView: View {
                         radiusMeters:
                             radiusMeters
                     )
-                    
+
                     // ====================================================
                     // STAGE 1C — UNIFIED SPACETIME EVALUATION
-                    // ====================================================
-                    //
-                    // This is the new integration point.
-                    //
-                    // The dependency is:
-                    //
-                    // QRTL source
-                    //      ↓
-                    // QRTL energy
-                    //      ↓
-                    // gravitationalPotential()
-                    //      ↓
-                    // ΦQ
-                    //      ↓
-                    // qrtlSpacetimeMetric()
-                    //      ↓
-                    // metric
-                    //
-                    // This does NOT cause gravitationalPotential() to
-                    // call the metric. The metric consumes the potential.
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1243,13 +1231,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // UNIFIED CENTER SAMPLE
-                    //
-                    // This confirms that the field can evaluate:
-                    //
-                    // ΦQ
-                    // gμν
-                    // gᵘᵛ
-                    // metric deformation
                     // ====================================================
 
                     let centerPosition =
@@ -1280,7 +1261,6 @@ struct ContentView: View {
                         \(centerSpacetime.potential)
 
                         Metric:
-
                         g00 =
                         \(centerSpacetime.metric.g00)
 
@@ -1304,9 +1284,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // MASS VALIDATION
-                    //
-                    // Cheap scalar validation only.
-                    // No additional field sampling.
                     // ====================================================
 
                     let requestedMass =
@@ -1361,6 +1338,12 @@ struct ContentView: View {
 
                     // ====================================================
                     // UPDATE GRAVITY METRICS
+                    //
+                    // These values are populated now.
+                    //
+                    // They are NOT displayed yet.
+                    //
+                    // showGravityMetrics remains false until Stage 5.
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1405,10 +1388,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // GRAVITATIONAL VALIDATION
-                    //
-                    // Retained as the experiment validation result.
-                    //
-                    // This is NOT the photon propagation path.
                     // ====================================================
 
                     let outcome =
@@ -1461,17 +1440,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // TRACE SOURCE GALAXY
-                    //
-                    // IMPORTANT:
-                    //
-                    // 'field' is the SAME authoritative field created
-                    // above.
-                    //
-                    // The photon tracer must query this field at the
-                    // photon's physical position.
-                    //
-                    // The photon does NOT interact with the SceneKit
-                    // gravity surface.
                     // ====================================================
 
                     let photonBatch =
@@ -1482,9 +1450,7 @@ struct ContentView: View {
                             parameters:
                                 lensingParameters,
 
-                            progress: {
-
-                                progress in
+                            progress: { progress in
 
                                 DispatchQueue.main.async {
 
@@ -1619,11 +1585,6 @@ struct ContentView: View {
 
                     // ====================================================
                     // HEATMAP
-                    //
-                    // Visualization only.
-                    //
-                    // This does NOT become the photon propagation
-                    // geometry.
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1724,11 +1685,6 @@ struct ContentView: View {
 
                         // =================================================
                         // 2. QRTL GRAVITY / SPACETIME SURFACE
-                        //
-                        // The renderer receives the SAME authoritative
-                        // QRTLField used by photon tracing.
-                        //
-                        // The surface is visualization only.
                         // =================================================
 
                         self.scene.installQRTLGravitySurface(
@@ -1738,11 +1694,6 @@ struct ContentView: View {
 
                         // =================================================
                         // 3. DEFORMED SPACETIME VISUALIZATION
-                        //
-                        // This also receives the SAME QRTL field.
-                        //
-                        // It must sample the metric/potential itself.
-                        // It must NOT use photon geometry.
                         // =================================================
 
                         self.scene.addDeformedSpacetimeSurface(
@@ -1780,14 +1731,55 @@ struct ContentView: View {
                             pathPointCount
 
                         // =================================================
-                        // COMPLETE
+                        // STAGE 5 — FINALIZATION
+                        // =================================================
+                        //
+                        // The scene has now been rendered.
+                        //
+                        // The authoritative QRTL field has been
+                        // evaluated.
+                        //
+                        // Photon tracing is complete.
+                        //
+                        // Projection is complete.
+                        //
+                        // Stage 5 is the point at which the complete
+                        // simulation becomes visible as finalized.
+                        // =================================================
+
+                        self.computationStage =
+                            "Stage 5 / 5 — finalizing"
+
+                        self.computationDetail =
+                            """
+                            Finalizing the QRTL unified spacetime
+                            lensing simulation and validating the
+                            completed visualization.
+                            """
+
+                        self.computationProgress =
+                            0.96
+                    }
+
+                    // ====================================================
+                    // FINAL STAGE 5 DISPATCH
+                    //
+                    // Keep this separate from Stage 4 rendering so that
+                    // the gravity metrics cannot appear until the
+                    // entire rendering pipeline has completed.
+                    // ====================================================
+
+                    DispatchQueue.main.async {
+
+                        // =================================================
+                        // FINAL COMPUTATION STATE
                         // =================================================
 
                         self.computationProgress =
                             1.0
 
                         self.computationStage =
-                            "COMPLETE"
+                            "Stage 5 / 5 — complete"
 
                         self.computationDetail =
                             """
@@ -1806,6 +1798,8 @@ struct ContentView: View {
                             The photon paths were calculated from the
                             QRTL physical field, not from the rendered
                             gravity surface.
+
+                            Gravity metrics are now available.
                             """
 
                         self.computationElapsed =
@@ -1817,11 +1811,31 @@ struct ContentView: View {
                             "\(photonBatch.hits.count) photon hits, " +
                             "\(photonBatch.paths.count) photon paths"
 
+                        // =================================================
+                        // PIPELINE IS NOW COMPLETE
+                        // =================================================
+
                         self.isRunning =
                             false
 
                         self.showComputationOverlay =
                             false
+
+                        // =================================================
+                        // IMPORTANT:
+                        //
+                        // THIS IS THE ONLY POINT WHERE THE GRAVITY
+                        // METRICS ARE MADE VISIBLE.
+                        //
+                        // Their values were calculated from the
+                        // authoritative QRTLField during Stage 1.
+                        //
+                        // They are intentionally withheld from the
+                        // UI until Stage 5 has completely finished.
+                        // =================================================
+
+                        self.showGravityMetrics =
+                            true
                     }
                 }
             }
@@ -1838,6 +1852,7 @@ struct ContentView: View {
                 physicsWorkItem
         )
     }
+
     // ============================================================
     // MARK: - QRTL POTENTIAL SAMPLING
     // ============================================================
@@ -1847,10 +1862,9 @@ struct ContentView: View {
         radiusMeters: Double
     ) {
 
-        // --------------------------------------------------------
-        // Sample the SAME authoritative QRTL field used by the
-        // photon tracer and spacetime renderer.
-        // --------------------------------------------------------
+        // ========================================================
+        // SAMPLE POSITIONS
+        // ========================================================
 
         let centerPosition =
             SIMD3<Float>(
@@ -1861,60 +1875,70 @@ struct ContentView: View {
 
         let quarterPosition =
             SIMD3<Float>(
-                Float(radiusMeters * 0.25),
+                Float(
+                    radiusMeters * 0.25
+                ),
                 0.0,
                 0.0
             )
 
         let halfPosition =
             SIMD3<Float>(
-                Float(radiusMeters * 0.50),
+                Float(
+                    radiusMeters * 0.50
+                ),
                 0.0,
                 0.0
             )
 
         let edgePosition =
             SIMD3<Float>(
-                Float(radiusMeters * 0.95),
+                Float(
+                    radiusMeters * 0.95
+                ),
                 0.0,
                 0.0
             )
 
-        // --------------------------------------------------------
-        // Evaluate gravitational potential
-        // --------------------------------------------------------
+        // ========================================================
+        // EVALUATE GRAVITATIONAL POTENTIAL
+        // ========================================================
 
         let centerPotential =
             Double(
                 field.gravitationalPotential(
-                    at: centerPosition
+                    at:
+                        centerPosition
                 )
             )
 
         let quarterPotential =
             Double(
                 field.gravitationalPotential(
-                    at: quarterPosition
+                    at:
+                        quarterPosition
                 )
             )
 
         let halfPotential =
             Double(
                 field.gravitationalPotential(
-                    at: halfPosition
+                    at:
+                        halfPosition
                 )
             )
 
         let edgePotential =
             Double(
                 field.gravitationalPotential(
-                    at: edgePosition
+                    at:
+                        edgePosition
                 )
             )
 
-        // --------------------------------------------------------
-        // Store the actual values in the SwiftUI state.
-        // --------------------------------------------------------
+        // ========================================================
+        // STORE ACTUAL VALUES
+        // ========================================================
 
         DispatchQueue.main.async {
 
@@ -1930,20 +1954,9 @@ struct ContentView: View {
             self.potentialEdge =
                 edgePotential
 
-            // ----------------------------------------------------
-            // Classify each location.
-            //
-            // We use ABSOLUTE magnitude because gravitational
-            // potential may be negative.
-            //
-            // Normalized against the MAXIMUM magnitude across all
-            // four samples rather than the center specifically —
-            // if the center value were ever wrong (e.g. reads as
-            // ~0 due to an interior-potential bug), comparing
-            // everything else against it would force every other
-            // classification to LOW too, masking the real values
-            // instead of surfacing them.
-            // ----------------------------------------------------
+            // ====================================================
+            // CLASSIFICATION
+            // ====================================================
 
             let maximumMagnitude =
                 max(
@@ -1957,31 +1970,34 @@ struct ContentView: View {
             self.potentialCenterLevel =
                 self.potentialLevel(
                     centerPotential,
-                    reference: maximumMagnitude
+                    reference:
+                        maximumMagnitude
                 )
 
             self.potentialQuarterLevel =
                 self.potentialLevel(
                     quarterPotential,
-                    reference: maximumMagnitude
+                    reference:
+                        maximumMagnitude
                 )
 
             self.potentialHalfLevel =
                 self.potentialLevel(
                     halfPotential,
-                    reference: maximumMagnitude
+                    reference:
+                        maximumMagnitude
                 )
 
             self.potentialEdgeLevel =
                 self.potentialLevel(
                     edgePotential,
-                    reference: maximumMagnitude
+                    reference:
+                        maximumMagnitude
                 )
 
-            // ----------------------------------------------------
-            // Determine whether the field actually forms a
-            // decreasing gravity-well profile.
-            // ----------------------------------------------------
+            // ====================================================
+            // DETERMINE PROFILE
+            // ====================================================
 
             let centerMagnitude =
                 abs(centerPotential)
@@ -1998,16 +2014,25 @@ struct ContentView: View {
             let isFlat =
                 centerMagnitude < 1e-30 ||
                 (
-                    abs(centerMagnitude - edgeMagnitude)
+                    abs(
+                        centerMagnitude -
+                        edgeMagnitude
+                    )
                     /
-                    max(centerMagnitude, 1e-30)
+                    max(
+                        centerMagnitude,
+                        1e-30
+                    )
                     < 0.01
                 )
 
             let formsWell =
-                centerMagnitude > quarterMagnitude &&
-                quarterMagnitude > halfMagnitude &&
-                halfMagnitude > edgeMagnitude
+                centerMagnitude >
+                    quarterMagnitude &&
+                quarterMagnitude >
+                    halfMagnitude &&
+                halfMagnitude >
+                    edgeMagnitude
 
             if isFlat {
 
@@ -2015,7 +2040,11 @@ struct ContentView: View {
                     "LOW / FLAT GRAVITY POTENTIAL"
 
                 self.potentialExplanation =
-                    "The QRTL potential changes very little from the center to the edge. A strong bowl-shaped spacetime deformation is therefore not expected."
+                    """
+                    The QRTL potential changes very little from
+                    the center to the edge. A strong bowl-shaped
+                    spacetime deformation is therefore not expected.
+                    """
 
             } else if formsWell {
 
@@ -2023,7 +2052,12 @@ struct ContentView: View {
                     "HIGH CENTER → LOW EDGE"
 
                 self.potentialExplanation =
-                    "The QRTL gravitational potential is strongest near the cluster center and decreases outward. This is the expected profile for a bowl-shaped gravity well."
+                    """
+                    The QRTL gravitational potential is strongest
+                    near the cluster center and decreases outward.
+                    This is the expected profile for a bowl-shaped
+                    gravity well.
+                    """
 
             } else {
 
@@ -2031,12 +2065,14 @@ struct ContentView: View {
                     "POTENTIAL PROFILE DETECTED"
 
                 self.potentialExplanation =
-                    "The QRTL field has a measurable potential, but the radial profile is not strictly decreasing from the center to the edge."
+                    """
+                    The QRTL field has a measurable potential,
+                    but the radial profile is not strictly decreasing
+                    from the center to the edge.
+                    """
             }
         }
-        
     }
-
 
     // ============================================================
     // MARK: - POTENTIAL LEVEL CLASSIFICATION
