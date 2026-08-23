@@ -573,14 +573,11 @@ final class QRTLExperiment {
 
         let lensingParameters =
             LensingParameters(
-                deflectionStrength:
+                   deflectionStrength:
                     1.0,
-
-                projectionPlaneHalfExtent:
-                    18.0,
-
-            
-                maximumPropagationRadius:
+                   projectionPlaneHalfExtent:
+                       18.0,
+                      maximumPropagationRadius:
                     Float(
                         max(
                             totalDistance,
@@ -593,10 +590,11 @@ final class QRTLExperiment {
                         safeStepSize
                     ),
 
+
                 maximumPhotonSteps:
                     calculatedMaxSteps,
 
-             
+            
                 qrtlLensingStrength:
                     Float(
                         parameters.chiQ
@@ -628,7 +626,8 @@ final class QRTLExperiment {
                         safeEndDistance
                     ),
 
-            
+           
+
                 interactionRate:
                     0.0
             )

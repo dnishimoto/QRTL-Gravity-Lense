@@ -1,4 +1,4 @@
-//
+////
 //  File.swift
 //  QRTL Gravity Lense
 //
@@ -316,7 +316,7 @@ final class LensingSceneController:
                 extent: 18.0,
                 numberOfStars: 220,
                 curvatureScale: 1.0
-             )
+            )
 
         qrtlGravitySurface =
             entity
@@ -1274,7 +1274,256 @@ final class LensingSceneController:
         return positions
     }
 
-  
+    // ============================================================
+    // MARK: - CONTINUOUS PHOTON SIMULATION
+    // ============================================================
+    //
+    // This is the single entry point for the photon pipeline.
+    //
+    // The controller owns:
+    //     1. QRTL photon tracing
+    //     2. authoritative PhotonTraceResult storage
+    //     3. continuous trajectory visualization
+    //     4. projection accumulation
+    //
+    // There is no second independent photon path generator.
+    //
+    // ============================================================
+
+    func startContinuousPhotonSimulation(
+        field: QRTLField,
+        parameters: LensingParameters,
+        progress: @escaping (PhotonSimulationProgress) -> Void
+    ) {
+
+        // ========================================================
+        // STOP ANY PREVIOUS SIMULATION
+        // ========================================================
+
+        stopContinuousPhotonSimulation()
+
+        // ========================================================
+        // STORE AUTHORITATIVE FIELD
+        // ========================================================
+
+        self.qrtlField = field
+
+        // ========================================================
+        // CREATE THE AUTHORITATIVE PHOTON TRACER
+        // ========================================================
+
+        let tracer =
+            QRTLPhotonTracer(
+                field: field
+            )
+
+        // ========================================================
+        // GET SOURCE-GALAXY POSITIONS
+        // ========================================================
+
+        let sources =
+            sourceGalaxyPositions
+
+        // ========================================================
+        // INITIAL PROGRESS
+        // ========================================================
+
+        progress(
+            PhotonSimulationProgress(
+                total:
+                    sources.count,
+
+                completed:
+                    0,
+
+                active:
+                    0,
+
+                projectionHits:
+                    0
+            )
+        )
+
+        // ========================================================
+        // TRACE PHOTONS
+        // ========================================================
+
+        var traces =
+            [PhotonTraceResult]()
+
+        traces.reserveCapacity(
+            sources.count
+        )
+
+        let initialDirection =
+            SIMD3<Float>(
+                1.0,
+                0.0,
+                0.0
+            )
+
+        for sourcePosition in sources {
+
+            let trace =
+                tracer.tracePhoton(
+                    origin:
+                        sourcePosition,
+
+                    direction:
+                        initialDirection,
+
+                    parameters:
+                        parameters,
+
+                      )
+
+            // ====================================================
+            // RETAIN ONLY VALID TRAJECTORIES
+            // ====================================================
+
+            guard
+                trace.positions.count > 1
+            else {
+                continue
+            }
+
+            traces.append(
+                trace
+            )
+
+            // ====================================================
+            // UPDATE PROGRESS
+            // ====================================================
+
+            progress(
+                PhotonSimulationProgress(
+                    total:
+                        sources.count,
+
+                    completed:
+                        traces.count,
+
+                    active:
+                        max(
+                            0,
+                            sources.count -
+                            traces.count
+                        ),
+
+                    projectionHits:
+                        traces.reduce(
+                            into: 0
+                        ) {
+                            count,
+                            trace in
+
+                            if trace.hitProjection {
+                                count += 1
+                            }
+                        }
+                )
+            )
+        }
+
+        // ========================================================
+        // STORE AUTHORITATIVE TRACES
+        // ========================================================
+        //
+        // These exact traces are now consumed by both:
+        //
+        //     photon visualization
+        //
+        // and
+        //
+        //     projection
+        //
+        // No second tracing pass is performed.
+        // ========================================================
+
+        photonTraceResults =
+            traces
+
+        // ========================================================
+        // REMOVE PREVIOUS TRAJECTORY VISUALIZATION
+        // ========================================================
+
+        photonEmitterNode?
+            .removeFromParentNode()
+
+        photonEmitterNode =
+            nil
+
+        // ========================================================
+        // CREATE VISUALIZATION FROM STORED TRAJECTORIES
+        // ========================================================
+
+        let emitter =
+            createContinuousPhotonEmitter(
+                traces:
+                    traces
+            )
+
+        photonEmitterNode =
+            emitter
+
+        scene.rootNode.addChildNode(
+            emitter
+        )
+
+        // ========================================================
+        // CREATE PROJECTION FROM THE SAME TRAJECTORIES
+        // ========================================================
+
+        projectionNode?
+            .removeFromParentNode()
+
+        projectionNode =
+            nil
+
+        let projection =
+            createProjectionFromPhotonTraces(
+                traces
+            )
+
+        projectionNode =
+            projection
+
+        scene.rootNode.addChildNode(
+            projection
+        )
+
+        // ========================================================
+        // FINAL PROGRESS
+        // ========================================================
+
+        let projectionHitCount =
+            traces.reduce(
+                into: 0
+            ) {
+                count,
+                trace in
+
+                if trace.hitProjection {
+                    count += 1
+                }
+            }
+
+        progress(
+            PhotonSimulationProgress(
+                total:
+                    sources.count,
+
+                completed:
+                    traces.count,
+
+                active:
+                    0,
+
+                projectionHits:
+                    projectionHitCount
+            )
+        )
+    }
     // ============================================================
     // MARK: - PROJECTIVE MAP FROM AUTHORITATIVE PHOTON TRACES
     // ============================================================
@@ -4222,3 +4471,4 @@ final class LensingSceneController:
     }
 
 }
+

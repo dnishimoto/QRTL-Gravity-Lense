@@ -1309,7 +1309,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 tracer.tracePhoton(
                     origin: source,
                     direction: direction,
-                    parameters: lensingParameters
+                    parameters: lensingParameters,
+                    sceneToPhysicalScale: sceneToPhysicalScale
                 )
 
             // ========================================================
@@ -1628,3 +1629,4 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         return parent
     }
 }
+
