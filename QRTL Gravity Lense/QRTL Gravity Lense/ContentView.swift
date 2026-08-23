@@ -916,9 +916,298 @@ struct ContentView: View {
         scene.addSourceGalaxy()
     }
 
+
+    private func updatePotentialOverlay(
+        field: QRTLField,
+        radiusMeters: Double
+    ) {
+
+        // ========================================================
+        // SAMPLE POSITIONS
+        // ========================================================
+
+        let centerPosition =
+            SIMD3<Float>(
+                0.0,
+                0.0,
+                0.0
+            )
+
+        let quarterPosition =
+            SIMD3<Float>(
+                Float(radiusMeters * 0.25),
+                0.0,
+                0.0
+            )
+
+        let halfPosition =
+            SIMD3<Float>(
+                Float(radiusMeters * 0.50),
+                0.0,
+                0.0
+            )
+
+        let edgePosition =
+            SIMD3<Float>(
+                Float(radiusMeters * 0.95),
+                0.0,
+                0.0
+            )
+
+        // ========================================================
+        // SAMPLE AUTHORITATIVE QRTL GRAVITATIONAL POTENTIAL
+        // ========================================================
+
+        let centerPotential =
+            Double(
+                field.gravitationalPotential(
+                    at: centerPosition
+                )
+            )
+
+        let quarterPotential =
+            Double(
+                field.gravitationalPotential(
+                    at: quarterPosition
+                )
+            )
+
+        let halfPotential =
+            Double(
+                field.gravitationalPotential(
+                    at: halfPosition
+                )
+            )
+
+        let edgePotential =
+            Double(
+                field.gravitationalPotential(
+                    at: edgePosition
+                )
+            )
+
+        // ========================================================
+        // UPDATE SWIFTUI STATE ON MAIN THREAD
+        // ========================================================
+
+        DispatchQueue.main.async {
+
+            self.potentialCenter =
+                centerPotential
+
+            self.potentialQuarter =
+                quarterPotential
+
+            self.potentialHalf =
+                halfPotential
+
+            self.potentialEdge =
+                edgePotential
+
+            // ====================================================
+            // FIND REFERENCE MAGNITUDE
+            // ====================================================
+
+            let maximumMagnitude =
+                max(
+                    abs(centerPotential),
+                    abs(quarterPotential),
+                    abs(halfPotential),
+                    abs(edgePotential),
+                    1e-30
+                )
+
+            // ====================================================
+            // CLASSIFY POTENTIAL LEVELS
+            // ====================================================
+
+            self.potentialCenterLevel =
+                self.potentialLevel(
+                    centerPotential,
+                    reference:
+                        maximumMagnitude
+                )
+
+            self.potentialQuarterLevel =
+                self.potentialLevel(
+                    quarterPotential,
+                    reference:
+                        maximumMagnitude
+                )
+
+            self.potentialHalfLevel =
+                self.potentialLevel(
+                    halfPotential,
+                    reference:
+                        maximumMagnitude
+                )
+
+            self.potentialEdgeLevel =
+                self.potentialLevel(
+                    edgePotential,
+                    reference:
+                        maximumMagnitude
+                )
+
+            // ====================================================
+            // POTENTIAL MAGNITUDES
+            // ====================================================
+
+            let centerMagnitude =
+                abs(centerPotential)
+
+            let quarterMagnitude =
+                abs(quarterPotential)
+
+            let halfMagnitude =
+                abs(halfPotential)
+
+            let edgeMagnitude =
+                abs(edgePotential)
+
+            // ====================================================
+            // DETERMINE WHETHER POTENTIAL IS FLAT
+            // ====================================================
+
+            let isFlat =
+                centerMagnitude < 1e-30
+                ||
+                (
+                    abs(
+                        centerMagnitude -
+                        edgeMagnitude
+                    )
+                    /
+                    max(
+                        centerMagnitude,
+                        1e-30
+                    )
+                    < 0.01
+                )
+
+            // ====================================================
+            // DETERMINE WHETHER POTENTIAL FORMS EXPECTED WELL
+            // ====================================================
+
+            let formsWell =
+                centerMagnitude >
+                quarterMagnitude
+                &&
+                quarterMagnitude >
+                halfMagnitude
+                &&
+                halfMagnitude >
+                edgeMagnitude
+
+            // ====================================================
+            // UPDATE STATUS
+            // ====================================================
+
+            if isFlat {
+
+                self.potentialStatus =
+                    "LOW / FLAT GRAVITY POTENTIAL"
+
+                self.potentialExplanation =
+                    """
+                    The QRTL potential changes very little from the
+                    center to the edge. A strong bowl-shaped spacetime
+                    deformation is therefore not expected.
+                    """
+
+            } else if formsWell {
+
+                self.potentialStatus =
+                    "HIGH CENTER → LOW EDGE"
+
+                self.potentialExplanation =
+                    """
+                    The QRTL gravitational potential is strongest near
+                    the cluster center and decreases outward. This is
+                    the expected profile for a bowl-shaped gravity well.
+                    """
+
+            } else {
+
+                self.potentialStatus =
+                    "POTENTIAL PROFILE DETECTED"
+
+                self.potentialExplanation =
+                    """
+                    The QRTL field has a measurable potential, but the
+                    radial profile is not strictly decreasing from the
+                    center to the edge.
+                    """
+            }
+        }
+    }
+
+
     // ============================================================
-    // MARK: - FULL PHYSICS PIPELINE
+    // MARK: - POTENTIAL LEVEL CLASSIFICATION
     // ============================================================
+
+    private func potentialLevel(
+        _ potential: Double,
+        reference: Double
+    ) -> String {
+
+        let magnitude =
+            abs(potential)
+
+        let referenceMagnitude =
+            abs(reference)
+
+        guard referenceMagnitude > 1e-30 else {
+            return "LOW"
+        }
+
+        let fraction =
+            magnitude /
+            referenceMagnitude
+
+        if fraction >= 0.66 {
+            return "HIGH"
+        }
+
+        if fraction >= 0.33 {
+            return "MEDIUM"
+        }
+
+        return "LOW"
+    }
+
+
+    // ================================================================
+    // MARK: - FULL QRTL PHYSICS PIPELINE
+    // ================================================================
+    //
+    // AUTHORITATIVE PIPELINE
+    //
+    // 1. Physical stellar mass
+    // 2. Physical cluster radius
+    // 3. QRTL parameters
+    // 4. Lensing parameters
+    // 5. Physical stellar positions
+    // 6. Authoritative QRTL field
+    // 7. QRTL gravitational potential
+    // 8. Unified QRTL spacetime metric
+    // 9. Gravity validation
+    // 10. QRTL heatmap
+    // 11. Static spacetime visualization
+    // 12. Source galaxy
+    // 13. Photon tracing through QRTL field
+    // 14. Projection-plane intersections
+    // 15. Projection map
+    // 16. Continuous photon visualization
+    //
+    // IMPORTANT:
+    //
+    // ContentView constructs the physics.
+    // LensingSceneController owns the scene and photon tracing.
+    //
+    // There must be only ONE photon-tracing pass.
+    // ================================================================
 
     private func runFullPipeline() {
 
@@ -926,21 +1215,19 @@ struct ContentView: View {
             return
         }
 
-        // ========================================================
-        // STOP PREVIOUS EMITTER
-        // ========================================================
+        // ============================================================
+        // STOP PREVIOUS SIMULATION
+        // ============================================================
 
         scene.stopContinuousPhotonSimulation()
 
-        continuousPhotonEmissionStarted =
-            false
+        continuousPhotonEmissionStarted = false
 
-        // ========================================================
+        // ============================================================
         // RESET PIPELINE STATE
-        // ========================================================
+        // ============================================================
 
         isRunning = true
-
         result = nil
 
         showGravityMetrics = false
@@ -954,6 +1241,14 @@ struct ContentView: View {
         computationElapsed = 0.0
         maximumQRTLInfluence = 0.0
 
+        photonSimulationProgress =
+            PhotonSimulationProgress(
+                total: 0,
+                completed: 0,
+                active: 0,
+                projectionHits: 0
+            )
+
         computationStage =
             "Initializing QRTL lens"
 
@@ -963,15 +1258,14 @@ struct ContentView: View {
         statusMessage =
             "Starting QRTL lensing pipeline…"
 
-        showComputationOverlay =
-            true
+        showComputationOverlay = true
 
         let computationStart =
             CFAbsoluteTimeGetCurrent()
 
-        // ========================================================
-        // PHYSICAL PARAMETERS
-        // ========================================================
+        // ============================================================
+        // STAGE 1 — PHYSICAL PARAMETERS
+        // ============================================================
 
         let mass =
             massSolar *
@@ -981,9 +1275,29 @@ struct ContentView: View {
             radiusSolar *
             PhysicalConstants.solarRadius
 
-        // ========================================================
-        // QRTL PARAMETERS
-        // ========================================================
+        // ============================================================
+        // STAGE 1A — SCENE → PHYSICAL SCALE
+        // ============================================================
+        //
+        // The visible cluster has a radius of 4 SceneKit units.
+        //
+        // Therefore:
+        //
+        //      4 scene units
+        //          =
+        //      radiusMeters physical meters
+        //
+        // This conversion is passed into the photon system.
+        // ============================================================
+
+        let sceneToPhysicalScale =
+            Float(
+                radiusMeters / 4.0
+            )
+
+        // ============================================================
+        // STAGE 1B — QRTL PARAMETERS
+        // ============================================================
 
         var params =
             QRTLParameters()
@@ -1009,9 +1323,9 @@ struct ContentView: View {
         params.photonEMCoupling =
             photonEMCoupling
 
-        // ========================================================
-        // LENSING PARAMETERS
-        // ========================================================
+        // ============================================================
+        // STAGE 1C — LENSING PARAMETERS
+        // ============================================================
 
         var lensingParameters =
             LensingParameters()
@@ -1047,9 +1361,9 @@ struct ContentView: View {
         lensingParameters.qrtlPhotonCoupling =
             0.25
 
-        // ========================================================
+        // ============================================================
         // PHYSICS WORK ITEM
-        // ========================================================
+        // ============================================================
 
         let physicsWorkItem =
             DispatchWorkItem {
@@ -1057,7 +1371,7 @@ struct ContentView: View {
                 autoreleasepool {
 
                     // ====================================================
-                    // STAGE 1A — PHYSICAL SOURCE
+                    // STAGE 1 — PHYSICAL SOURCE
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1067,9 +1381,9 @@ struct ContentView: View {
 
                         self.computationDetail =
                             """
-                            Creating the \(Int(self.massSolar)) solar-mass
-                            globular cluster and generating its
-                            stellar positions.
+                            Creating the \(Int(self.massSolar))
+                            solar-mass globular cluster and
+                            generating its stellar positions.
                             """
 
                         self.computationProgress =
@@ -1084,15 +1398,13 @@ struct ContentView: View {
                     }
 
                     // ====================================================
-                    // STAR POSITIONS
+                    // GENERATE PHYSICAL STAR POSITIONS
                     // ====================================================
 
                     let starPositions =
                         self.scene.generateGlobularClusterStarPositions(
-                            starCount:
-                                1000,
-                            radiusMeters:
-                                Float(radiusMeters)
+                            starCount: 1000,
+                            radiusMeters: Float(radiusMeters)
                         )
 
                     let perStarMassKg =
@@ -1104,15 +1416,8 @@ struct ContentView: View {
                             starPositions.count
                         )
 
-                    _ = perStarMassKg
-
                     // ====================================================
                     // STATIC VISUAL SOURCE
-                    //
-                    // IMPORTANT:
-                    //
-                    // This is NOT a photon system.
-                    // It only creates the visible cluster/lens.
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1125,7 +1430,7 @@ struct ContentView: View {
                     }
 
                     // ====================================================
-                    // STAGE 1B — QRTL FIELD
+                    // STAGE 1B — AUTHORITATIVE QRTL FIELD
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1135,8 +1440,8 @@ struct ContentView: View {
 
                         self.computationDetail =
                             """
-                            Building the authoritative QRTL field from
-                            the requested cluster mass and radius.
+                            Building the authoritative QRTL field
+                            from the requested cluster mass and radius.
                             """
 
                         self.computationProgress =
@@ -1151,31 +1456,36 @@ struct ContentView: View {
                     }
 
                     // ====================================================
-                    // CREATE AUTHORITATIVE FIELD
+                    // CREATE AUTHORITATIVE EXPERIMENT
                     // ====================================================
 
                     let experiment =
                         QRTLExperiment(
-                            mass:
-                                mass,
-                            radius:
-                                radiusMeters,
-                            parameters:
-                                params
+                            mass: mass,
+                            radius: radiusMeters,
+                            parameters: params
                         )
 
                     let field =
                         experiment.field
 
                     // ====================================================
-                    // POTENTIAL OVERLAY
+                    // STORE AUTHORITATIVE FIELD
+                    // ====================================================
+
+                    DispatchQueue.main.async {
+
+                        self.scene.qrtlField =
+                            field
+                    }
+
+                    // ====================================================
+                    // POTENTIAL PROFILE
                     // ====================================================
 
                     self.updatePotentialOverlay(
-                        field:
-                            field,
-                        radiusMeters:
-                            radiusMeters
+                        field: field,
+                        radiusMeters: radiusMeters
                     )
 
                     // ====================================================
@@ -1189,8 +1499,9 @@ struct ContentView: View {
 
                         self.computationDetail =
                             """
-                            Converting the authoritative QRTL gravitational
-                            potential into the QRTL spacetime metric.
+                            Converting the authoritative QRTL
+                            gravitational potential into the
+                            QRTL spacetime metric.
                             """
 
                         self.computationProgress =
@@ -1205,7 +1516,7 @@ struct ContentView: View {
                     }
 
                     // ====================================================
-                    // CENTER METRIC SAMPLE
+                    // CENTER SPACETIME SAMPLE
                     // ====================================================
 
                     let centerPosition =
@@ -1217,8 +1528,7 @@ struct ContentView: View {
 
                     let centerSpacetime =
                         field.evaluateQRTLUnifiedSpacetime(
-                            at:
-                                centerPosition
+                            at: centerPosition
                         )
 
                     #if DEBUG
@@ -1228,6 +1538,7 @@ struct ContentView: View {
                         ====================================================
                         QRTL UNIFIED SPACETIME
                         ====================================================
+
                         Position:
                         \(centerSpacetime.position)
 
@@ -1235,20 +1546,14 @@ struct ContentView: View {
                         \(centerSpacetime.potential)
 
                         Metric:
-                        g00 =
-                        \(centerSpacetime.metric.g00)
-
-                        g11 =
-                        \(centerSpacetime.metric.g11)
-
-                        g22 =
-                        \(centerSpacetime.metric.g22)
-
-                        g33 =
-                        \(centerSpacetime.metric.g33)
+                        g00 = \(centerSpacetime.metric.g00)
+                        g11 = \(centerSpacetime.metric.g11)
+                        g22 = \(centerSpacetime.metric.g22)
+                        g33 = \(centerSpacetime.metric.g33)
 
                         Metric deformation:
                         \(centerSpacetime.metricDeformation)
+
                         ====================================================
                         """
                     )
@@ -1340,26 +1645,19 @@ struct ContentView: View {
                         )
 
                     // ====================================================
-                    // STAGE 2
-                    //
-                    // IMPORTANT:
-                    //
-                    // THERE IS NO INITIAL PHOTON TRACE.
-                    //
-                    // The continuous emitter is the sole photon
-                    // producer.
+                    // STAGE 2 — PHOTON PREPARATION
                     // ====================================================
 
                     DispatchQueue.main.async {
 
                         self.computationStage =
-                            "Stage 2 / 5 — preparing continuous photons"
+                            "Stage 2 / 5 — preparing photon system"
 
                         self.computationDetail =
                             """
                             The authoritative QRTL field is complete.
                             Preparing the source galaxy and projection
-                            system for continuous photon emission.
+                            system for photon propagation.
                             """
 
                         self.computationProgress =
@@ -1370,24 +1668,19 @@ struct ContentView: View {
                             - computationStart
 
                         self.statusMessage =
-                            "Stage 2/5 — preparing continuous photon emitter…"
+                            "Stage 2/5 — preparing photon pipeline…"
                     }
 
                     // ====================================================
-                    // EMPTY PHOTON OUTPUT
-                    //
-                    // This allows the existing scene pipeline to retain
-                    // its projection-plane infrastructure without
-                    // creating a second photon animation.
+                    // INITIAL EMPTY PIPELINE OUTPUT
                     // ====================================================
 
                     let emptyProjection =
                         LensingProjectionResult.calculate(
-                            from:
-                                []
+                            from: []
                         )
 
-                    let output =
+                    let initialOutput =
                         LensingPipelineOutput(
                             experimentResult:
                                 outcome,
@@ -1415,7 +1708,7 @@ struct ContentView: View {
                         )
 
                     // ====================================================
-                    // HEATMAP
+                    // STAGE 3 — QRTL DENSITY HEATMAP
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1442,12 +1735,8 @@ struct ContentView: View {
 
                     let heatmapImage =
                         QRTLHeatmapGenerator.makeHeatmapImage(
-                            field:
-                                field,
-
-                            size:
-                                128,
-
+                            field: field,
+                            size: 128,
                             halfExtent:
                                 Double(
                                     self.scene.heatmapHalfExtent
@@ -1455,7 +1744,7 @@ struct ContentView: View {
                         )
 
                     // ====================================================
-                    // STORE OUTPUT AND BUILD SCENE
+                    // STAGE 4 — STATIC SPACETIME SCENE
                     // ====================================================
 
                     DispatchQueue.main.async {
@@ -1465,9 +1754,9 @@ struct ContentView: View {
 
                         self.computationDetail =
                             """
-                            Rendering the QRTL gravity surface, deformed
-                            spacetime, source galaxy, and projection
-                            system.
+                            Rendering the QRTL gravity surface,
+                            deformed spacetime, source galaxy,
+                            and projection system.
                             """
 
                         self.computationProgress =
@@ -1478,16 +1767,12 @@ struct ContentView: View {
                             - computationStart
 
                         // =================================================
-                        // RENDER EMPTY PIPELINE OUTPUT
-                        //
-                        // This preserves the existing projection-plane
-                        // setup without displaying photon paths.
+                        // RENDER INITIAL PIPELINE STATE
                         // =================================================
 
                         self.scene.renderPipelineOutput(
-                            output,
-                            showPhotonPaths:
-                                false
+                            initialOutput,
+                            showPhotonPaths: false
                         )
 
                         // =================================================
@@ -1495,8 +1780,7 @@ struct ContentView: View {
                         // =================================================
 
                         self.scene.installQRTLGravitySurface(
-                            field:
-                                field
+                            field: field
                         )
 
                         // =================================================
@@ -1504,50 +1788,54 @@ struct ContentView: View {
                         // =================================================
 
                         self.scene.addDeformedSpacetimeSurface(
-                            field:
-                                field,
-
-                            heatmap:
-                                heatmapImage
+                            field: field,
+                            heatmap: heatmapImage
                         )
 
                         // =================================================
                         // SOURCE GALAXY
-                        //
-                        // Add after the surfaces so the source galaxy
-                        // remains visible.
                         // =================================================
 
                         self.scene.addSourceGalaxy()
 
                         // =================================================
-                        // STORE AUTHORITATIVE PIPELINE OUTPUT
+                        // AUTHORITATIVE FIELD
+                        // =================================================
+
+                        self.scene.qrtlField =
+                            field
+
+                        // =================================================
+                        // INITIAL PIPELINE OUTPUT
                         // =================================================
 
                         self.scene.lastPipelineOutput =
-                            output
+                            initialOutput
 
                         self.result =
                             outcome
                     }
 
                     // ====================================================
-                    // STAGE 5 — CONTINUOUS PHOTON EMITTER
+                    // STAGE 5 — AUTHORITATIVE PHOTON PROPAGATION
                     // ====================================================
 
                     DispatchQueue.main.async {
 
                         self.computationStage =
-                            "Stage 5 / 5 — continuous photon emission"
+                            "Stage 5 / 5 — authoritative photon propagation"
 
                         self.computationDetail =
                             """
-                            The QRTL field, gravity surface, source galaxy,
-                            and projection plane are ready.
+                            The QRTL field, gravity surface,
+                            source galaxy, and projection plane
+                            are ready.
 
-                            Starting the continuous photon emitter.
+                            The scene controller now performs the
+                            authoritative photon propagation.
 
-                            No initial photon-path animation is created.
+                            ContentView does not perform a second
+                            photon-tracing calculation.
                             """
 
                         self.computationProgress =
@@ -1558,64 +1846,11 @@ struct ContentView: View {
                             - computationStart
 
                         self.statusMessage =
-                            "Stage 5/5 — starting continuous photon emission…"
+                            "Stage 5/5 — tracing photons through QRTL field…"
+
 
                         // =================================================
-                        // THE ONLY PHOTON SYSTEM
-                        // =================================================
-
-                        self.scene.startContinuousPhotonSimulation(
-
-                            field:
-                                field,
-
-                            parameters:
-                                lensingParameters,
-
-                            progress: { progress in
-
-                                DispatchQueue.main.async {
-
-                                    self.photonSimulationProgress =
-                                        progress
-
-                                    self.photonsCreated =
-                                        progress.total
-
-                                    self.photonsTraced =
-                                        progress.completed
-
-                                    self.projectionHits =
-                                        progress.projectionHits
-
-                                    self.photonPathPoints =
-                                        0
-
-                                    self.maximumQRTLInfluence =
-                                        0.0
-
-                                    self.computationProgress =
-                                        0.90
-
-                                    self.computationStage =
-                                        "Stage 5 / 5 — continuous photon emission"
-
-                                    self.computationDetail =
-                                        """
-                                        Continuous photon emitter active.
-
-                                        \(progress.completed)
-                                        photons processed.
-
-                                        \(progress.projectionHits)
-                                        projection-plane hits.
-                                        """
-                                }
-                            }
-                        )
-
-                        // =================================================
-                        // EMITTER ACTIVE
+                        // AUTHORITATIVE PHOTON SYSTEM ACTIVE
                         // =================================================
 
                         self.continuousPhotonEmissionStarted =
@@ -1635,12 +1870,14 @@ struct ContentView: View {
                             The source galaxy is visible behind the
                             QRTL gravitational lens.
 
-                            Continuous photons are being emitted through
-                            the authoritative QRTL field and accumulated
-                            on the projection plane.
+                            Photons are propagated through the
+                            authoritative QRTL field.
 
-                            No separate initial photon-path animation
-                            is running.
+                            The controller owns the photon trajectories
+                            and projection system.
+
+                            No independent photon-tracing operation
+                            is performed by ContentView.
                             """
 
                         self.computationElapsed =
@@ -1662,9 +1899,9 @@ struct ContentView: View {
                 }
             }
 
-        // ========================================================
-        // EXECUTE OFF MAIN THREAD
-        // ========================================================
+        // ============================================================
+        // EXECUTE PHYSICS OFF MAIN THREAD
+        // ============================================================
 
         DispatchQueue.global(
             qos: .userInitiated
@@ -1675,237 +1912,7 @@ struct ContentView: View {
         )
     }
 
-    // ============================================================
-    // MARK: - QRTL POTENTIAL SAMPLING
-    // ============================================================
 
-    private func updatePotentialOverlay(
-        field: QRTLField,
-        radiusMeters: Double
-    ) {
 
-        let centerPosition =
-            SIMD3<Float>(
-                0.0,
-                0.0,
-                0.0
-            )
 
-        let quarterPosition =
-            SIMD3<Float>(
-                Float(
-                    radiusMeters * 0.25
-                ),
-                0.0,
-                0.0
-            )
-
-        let halfPosition =
-            SIMD3<Float>(
-                Float(
-                    radiusMeters * 0.50
-                ),
-                0.0,
-                0.0
-            )
-
-        let edgePosition =
-            SIMD3<Float>(
-                Float(
-                    radiusMeters * 0.95
-                ),
-                0.0,
-                0.0
-            )
-
-        let centerPotential =
-            Double(
-                field.gravitationalPotential(
-                    at:
-                        centerPosition
-                )
-            )
-
-        let quarterPotential =
-            Double(
-                field.gravitationalPotential(
-                    at:
-                        quarterPosition
-                )
-            )
-
-        let halfPotential =
-            Double(
-                field.gravitationalPotential(
-                    at:
-                        halfPosition
-                )
-            )
-
-        let edgePotential =
-            Double(
-                field.gravitationalPotential(
-                    at:
-                        edgePosition
-                )
-            )
-
-        DispatchQueue.main.async {
-
-            self.potentialCenter =
-                centerPotential
-
-            self.potentialQuarter =
-                quarterPotential
-
-            self.potentialHalf =
-                halfPotential
-
-            self.potentialEdge =
-                edgePotential
-
-            let maximumMagnitude =
-                max(
-                    abs(centerPotential),
-                    abs(quarterPotential),
-                    abs(halfPotential),
-                    abs(edgePotential),
-                    1e-30
-                )
-
-            self.potentialCenterLevel =
-                self.potentialLevel(
-                    centerPotential,
-                    reference:
-                        maximumMagnitude
-                )
-
-            self.potentialQuarterLevel =
-                self.potentialLevel(
-                    quarterPotential,
-                    reference:
-                        maximumMagnitude
-                )
-
-            self.potentialHalfLevel =
-                self.potentialLevel(
-                    halfPotential,
-                    reference:
-                        maximumMagnitude
-                )
-
-            self.potentialEdgeLevel =
-                self.potentialLevel(
-                    edgePotential,
-                    reference:
-                        maximumMagnitude
-                )
-
-            let centerMagnitude =
-                abs(centerPotential)
-
-            let quarterMagnitude =
-                abs(quarterPotential)
-
-            let halfMagnitude =
-                abs(halfPotential)
-
-            let edgeMagnitude =
-                abs(edgePotential)
-
-            let isFlat =
-                centerMagnitude < 1e-30 ||
-                (
-                    abs(
-                        centerMagnitude -
-                        edgeMagnitude
-                    )
-                    /
-                    max(
-                        centerMagnitude,
-                        1e-30
-                    )
-                    < 0.01
-                )
-
-            let formsWell =
-                centerMagnitude >
-                quarterMagnitude &&
-                quarterMagnitude >
-                halfMagnitude &&
-                halfMagnitude >
-                edgeMagnitude
-
-            if isFlat {
-
-                self.potentialStatus =
-                    "LOW / FLAT GRAVITY POTENTIAL"
-
-                self.potentialExplanation =
-                    """
-                    The QRTL potential changes very little from the
-                    center to the edge. A strong bowl-shaped spacetime
-                    deformation is therefore not expected.
-                    """
-
-            } else if formsWell {
-
-                self.potentialStatus =
-                    "HIGH CENTER → LOW EDGE"
-
-                self.potentialExplanation =
-                    """
-                    The QRTL gravitational potential is strongest near
-                    the cluster center and decreases outward. This is
-                    the expected profile for a bowl-shaped gravity well.
-                    """
-
-            } else {
-
-                self.potentialStatus =
-                    "POTENTIAL PROFILE DETECTED"
-
-                self.potentialExplanation =
-                    """
-                    The QRTL field has a measurable potential, but the
-                    radial profile is not strictly decreasing from the
-                    center to the edge.
-                    """
-            }
-        }
-    }
-
-    // ============================================================
-    // MARK: - POTENTIAL LEVEL CLASSIFICATION
-    // ============================================================
-
-    private func potentialLevel(
-        _ potential: Double,
-        reference: Double
-    ) -> String {
-
-        let magnitude =
-            abs(potential)
-
-        let referenceMagnitude =
-            abs(reference)
-
-        guard referenceMagnitude > 1e-30 else {
-            return "LOW"
-        }
-
-        let fraction =
-            magnitude /
-            referenceMagnitude
-
-        if fraction >= 0.66 {
-            return "HIGH"
-        }
-
-        if fraction >= 0.33 {
-            return "MEDIUM"
-        }
-
-        return "LOW"
-    }
 }

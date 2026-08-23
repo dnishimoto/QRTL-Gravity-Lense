@@ -20,6 +20,16 @@ import simd
 
 final class LensingSceneController:
     ObservableObject {
+    @State
+    private var lensingParameters = LensingParameters()
+     private var photonEmitterNode: SCNNode?
+     private var projectionNode: SCNNode?
+    @Published var qrtlField: QRTLField?
+    private var photonTraceResults: [PhotonTraceResult] = []
+    
+    private var sceneToPhysicalScale: Float = 1.0
+    
+    private var sourceGalaxyPositions: [SIMD3<Float>] = []
     
     private var totalPhotonCount: Int = 0
     private var photonNodes: [SCNNode] = []
@@ -211,7 +221,6 @@ final class LensingSceneController:
 
     private let accumulator: ProjectionAccumulator
 
-    private var projectionNode: SCNNode?
     private var projectionNodes: [SCNNode] = []
     var photons: [PhotonTraceResult] = []
 
@@ -271,6 +280,11 @@ final class LensingSceneController:
         addAxes()
       
       
+    }
+    func setQRTLField(
+        _ field: QRTLField
+    ) {
+        qrtlField = field
     }
     func installQRTLGravitySurface(
         field: QRTLField
@@ -1063,55 +1077,7 @@ final class LensingSceneController:
 
         photonSimulationDisplayLink = displayLink
     }
-    func startContinuousPhotonSimulation(
-        field: QRTLField,
-        parameters: LensingParameters,
-        progress: @escaping (PhotonSimulationProgress) -> Void
-    ) {
-
-        continuousPhotonField =
-            field
-
-        continuousPhotonParameters =
-            parameters
-
-        continuousPhotonSimulationRunning =
-            true
-
-        lastPhotonSimulationTime =
-            0.0
-
-        photonEmissionAccumulator =
-            0.0
-
-        // Reset counters for this simulation run.
-        totalPhotonCount =
-            0
-
-        activePhotonCount =
-            0
-
-        completedPhotonCount =
-            0
-
-        projectionHitCount =
-            0
-
-        photonSimulationProgress =
-            PhotonSimulationProgress(
-                total: 0,
-                completed: 0,
-                active: 0,
-                projectionHits: 0
-            )
-
-        // Send initial progress to ContentView.
-        progress(
-            photonSimulationProgress
-        )
-
-        startPhotonSimulationDisplayLink()
-    }
+  
     // ============================================================
     // GENERATE GLOBULAR CLUSTER STAR POSITIONS
     // ============================================================
@@ -1290,6 +1256,746 @@ final class LensingSceneController:
         }
 
         return positions
+    }
+
+    // ============================================================
+    // MARK: - CONTINUOUS PHOTON SIMULATION
+    // ============================================================
+    //
+    // This is the single entry point for the photon pipeline.
+    //
+    // The controller owns:
+    //     1. QRTL photon tracing
+    //     2. authoritative PhotonTraceResult storage
+    //     3. continuous trajectory visualization
+    //     4. projection accumulation
+    //
+    // There is no second independent photon path generator.
+    //
+    // ============================================================
+
+    func startContinuousPhotonSimulation(
+        field: QRTLField,
+        parameters: LensingParameters,
+        progress: @escaping (PhotonSimulationProgress) -> Void
+    ) {
+
+        // ========================================================
+        // STOP ANY PREVIOUS SIMULATION
+        // ========================================================
+
+        stopContinuousPhotonSimulation()
+
+        // ========================================================
+        // STORE AUTHORITATIVE FIELD
+        // ========================================================
+
+        self.qrtlField = field
+
+        // ========================================================
+        // CREATE THE AUTHORITATIVE PHOTON TRACER
+        // ========================================================
+
+        let tracer =
+            QRTLPhotonTracer(
+                field: field
+            )
+
+        // ========================================================
+        // GET SOURCE-GALAXY POSITIONS
+        // ========================================================
+
+        let sources =
+            sourceGalaxyPositions
+
+        // ========================================================
+        // INITIAL PROGRESS
+        // ========================================================
+
+        progress(
+            PhotonSimulationProgress(
+                total:
+                    sources.count,
+
+                completed:
+                    0,
+
+                active:
+                    0,
+
+                projectionHits:
+                    0
+            )
+        )
+
+        // ========================================================
+        // TRACE PHOTONS
+        // ========================================================
+
+        var traces =
+            [PhotonTraceResult]()
+
+        traces.reserveCapacity(
+            sources.count
+        )
+
+        let initialDirection =
+            SIMD3<Float>(
+                1.0,
+                0.0,
+                0.0
+            )
+
+        for sourcePosition in sources {
+
+            let trace =
+                tracer.tracePhoton(
+                    origin:
+                        sourcePosition,
+
+                    direction:
+                        initialDirection,
+
+                    parameters:
+                        parameters,
+
+                      )
+
+            // ====================================================
+            // RETAIN ONLY VALID TRAJECTORIES
+            // ====================================================
+
+            guard
+                trace.positions.count > 1
+            else {
+                continue
+            }
+
+            traces.append(
+                trace
+            )
+
+            // ====================================================
+            // UPDATE PROGRESS
+            // ====================================================
+
+            progress(
+                PhotonSimulationProgress(
+                    total:
+                        sources.count,
+
+                    completed:
+                        traces.count,
+
+                    active:
+                        max(
+                            0,
+                            sources.count -
+                            traces.count
+                        ),
+
+                    projectionHits:
+                        traces.reduce(
+                            into: 0
+                        ) {
+                            count,
+                            trace in
+
+                            if trace.hitProjection {
+                                count += 1
+                            }
+                        }
+                )
+            )
+        }
+
+        // ========================================================
+        // STORE AUTHORITATIVE TRACES
+        // ========================================================
+        //
+        // These exact traces are now consumed by both:
+        //
+        //     photon visualization
+        //
+        // and
+        //
+        //     projection
+        //
+        // No second tracing pass is performed.
+        // ========================================================
+
+        photonTraceResults =
+            traces
+
+        // ========================================================
+        // REMOVE PREVIOUS TRAJECTORY VISUALIZATION
+        // ========================================================
+
+        photonEmitterNode?
+            .removeFromParentNode()
+
+        photonEmitterNode =
+            nil
+
+        // ========================================================
+        // CREATE VISUALIZATION FROM STORED TRAJECTORIES
+        // ========================================================
+
+        let emitter =
+            createContinuousPhotonEmitter(
+                traces:
+                    traces
+            )
+
+        photonEmitterNode =
+            emitter
+
+        scene.rootNode.addChildNode(
+            emitter
+        )
+
+        // ========================================================
+        // CREATE PROJECTION FROM THE SAME TRAJECTORIES
+        // ========================================================
+
+        projectionNode?
+            .removeFromParentNode()
+
+        projectionNode =
+            nil
+
+        let projection =
+            createProjectionFromPhotonTraces(
+                traces
+            )
+
+        projectionNode =
+            projection
+
+        scene.rootNode.addChildNode(
+            projection
+        )
+
+        // ========================================================
+        // FINAL PROGRESS
+        // ========================================================
+
+        let projectionHitCount =
+            traces.reduce(
+                into: 0
+            ) {
+                count,
+                trace in
+
+                if trace.hitProjection {
+                    count += 1
+                }
+            }
+
+        progress(
+            PhotonSimulationProgress(
+                total:
+                    sources.count,
+
+                completed:
+                    traces.count,
+
+                active:
+                    0,
+
+                projectionHits:
+                    projectionHitCount
+            )
+        )
+    }
+    // ============================================================
+    // MARK: - PROJECTIVE MAP FROM AUTHORITATIVE PHOTON TRACES
+    // ============================================================
+    //
+    // IMPORTANT:
+    //
+    // This function does NOT trace photons.
+    //
+    // The authoritative photon trajectories already exist in:
+    //
+    //     photonTraceResults
+    //
+    // Each trace contains the actual QRTL-calculated trajectory.
+    //
+    // This function examines the final trajectory position and
+    // projects it onto the observation plane.
+    //
+    // Pipeline:
+    //
+    // QRTLPhotonTracer
+    //        ↓
+    // PhotonTraceResult
+    //        ↓
+    // createProjectionFromPhotonTraces(...)
+    //        ↓
+    // observation-plane positions
+    //        ↓
+    // projective visualization
+    //
+    // ============================================================
+
+    private func createProjectionFromPhotonTraces(
+        _ traces: [PhotonTraceResult]
+    ) -> SCNNode {
+
+        let projectionNode = SCNNode()
+
+        // ========================================================
+        // REMOVE OLD PROJECTION CONTENT
+        // ========================================================
+
+        projectionNode.childNodes.forEach {
+            $0.removeFromParentNode()
+        }
+
+        // ========================================================
+        // PROJECTION PARAMETERS
+        // ========================================================
+        //
+        // The photon travels primarily along +X.
+        //
+        // Therefore:
+        //
+        //     X = depth / propagation direction
+        //     Y = vertical projection coordinate
+        //     Z = horizontal projection coordinate
+        //
+        // The observation plane is perpendicular to the X axis.
+        // ========================================================
+
+        let targetX: Float =
+            Float(
+                lensingParameters.targetPlaneX
+            )
+
+        // ========================================================
+        // CREATE PROJECTED PHOTON POINTS
+        // ========================================================
+
+        for trace in traces {
+
+            let positions = trace.positions
+
+            guard positions.count > 1 else {
+                continue
+            }
+
+            // ====================================================
+            // FIND INTERSECTION WITH OBSERVATION PLANE
+            // ====================================================
+            //
+            // We search the trajectory for the first segment that
+            // crosses targetX.
+            // ====================================================
+
+            var projectionPosition:
+                SIMD3<Float>? = nil
+
+            for index in 1..<positions.count {
+
+                let previous =
+                    positions[index - 1]
+
+                let current =
+                    positions[index]
+
+                let previousX =
+                    previous.x
+
+                let currentX =
+                    current.x
+
+                // =================================================
+                // DIRECT HIT
+                // =================================================
+
+                if abs(
+                    currentX - targetX
+                ) < 1e-6 {
+
+                    projectionPosition =
+                        current
+
+                    break
+                }
+
+                // =================================================
+                // SEGMENT CROSSES TARGET PLANE
+                // =================================================
+
+                let crossesPlane =
+                    (
+                        previousX <= targetX &&
+                        currentX >= targetX
+                    )
+                    ||
+                    (
+                        previousX >= targetX &&
+                        currentX <= targetX
+                    )
+
+                guard crossesPlane else {
+                    continue
+                }
+
+                let denominator =
+                    currentX - previousX
+
+                guard abs(denominator) > 1e-12 else {
+                    continue
+                }
+
+                let fraction =
+                    (
+                        targetX -
+                        previousX
+                    ) /
+                    denominator
+
+                projectionPosition =
+                    previous +
+                    (
+                        current -
+                        previous
+                    ) *
+                    fraction
+
+                break
+            }
+
+            // ====================================================
+            // NO OBSERVATION-PLANE INTERSECTION
+            // ====================================================
+
+            guard let hit =
+                projectionPosition
+            else {
+                continue
+            }
+
+            // ====================================================
+            // CREATE PROJECTED PHOTON
+            // ====================================================
+
+            let photon = SCNNode()
+
+            let geometry =
+                SCNSphere(
+                    radius: 0.035
+                )
+
+            let material =
+                SCNMaterial()
+
+            material.diffuse.contents =
+                UIColor.white
+
+            material.emission.contents =
+                UIColor.white
+
+            material.emission.intensity =
+                1.0
+
+            geometry.materials = [
+                material
+            ]
+
+            photon.geometry =
+                geometry
+
+            // ====================================================
+            // POSITION ON OBSERVATION PLANE
+            // ====================================================
+
+            photon.position =
+                SCNVector3(
+                    hit.x,
+                    hit.y,
+                    hit.z
+                )
+
+            projectionNode.addChildNode(
+                photon
+            )
+        }
+
+        // ========================================================
+        // CREATE OBSERVATION PLANE
+        // ========================================================
+        //
+        // The plane itself is intentionally subtle.
+        //
+        // The actual projected photons are the important output.
+        // ========================================================
+
+        let planeSize: CGFloat =
+            8.0
+
+        let planeGeometry =
+            SCNPlane(
+                width: planeSize,
+                height: planeSize
+            )
+
+        let planeMaterial =
+            SCNMaterial()
+
+        planeMaterial.diffuse.contents =
+            UIColor.clear
+
+        planeMaterial.emission.contents =
+            UIColor.clear
+
+        planeMaterial.isDoubleSided =
+            true
+
+        planeMaterial.transparency =
+            0.0
+
+        planeGeometry.materials = [
+            planeMaterial
+        ]
+
+        let observationPlane =
+            SCNNode(
+                geometry:
+                    planeGeometry
+            )
+
+        // ========================================================
+        // SCNPlane DEFAULT ORIENTATION
+        // ========================================================
+        //
+        // SCNPlane lies in the XY plane.
+        //
+        // Rotate it so its normal is aligned with the X axis.
+        // ========================================================
+
+        observationPlane.eulerAngles =
+            SCNVector3(
+                0.0,
+                Float.pi / 2.0,
+                0.0
+            )
+
+        observationPlane.position =
+            SCNVector3(
+                targetX,
+                0.0,
+                0.0
+            )
+
+        projectionNode.addChildNode(
+            observationPlane
+        )
+
+        return projectionNode
+    }
+    // ============================================================
+    // MARK: - CONTINUOUS PHOTON EMITTER
+    // ============================================================
+    //
+    // IMPORTANT:
+    //
+    // This function does NOT calculate photon physics.
+    //
+    // QRTLPhotonTracer has already calculated each trajectory.
+    //
+    // This function only converts those stored trajectories into
+    // SceneKit animations.
+    //
+    // Pipeline:
+    //
+    // sourceGalaxyPositions
+    //        ↓
+    // QRTLPhotonTracer.tracePhoton(...)
+    //        ↓
+    // PhotonTraceResult.positions
+    //        ↓
+    // photonTraceResults
+    //        ↓
+    // createContinuousPhotonEmitter(...)
+    //        ↓
+    // SceneKit visualization
+    //
+    // There is NO second photon integration here.
+    // ============================================================
+
+    private func createContinuousPhotonEmitter(
+        traces: [PhotonTraceResult]
+    ) -> SCNNode {
+
+        let emitterNode = SCNNode()
+
+        // ========================================================
+        // EACH TRACE REPRESENTS ONE PHOTON
+        // ========================================================
+
+        for trace in traces {
+
+            let positions = trace.positions
+
+            guard positions.count > 1 else {
+                continue
+            }
+
+            // ====================================================
+            // CREATE VISUAL PHOTON NODE
+            // ====================================================
+
+            let photonNode = SCNNode()
+
+            // ====================================================
+            // CONVERT STORED TRAJECTORY INTO KEYFRAMES
+            // ====================================================
+            //
+            // Every position here came directly from
+            // QRTLPhotonTracer.
+            //
+            // Therefore the animation follows the actual
+            // calculated QRTL trajectory rather than a new
+            // straight-line path.
+            // ====================================================
+
+            var keyTimes = [NSNumber]()
+            var values = [NSValue]()
+
+            let count = positions.count
+
+            keyTimes.reserveCapacity(count)
+            values.reserveCapacity(count)
+
+            for index in 0..<count {
+
+                let fraction =
+                    Float(index) /
+                    Float(max(1, count - 1))
+
+                keyTimes.append(
+                    NSNumber(
+                        value: fraction
+                    )
+                )
+
+                let position = positions[index]
+
+                values.append(
+                    NSValue(
+                        scnVector3: SCNVector3(
+                            position.x,
+                            position.y,
+                            position.z
+                        )
+                    )
+                )
+            }
+
+            // ====================================================
+            // CREATE STORED-TRAJECTORY ANIMATION
+            // ====================================================
+
+            let animation = CAKeyframeAnimation(
+                keyPath: "position"
+            )
+
+            animation.values = values
+            animation.keyTimes = keyTimes
+
+            // ====================================================
+            // TRAJECTORY TIMING
+            // ====================================================
+            //
+            // count points contain count - 1 integration segments.
+            //
+            // Each segment corresponds approximately to the
+            // configured photon step size.
+            // ====================================================
+
+            let segmentCount =
+                max(
+                    1,
+                    count - 1
+                )
+
+            animation.duration =
+                Double(segmentCount) *
+                Double(
+                    lensingParameters.photonStepSize
+                )
+
+            animation.repeatCount = .infinity
+
+            animation.calculationMode = .linear
+
+            // ====================================================
+            // INITIAL POSITION
+            // ====================================================
+
+            if let first = positions.first {
+
+                photonNode.position =
+                    SCNVector3(
+                        first.x,
+                        first.y,
+                        first.z
+                    )
+            }
+
+            // ====================================================
+            // PHOTON GEOMETRY
+            // ====================================================
+
+            let geometry = SCNSphere(
+                radius: 0.025
+            )
+
+            let material = SCNMaterial()
+
+            material.diffuse.contents =
+                UIColor.white
+
+            material.emission.contents =
+                UIColor.white
+
+            material.emission.intensity =
+                1.0
+
+            geometry.materials = [
+                material
+            ]
+
+            photonNode.geometry =
+                geometry
+
+            // ====================================================
+            // START STORED QRTL TRAJECTORY
+            // ====================================================
+
+            photonNode.addAnimation(
+                animation,
+                forKey:
+                    "QRTLPhotonTrajectory"
+            )
+
+            // ====================================================
+            // ADD PHOTON TO EMITTER
+            // ====================================================
+
+            emitterNode.addChildNode(
+                photonNode
+            )
+        }
+
+        // ========================================================
+        // RETURN COMPLETE PHOTON VISUALIZATION
+        // ========================================================
+
+        return emitterNode
     }
     func verifyPhotonPipeline(
         photonResults: [PhotonTraceResult],
@@ -3370,128 +4076,425 @@ final class LensingSceneController:
         // "fix clearDynamic" discussion earlier in this thread.
     }
 
-    func addSourceGalaxy(
-        radius: Double = 0.75,
-        nStars: Int = 220
-    ) {
+    // ============================================================
+    // MARK: - EXISTING SOURCE GALAXY POSITION GENERATOR
+    // ============================================================
+    //
+    // Generates the source-galaxy star positions used by the
+    // authoritative photon pipeline.
+    //
+    // Coordinate convention:
+    //
+    //     X = photon propagation direction
+    //     Y/Z = source-galaxy image plane
+    //
+    // The returned positions are SceneKit coordinates.
+    //
+    // IMPORTANT:
+    // - This function does NOT create photons.
+    // - This function does NOT trace photons.
+    // - This function does NOT apply gravitational lensing.
+    // - The QRTLPhotonTracer applies the QRTL field later.
+    // ============================================================
 
-        // =========================================================
-        // CLEAR PREVIOUS GALAXY
-        // =========================================================
+    private func generateYourExistingSourceGalaxyPositions(
+        starCount: Int = 220
+    ) -> [SIMD3<Float>] {
 
-        sourceGalaxyNode?.removeFromParentNode()
+        guard starCount > 0 else {
+            return []
+        }
 
-        sourceGalaxyStars.removeAll(
+        var positions: [SIMD3<Float>] = []
+        positions.reserveCapacity(starCount)
+
+        // --------------------------------------------------------
+        // SOURCE GALAXY LOCATION
+        // --------------------------------------------------------
+        //
+        // X is the photon travel direction.
+        // The source galaxy is therefore placed behind the lens.
+        //
+        let sourceX: Float = -8.0
+
+        // --------------------------------------------------------
+        // GALAXY DIMENSIONS
+        // --------------------------------------------------------
+
+        let majorRadius: Float = 2.8
+        let minorRadius: Float = 1.15
+
+        // --------------------------------------------------------
+        // DETERMINISTIC DISTRIBUTION
+        // --------------------------------------------------------
+        //
+        // Using the golden angle avoids random clustering while
+        // producing a visually natural spiral distribution.
+        //
+        let goldenAngle =
+            Float.pi * (3.0 - sqrt(5.0))
+
+        // --------------------------------------------------------
+        // CENTRAL BULGE
+        // --------------------------------------------------------
+        //
+        // A fraction of the stars are concentrated toward the
+        // center of the galaxy.
+        //
+        let bulgeFraction = 0.20
+        let bulgeCount = Int(
+            Float(starCount) * Float(bulgeFraction)
+        )
+
+        if bulgeCount > 0 {
+
+            for i in 0..<bulgeCount {
+
+                let t =
+                    Float(i) /
+                    Float(max(bulgeCount - 1, 1))
+
+                let radius =
+                    0.20 +
+                    0.75 * sqrt(t)
+
+                let angle =
+                    Float(i) * goldenAngle
+
+                let y =
+                    radius *
+                    0.55 *
+                    cos(angle)
+
+                let z =
+                    radius *
+                    0.55 *
+                    sin(angle)
+
+                positions.append(
+                    SIMD3<Float>(
+                        sourceX,
+                        y,
+                        z
+                    )
+                )
+            }
+        }
+
+        // --------------------------------------------------------
+        // SPIRAL DISK
+        // --------------------------------------------------------
+
+        let diskCount =
+            starCount - bulgeCount
+
+        if diskCount > 0 {
+
+            for i in 0..<diskCount {
+
+                let t =
+                    Float(i) /
+                    Float(max(diskCount - 1, 1))
+
+                // Concentrate more stars toward the inner disk.
+                let radialFraction =
+                    pow(t, 0.72)
+
+                let radius =
+                    majorRadius *
+                    radialFraction
+
+                // Two-arm spiral structure.
+                let spiralTurns: Float = 2.15
+
+                let baseAngle =
+                    Float(i) *
+                    goldenAngle
+
+                let spiralAngle =
+                    baseAngle +
+                    radialFraction *
+                    spiralTurns *
+                    2.0 *
+                    Float.pi
+
+                // Elliptical disk.
+                let y =
+                    radius *
+                    cos(spiralAngle)
+
+                let z =
+                    minorRadius *
+                    radialFraction *
+                    sin(spiralAngle)
+
+                // Small vertical thickness.
+                //
+                // Deterministic pseudo-thickness rather than random
+                // values so repeated pipeline runs produce the same
+                // source galaxy.
+                let thicknessPhase =
+                    Float(i) * 1.6180339887
+
+                let verticalOffset =
+                    0.08 *
+                    sin(thicknessPhase)
+
+                positions.append(
+                    SIMD3<Float>(
+                        sourceX,
+                        y,
+                        z + verticalOffset
+                    )
+                )
+            }
+        }
+
+        return positions
+    }
+    func addSourceGalaxy() {
+
+        // ========================================================
+        // CLEAR PREVIOUS SOURCE GALAXY
+        // ========================================================
+
+        sourceGalaxyPositions.removeAll(
             keepingCapacity: true
         )
 
-        let sourceX:
-            Float = -6.5
-
-        var positions:
-            [SIMD3<Float>] = []
-
-        positions.reserveCapacity(
-            nStars
-        )
-
-        // =========================================================
-        // GENERATE SOURCE GALAXY POSITIONS + METADATA
+        // Remove your existing source-galaxy visual node here
+        // using the node/property already present in your
+        // LensingSceneController.
         //
-        // This part is unchanged CPU-only math — no SceneKit
-        // objects are created per star anymore. The visual is
-        // built once, after this loop, as a single point cloud.
-        // =========================================================
+        // Example only if your existing controller has this node:
+        //
+        // sourceGalaxyNode?.removeFromParentNode()
+        // sourceGalaxyNode = SCNNode()
+        //
+        // DO NOT add a new node property if your current
+        // implementation already has one.
 
-        for starID in 0..<nStars {
+        // ========================================================
+        // GENERATE SOURCE GALAXY POSITIONS
+        // ========================================================
+        //
+        // IMPORTANT:
+        //
+        // Replace `generatedPositions` below with the exact
+        // position-generation code already used by your current
+        // addSourceGalaxy().
+        //
+        // The critical requirement is that the positions used
+        // to render the visible stars are ALSO stored in
+        // sourceGalaxyPositions.
+        // ========================================================
 
-            let theta = Double.random(
-                in: 0.0...(2.0 * Double.pi)
+        let generatedPositions: [SIMD3<Float>] =
+            generateYourExistingSourceGalaxyPositions()
+
+        // ========================================================
+        // STORE + RENDER THE SAME POSITIONS
+        // ========================================================
+
+        for position in generatedPositions {
+
+            // ----------------------------------------------------
+            // AUTHORITATIVE PHOTON ORIGIN
+            // ----------------------------------------------------
+
+            sourceGalaxyPositions.append(
+                position
             )
 
-            let radialFraction =
-                sqrt(
-                    Double.random(
-                        in:
-                            0.0...1.0
-                    )
+            // ----------------------------------------------------
+            // EXISTING VISUAL STAR CREATION
+            // ----------------------------------------------------
+            //
+            // Use your existing star geometry/material here.
+            // The visual star MUST use the exact same `position`.
+            //
+
+            let starNode =
+                SCNNode()
+
+            starNode.position =
+                SCNVector3(
+                    position.x,
+                    position.y,
+                    position.z
                 )
 
-            let r =
+            // Your existing star geometry goes here.
+            //
+            // starNode.geometry = ...
+
+            scene.rootNode.addChildNode(
+                starNode
+            )
+        }
+    }
+
+    // ============================================================
+    // MARK: - GENERATE SOURCE GALAXY POSITIONS
+    // ============================================================
+    //
+    // Creates the physical source-star positions used by the
+    // authoritative photon pipeline.
+    //
+    // IMPORTANT:
+    //
+    // These positions are stored in sourceGalaxyPositions.
+    //
+    // Later:
+    //
+    // sourceGalaxyPositions
+    //        ↓
+    // QRTLPhotonTracer
+    //        ↓
+    // PhotonTraceResult
+    //        ↓
+    // continuous photon emitter
+    //        ↓
+    // projection
+    //
+    // No photon is created here.
+    // This function ONLY creates source positions.
+    // ============================================================
+
+    private func generateSourceGalaxyPositions(
+        starCount: Int = 220,
+        radius: Float = 2.5
+    ) -> [SIMD3<Float>] {
+
+        guard starCount > 0 else {
+            return []
+        }
+
+        var positions = [SIMD3<Float>]()
+
+        positions.reserveCapacity(starCount)
+
+        // ========================================================
+        // SOURCE GALAXY PLANE
+        // ========================================================
+        //
+        // Photons travel primarily in +X.
+        //
+        // Therefore the source galaxy is distributed in the Y-Z
+        // plane.
+        //
+        // X = source depth
+        // Y = vertical galaxy coordinate
+        // Z = horizontal galaxy coordinate
+        //
+        // The small negative X offset places the source galaxy
+        // behind the gravitational lens relative to the photon
+        // propagation direction.
+        // ========================================================
+
+        let sourceX: Float = -8.0
+
+        // ========================================================
+        // DETERMINISTIC DISTRIBUTION
+        // ========================================================
+        //
+        // Use a golden-angle spiral rather than random positions.
+        //
+        // This makes the source galaxy reproducible every time
+        // the simulation runs.
+        // ========================================================
+
+        let goldenAngle =
+            Float.pi *
+            (3.0 - sqrt(5.0))
+
+        for index in 0..<starCount {
+
+            let fraction =
+                Float(index) /
+                Float(max(1, starCount - 1))
+
+            // ====================================================
+            // RADIAL DISTRIBUTION
+            // ====================================================
+            //
+            // sqrt(fraction) gives approximately uniform area
+            // density while still allowing a concentrated center
+            // when combined with the falloff below.
+            // ====================================================
+
+            let radialFraction =
+                sqrt(fraction)
+
+            let radialDistance =
                 radius *
                 radialFraction
 
+            let angle =
+                Float(index) *
+                goldenAngle
+
+            // ====================================================
+            // SPIRAL / GALAXY STRUCTURE
+            // ====================================================
+
+            let armWave =
+                sin(
+                    angle * 2.5
+                )
+
+            let armOffset =
+                0.18 *
+                armWave
+
+            let effectiveRadius =
+                radialDistance *
+                (
+                    1.0 +
+                    armOffset
+                )
+
+            // ====================================================
+            // Y-Z GALAXY PLANE
+            // ====================================================
+
             let y =
-                r *
-                cos(theta)
+                cos(angle) *
+                effectiveRadius
 
             let z =
-                r *
-                sin(theta)
+                sin(angle) *
+                effectiveRadius
 
-            let xOffset =
-                Double.random(
-                    in:
-                        -0.03...0.03
-                )
+            // ====================================================
+            // CENTRAL CONCENTRATION
+            // ====================================================
 
-            let position =
-                SIMD3<Float>(
-                    sourceX +
-                        Float(xOffset),
+            let centerWeight =
+                1.0 -
+                0.25 *
+                radialFraction
 
-                    Float(y),
+            let finalY =
+                y *
+                centerWeight
 
-                    Float(z)
-                )
-
-            let brightness =
-                Float.random(
-                    in:
-                        0.5...1.0
-                )
-
-            sourceGalaxyStars.append(
-                SourceGalaxyStar(
-                    id:
-                        starID,
-
-                    position:
-                        position,
-
-                    brightness:
-                        brightness
-                )
-            )
+            let finalZ =
+                z *
+                centerWeight
 
             positions.append(
-                position
+                SIMD3<Float>(
+                    sourceX,
+                    finalY,
+                    finalZ
+                )
             )
         }
 
-
-        // =========================================================
-        // BUILD SINGLE POINT-CLOUD NODE (FIX #2)
-        //
-        // Replaces up to 220 individual SCNSphere/SCNMaterial/
-        // SCNNode allocations with one draw call.
-        // =========================================================
-
-        let galaxyNode =
-            makeStarPointCloudNode(
-                positions: positions,
-                pointSize: 0.03,
-                minimumScreenSpaceRadius: 1.0,
-                maximumScreenSpaceRadius: 4.0
-            )
-
-        sourceGalaxyNode =
-            galaxyNode
-
-        scene.rootNode.addChildNode(
-            galaxyNode
-        )
+        return positions
     }
+
 
     func addGlobularCluster(
         radius: Double = 5.0,

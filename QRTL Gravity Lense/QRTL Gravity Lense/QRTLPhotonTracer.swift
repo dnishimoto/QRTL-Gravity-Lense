@@ -1,4 +1,39 @@
 
+//
+//  QRTLPhotonTracer.swift
+//  QRTL Gravity Lense
+//
+//  QRTL gravitational photon tracer
+//
+//  IMPORTANT:
+//
+//  The trajectory generated here is the authoritative photon path
+//  used by the visualization.
+//
+//  There is NO independent straight-line photon path.
+//
+//  Current pipeline:
+//
+//  Source Galaxy
+//       ↓
+//  Photon Origin
+//       ↓
+//  QRTL physical-space query
+//       ↓
+//  QRTL gravitational lensing response
+//       ↓
+//  Transverse gravitational response
+//       ↓
+//  Photon direction update
+//       ↓
+//  Photon position update
+//       ↓
+//  Projection-plane intersection at X = projectionX
+//       ↓
+//  PhotonTraceResult.positions
+//       ↓
+//  Continuous photon emitter
+//
 
 import Foundation
 import simd
@@ -17,11 +52,6 @@ final class QRTLPhotonTracer {
 
     // ============================================================
     // MARK: - TRANSVERSE COMPONENT
-    //
-    // Removes the component of the gravitational response
-    // parallel to photon propagation.
-    //
-    // Only the transverse component changes photon direction.
     // ============================================================
 
     private func transverseComponent(
@@ -40,8 +70,7 @@ final class QRTLPhotonTracer {
 
         let d = direction / length
 
-        let parallel =
-            simd_dot(vector, d)
+        let parallel = simd_dot(vector, d)
 
         let result =
             vector - d * parallel
@@ -59,17 +88,26 @@ final class QRTLPhotonTracer {
 
     // ============================================================
     // MARK: - PROJECTION PLANE INTERSECTION
+    // ============================================================
     //
-    // Photons propagate primarily along +X.
+    // Current ContentView geometry:
+    //
+    // Photon propagation = +X
     //
     // Projection plane:
     //
-    //     X = targetPlaneX
+    //      X = parameters.projectionX
     //
-    // Projection coordinates:
+    // Image coordinates:
     //
-    //     horizontal = Y
-    //     vertical   = Z
+    //      horizontal = Y
+    //      vertical   = Z
+    //
+    // Normalized coordinates:
+    //
+    //      Y / projectionPlaneHalfExtent
+    //      Z / projectionPlaneHalfExtent
+    //
     // ============================================================
 
     private func projectionIntersection(
@@ -82,7 +120,7 @@ final class QRTLPhotonTracer {
     )? {
 
         let targetX =
-            Float(parameters.targetPlaneX)
+            Float(parameters.projectionX)
 
         let previousX =
             previousPosition.x
@@ -94,15 +132,25 @@ final class QRTLPhotonTracer {
             currentX - previousX
 
         guard
+            targetX.isFinite,
+            previousX.isFinite,
+            currentX.isFinite,
             dx.isFinite,
             abs(dx) > 1.0e-8
         else {
             return nil
         }
 
-        // --------------------------------------------------------
-        // Segment / plane intersection
-        // --------------------------------------------------------
+        // The photon must cross the projection plane while
+        // propagating forward in +X.
+
+        guard
+            currentX >= previousX,
+            targetX >= previousX,
+            targetX <= currentX
+        else {
+            return nil
+        }
 
         let t =
             (targetX - previousX) / dx
@@ -115,28 +163,13 @@ final class QRTLPhotonTracer {
             return nil
         }
 
-        // --------------------------------------------------------
-        // Intersection point
-        // --------------------------------------------------------
-
         let point =
             previousPosition
             +
-            (
-                currentPosition
-                -
-                previousPosition
-            )
-            * t
-
-        // --------------------------------------------------------
-        // Projection scale
-        // --------------------------------------------------------
+            (currentPosition - previousPosition) * t
 
         let halfExtent =
-            Float(
-                parameters.projectionPlaneHalfExtent
-            )
+            Float(parameters.projectionPlaneHalfExtent)
 
         guard
             halfExtent.isFinite,
@@ -145,19 +178,11 @@ final class QRTLPhotonTracer {
             return nil
         }
 
-        // --------------------------------------------------------
-        // Y/Z become image coordinates
-        // --------------------------------------------------------
-
         let coordinates =
             SIMD2<Float>(
                 point.y / halfExtent,
                 point.z / halfExtent
             )
-
-        // --------------------------------------------------------
-        // Validation
-        // --------------------------------------------------------
 
         guard
             point.x.isFinite,
@@ -179,86 +204,34 @@ final class QRTLPhotonTracer {
 
     // ============================================================
     // MARK: - TRACE PHOTON
-    //
-    // Pipeline:
-    //
-    // Photon origin
-    //      ↓
-    // Normalize direction
-    //      ↓
-    // Sample QRTL gravitational field
-    //      ↓
-    // Remove longitudinal component
-    //      ↓
-    // Apply gravitational deflection
-    //      ↓
-    // Normalize direction
-    //      ↓
-    // Advance photon
-    //      ↓
-    // Check projection plane
-    //      ↓
-    // Repeat
     // ============================================================
 
     func tracePhoton(
         origin: SIMD3<Float>,
         direction: SIMD3<Float>,
-        parameters: LensingParameters,
-        sceneToPhysicalScale: Float = 1.0
+        parameters: LensingParameters
     ) -> PhotonTraceResult {
 
-        // --------------------------------------------------------
-        // SCENE-SPACE vs. PHYSICAL-SPACE
-        //
-        // origin/direction/position/stepSize all live in the
-        // caller's SCENE coordinates (e.g. a visualization's
-        // -extent...+extent range). QRTLField's gravity table,
-        // however, is built over the cluster's REAL physical
-        // radius in meters (field.clusterRadiusMeters), which can
-        // be many orders of magnitude larger than any reasonable
-        // scene extent.
-        //
-        // Without a conversion, every scene-space query position
-        // — from a "far away" source galaxy to the point of
-        // closest approach — lands inside the very first, tiny
-        // sliver of the physical table, so the field always reads
-        // as if the photon were sitting at the exact center: no
-        // "before curvature starts" is representable, and a
-        // source galaxy can never be meaningfully positioned
-        // outside the cluster's influence.
-        //
-        // sceneToPhysicalScale converts a scene-space position to
-        // the equivalent physical position (in meters) ONLY for
-        // querying the field — the photon's actual integration
-        // (position, direction, step size) stays entirely in
-        // scene-space, so nothing about rendering, step size, or
-        // the projection plane needs to change. Default 1.0
-        // preserves prior behavior for any caller already passing
-        // literal physical positions.
-        // --------------------------------------------------------
-
-        let sceneToPhysical =
-            sceneToPhysicalScale.isFinite &&
-            sceneToPhysicalScale > 0.0
-            ? sceneToPhysicalScale
-            : 1.0
+        // ========================================================
+        // INITIAL POSITION
+        // ========================================================
 
         var position =
             origin
 
-        // --------------------------------------------------------
-        // Initial photon direction
-        // --------------------------------------------------------
+        // ========================================================
+        // INITIAL DIRECTION
+        // ========================================================
 
-        var rayDirection =
-            simd_normalize(direction)
+        let initialLength =
+            simd_length(direction)
 
         guard
-            rayDirection.x.isFinite,
-            rayDirection.y.isFinite,
-            rayDirection.z.isFinite,
-            simd_length(rayDirection) > 1.0e-12
+            direction.x.isFinite,
+            direction.y.isFinite,
+            direction.z.isFinite,
+            initialLength.isFinite,
+            initialLength > 1.0e-12
         else {
 
             return PhotonTraceResult(
@@ -280,22 +253,50 @@ final class QRTLPhotonTracer {
             )
         }
 
-        // --------------------------------------------------------
-        // Photon path
-        // --------------------------------------------------------
+        var rayDirection =
+            direction / initialLength
 
-        var positions:
-            [SIMD3<Float>] = []
+        guard
+            rayDirection.x.isFinite,
+            rayDirection.y.isFinite,
+            rayDirection.z.isFinite
+        else {
+
+            return PhotonTraceResult(
+                origin: origin,
+                direction: .zero,
+                positions: [origin],
+                finalPosition: origin,
+                finalDirection: .zero,
+                hitProjection: false,
+                projectionPoint: nil,
+                projectionCoordinates: nil,
+                stepCount: 0,
+                traveledDistance: 0.0,
+                maximumQRTLInfluence: 0.0,
+                maximumMagneticField: 0.0,
+                maximumMagneticPhotonInfluence: 0.0,
+                sourceCoordinates: nil,
+                interactionCount: 0
+            )
+        }
+
+        // ========================================================
+        // AUTHORITATIVE PHOTON PATH
+        // ========================================================
+
+        var positions =
+            [SIMD3<Float>]()
 
         positions.reserveCapacity(
-            parameters.maximumPhotonSteps + 1
+            parameters.maxSteps + 1
         )
 
         positions.append(position)
 
-        // --------------------------------------------------------
-        // Diagnostics
-        // --------------------------------------------------------
+        // ========================================================
+        // DIAGNOSTICS
+        // ========================================================
 
         var stepCount =
             0
@@ -309,13 +310,10 @@ final class QRTLPhotonTracer {
         var maximumQRTLInfluence:
             Float = 0.0
 
-        // --------------------------------------------------------
-        // These fields remain zero because electromagnetic
-        // photon bending has been removed from this tracer.
+        // Electromagnetic photon bending is intentionally disabled.
         //
-        // They are retained only for compatibility with the
-        // existing PhotonTraceResult structure.
-        // --------------------------------------------------------
+        // The gravitational path is generated exclusively from
+        // field.qrtlLensingAcceleration(...).
 
         let maximumMagneticField:
             Float = 0.0
@@ -323,9 +321,9 @@ final class QRTLPhotonTracer {
         let maximumMagneticPhotonInfluence:
             Float = 0.0
 
-        // --------------------------------------------------------
-        // Projection state
-        // --------------------------------------------------------
+        // ========================================================
+        // PROJECTION STATE
+        // ========================================================
 
         var hitProjection =
             false
@@ -336,25 +334,35 @@ final class QRTLPhotonTracer {
         var projectionCoordinates:
             SIMD2<Float>? = nil
 
-        // --------------------------------------------------------
-        // Propagation parameters
-        // --------------------------------------------------------
+        // ========================================================
+        // CURRENT LENSING PARAMETERS
+        // ========================================================
 
         let stepSize =
-            Float(
-                parameters.photonStepSize
-            )
+            Float(parameters.stepSize)
 
         let maximumRadius =
-            Float(
-                parameters.maximumPropagationRadius
-            )
+            Float(parameters.maxRadius)
+
+        let lensingStrength =
+            Float(parameters.qrtlLensingStrength)
+
+        let projectionX =
+            Float(parameters.projectionX)
+
+        let projectionHalfExtent =
+            Float(parameters.projectionPlaneHalfExtent)
 
         guard
             stepSize.isFinite,
             stepSize > 0.0,
             maximumRadius.isFinite,
-            maximumRadius > 0.0
+            maximumRadius > 0.0,
+            lensingStrength.isFinite,
+            projectionX.isFinite,
+            projectionHalfExtent.isFinite,
+            projectionHalfExtent > 0.0,
+            parameters.maxSteps > 0
         else {
 
             return PhotonTraceResult(
@@ -380,37 +388,53 @@ final class QRTLPhotonTracer {
         // PHOTON PROPAGATION
         // ========================================================
 
-        for step
-        in 0..<parameters.maximumPhotonSteps {
+        for step in 0..<parameters.maxSteps {
 
             stepCount =
                 step + 1
 
-            let currentPosition =
+            let previousPosition =
                 position
 
             // ====================================================
-            // CONVERT TO PHYSICAL SPACE FOR THE FIELD QUERY ONLY
+            // QRTL FIELD QUERY
+            // ====================================================
+            //
+            // ContentView supplies photon positions in the same
+            // physical coordinate system used by QRTLField.
+            //
+            // No additional scene-to-physical conversion is
+            // performed here.
+            //
+            // This is important because the current QRTL field
+            // operates on physical-space coordinates.
             // ====================================================
 
-            let physicalQueryPosition =
-                currentPosition *
-                sceneToPhysical
-
-            // ====================================================
-            // QRTL GRAVITATIONAL LENSING
-            // ====================================================
+            guard
+                position.x.isFinite,
+                position.y.isFinite,
+                position.z.isFinite
+            else {
+                break
+            }
 
             let qrtlResponse =
                 field.qrtlLensingAcceleration(
-                    at: physicalQueryPosition,
+                    at: position,
                     direction: rayDirection
                 )
 
-            // ----------------------------------------------------
-            // Keep only the component perpendicular to the
-            // direction of photon travel.
-            // ----------------------------------------------------
+            guard
+                qrtlResponse.x.isFinite,
+                qrtlResponse.y.isFinite,
+                qrtlResponse.z.isFinite
+            else {
+                break
+            }
+
+            // ====================================================
+            // REMOVE LONGITUDINAL COMPONENT
+            // ====================================================
 
             let qrtlTransverse =
                 transverseComponent(
@@ -418,14 +442,8 @@ final class QRTLPhotonTracer {
                     relativeTo: rayDirection
                 )
 
-            // ----------------------------------------------------
-            // Diagnostic magnitude
-            // ----------------------------------------------------
-
             let qrtlMagnitude =
-                simd_length(
-                    qrtlTransverse
-                )
+                simd_length(qrtlTransverse)
 
             guard
                 qrtlMagnitude.isFinite
@@ -444,29 +462,45 @@ final class QRTLPhotonTracer {
             }
 
             // ====================================================
-            // UPDATE PHOTON DIRECTION
+            // APPLY QRTL GRAVITATIONAL DEFLECTION
+            // ====================================================
             //
-            // dD/ds ≈ QRTL transverse response
+            // Current QRTL photon equation:
             //
-            // D_new =
+            // D(next) =
+            //
             // normalize(
-            //     D + response * deflectionStrength * ds
+            //     D(current)
+            //     +
+            //     QRTL_transverse
+            //     × qrtlLensingStrength
+            //     × stepSize
             // )
+            //
+            // The response and integration coordinates are now
+            // in the same coordinate system as QRTLField.
             // ====================================================
 
-            rayDirection +=
+            let deflection =
                 qrtlTransverse
                 *
-                Float(
-                    parameters.deflectionStrength
-                )
+                lensingStrength
                 *
                 stepSize
 
+            guard
+                deflection.x.isFinite,
+                deflection.y.isFinite,
+                deflection.z.isFinite
+            else {
+                break
+            }
+
+            rayDirection +=
+                deflection
+
             let directionLength =
-                simd_length(
-                    rayDirection
-                )
+                simd_length(rayDirection)
 
             guard
                 directionLength.isFinite,
@@ -476,36 +510,44 @@ final class QRTLPhotonTracer {
             }
 
             rayDirection =
-                simd_normalize(
-                    rayDirection
-                )
+                rayDirection / directionLength
 
             // ====================================================
             // ADVANCE PHOTON
             // ====================================================
 
-            let previousPosition =
-                position
-
             position +=
-                rayDirection
-                *
-                stepSize
+                rayDirection * stepSize
 
             traveledDistance +=
                 stepSize
 
-            positions.append(
-                position
-            )
+            guard
+                position.x.isFinite,
+                position.y.isFinite,
+                position.z.isFinite
+            else {
+                break
+            }
+
+            // ====================================================
+            // STORE ACTUAL CURVED POSITION
+            // ====================================================
+            //
+            // This is the authoritative trajectory.
+            //
+            // ContentView / SceneKit must render these positions.
+            // ====================================================
+
+            positions.append(position)
 
             // ====================================================
             // PROJECTION PLANE
             // ====================================================
 
-            if
-                !hitProjection,
-                let hit =
+            if !hitProjection {
+
+                if let hit =
                     projectionIntersection(
                         previousPosition:
                             previousPosition,
@@ -513,17 +555,17 @@ final class QRTLPhotonTracer {
                             position,
                         parameters:
                             parameters
-                    )
-            {
+                    ) {
 
-                hitProjection =
-                    true
+                    hitProjection =
+                        true
 
-                projectionPoint =
-                    hit.point
+                    projectionPoint =
+                        hit.point
 
-                projectionCoordinates =
-                    hit.coordinates
+                    projectionCoordinates =
+                        hit.coordinates
+                }
             }
 
             // ====================================================
@@ -531,15 +573,30 @@ final class QRTLPhotonTracer {
             // ====================================================
 
             let radius =
-                simd_length(
-                    position
-                )
+                simd_length(position)
 
-            guard radius.isFinite else {
+            guard
+                radius.isFinite
+            else {
                 break
             }
 
-            if radius > maximumRadius {
+            if radius >= maximumRadius {
+                break
+            }
+
+            // ====================================================
+            // STOP AFTER PROJECTION
+            // ====================================================
+            //
+            // Once the photon reaches the projection plane,
+            // its image coordinate has been determined.
+            //
+            // There is no need to continue tracing it beyond
+            // the image plane.
+            // ====================================================
+
+            if hitProjection {
                 break
             }
         }
@@ -549,14 +606,11 @@ final class QRTLPhotonTracer {
         // ========================================================
 
         return PhotonTraceResult(
-
             origin:
                 origin,
 
             direction:
-                simd_normalize(
-                    direction
-                ),
+                rayDirection,
 
             positions:
                 positions,
@@ -599,7 +653,4 @@ final class QRTLPhotonTracer {
         )
     }
 }
-
-
-
 

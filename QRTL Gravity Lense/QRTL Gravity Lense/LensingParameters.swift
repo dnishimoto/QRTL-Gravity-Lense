@@ -9,230 +9,308 @@
 
 import Foundation
 
-// ============================================================
-// LENSING PARAMETERS
-// ============================================================
+
 //
-// Single authoritative parameter model used by:
+//  LensingParameters.swift
+//  QRTL Gravity Lense
 //
-//     QRTLPhotonTracer
-//     ContentView
-//     QRTLExperiment
-//     LensingSceneController
+//  Unified photon-lensing parameters.
+//  Provides both the current descriptive names and the legacy
+//  PhotonTracer compatibility names.
 //
-// ============================================================
+
+import Foundation
 
 struct LensingParameters {
 
-    // ========================================================
-    // PHOTON PROPAGATION
-    // ========================================================
+    // ============================================================
+    // MARK: - PHOTON PROPAGATION
+    // ============================================================
 
-    /// Continuous photon emission rate in photons per second.
-    let photonEmissionRate: Float
+    /// Legacy PhotonTracer name.
+    let maxSteps: Int
 
-    /// Photon integration step in meters.
-    let photonStepSize: Float
+    /// Legacy PhotonTracer name.
+    let stepSize: Float
 
-    /// Maximum photon propagation distance in meters.
-    let maximumPropagationRadius: Float
+    /// Legacy PhotonTracer name.
+    let maxRadius: Float
 
-    // ========================================================
-    // PROJECTION PLANE
-    // ========================================================
-
-    /// Projection plane X coordinate in meters.
-    let targetPlaneX: Float
-
-    /// Physical half-width of projection plane in meters.
-    let projectionPlaneHalfExtent: Float
-
-    // ========================================================
-    // LENSING
-    // ========================================================
-
-    /// Maximum number of photon integration steps.
+    /// Current descriptive name.
     let maximumPhotonSteps: Int
 
-    /// Base gravitational deflection multiplier.
+    /// Current descriptive name.
+    let photonStepSize: Float
+
+    /// Current descriptive name.
+    let maximumPropagationRadius: Float
+
+    /// Continuous photon emission rate.
+    let photonEmissionRate: Float
+
+    /// Maximum number of photons ContentView may trace.
+    let maximumPhotonCount: Int
+
+    // ============================================================
+    // MARK: - GRAVITATIONAL DEFLECTION
+    // ============================================================
+
+    /// Base QRTL transverse deflection strength.
     let deflectionStrength: Float
 
     /// QRTL-specific lensing multiplier.
-    var qrtlLensingStrength: Float = 1.0
+    var qrtlLensingStrength: Float
 
-    /// Maximum QRTL bending contribution per integration step.
-    var maximumPhotonBend: Float = 0.35
+    /// Maximum allowed QRTL bending contribution.
+    var maximumPhotonBend: Float
 
-    // ========================================================
-    // QRTL FIELD COUPLING
-    // ========================================================
+    // ============================================================
+    // MARK: - PROJECTION PLANE
+    // ============================================================
 
-    /// Coupling between the QRTL field and photon propagation.
-    var qrtlFieldCoupling: Float = 1.0
+    /// Legacy PhotonTracer projection-plane X coordinate.
+    let projectionX: Float
+
+    /// Current descriptive projection-plane X coordinate.
+    let targetPlaneX: Float
+
+    /// Half-width / half-height of the projection plane.
+    let projectionPlaneHalfExtent: Float
+
+    // ============================================================
+    // MARK: - QRTL FIELD COUPLING
+    // ============================================================
+
+    /// Coupling between QRTL field and photon propagation.
+    var qrtlFieldCoupling: Float
 
     /// Additional QRTL photon coupling.
-    var qrtlPhotonCoupling: Float = 0.25
+    var qrtlPhotonCoupling: Float
 
-    // ========================================================
-    // ELECTROMAGNETIC COUPLING
-    // ========================================================
+    // ============================================================
+    // MARK: - ELECTROMAGNETIC COUPLING
+    // ============================================================
 
     /// Electromagnetic field coupling.
-    var electromagneticCoupling: Float = 0.0
+    var electromagneticCoupling: Float
 
     /// Direct magnetic influence on photon propagation.
-    var magneticPhotonCoupling: Float = 0.0
+    var magneticPhotonCoupling: Float
 
     /// Magnetic bending multiplier.
-    var magneticBendingStrength: Float = 0.0
+    var magneticBendingStrength: Float
 
     /// Current-to-photon coupling.
-    var currentCoupling: Float = 0.0
+    var currentCoupling: Float
 
-    // ========================================================
-    // OPTIONAL INTERACTION
-    // ========================================================
+    // ============================================================
+    // MARK: - OPTIONAL INTERACTION
+    // ============================================================
 
-    var interactionRate: Float = 0.0
+    var interactionRate: Float
 
-    // ========================================================
-    // INITIALIZATION
-    // ========================================================
+    // ============================================================
+    // MARK: - INITIALIZATION
+    // ============================================================
 
     init(
+        maxSteps: Int = 2000,
+        stepSize: Float = 0.01,
+        maxRadius: Float = 20.0,
+
+        deflectionStrength: Float = 1.0,
+
+        projectionX: Float = 10.0,
+        projectionPlaneHalfExtent: Float = 10.0,
+
+        maximumPhotonCount: Int = 10000,
+
         maximumPropagationRadius: Float = 20.0,
         photonStepSize: Float = 0.20,
         photonEmissionRate: Float = 60.0,
         maximumPhotonSteps: Int = 100,
-        deflectionStrength: Float = 1.0,
+
         qrtlLensingStrength: Float = 1.0,
         maximumPhotonBend: Float = 0.35,
+
         qrtlFieldCoupling: Float = 1.0,
         qrtlPhotonCoupling: Float = 0.25,
+
         electromagneticCoupling: Float = 0.0,
         magneticPhotonCoupling: Float = 0.0,
         magneticBendingStrength: Float = 0.0,
         currentCoupling: Float = 0.0,
-        targetPlaneX: Float = 10.0,
-        projectionPlaneHalfExtent: Float = 18.0,
+
+        targetPlaneX: Float? = nil,
+
         interactionRate: Float = 0.0
     ) {
 
-        // ====================================================
+        // ========================================================
         // PHOTON PROPAGATION
-        // ====================================================
+        // ========================================================
 
-        self.photonEmissionRate =
-            max(
-                photonEmissionRate,
-                0.0
-            )
+        let safeMaxSteps = max(
+            1,
+            maxSteps
+        )
 
-        self.maximumPropagationRadius =
-            max(
-                maximumPropagationRadius,
-                0.001
-            )
+        let safeStepSize =
+            stepSize.isFinite && stepSize > 0.0
+            ? stepSize
+            : 0.01
+
+        let safeMaxRadius =
+            maxRadius.isFinite && maxRadius > 0.0
+            ? maxRadius
+            : 20.0
+
+        self.maxSteps = safeMaxSteps
+        self.stepSize = safeStepSize
+        self.maxRadius = safeMaxRadius
+
+        // ========================================================
+        // CURRENT / DESCRIPTIVE PHOTON VALUES
+        // ========================================================
+
+        self.maximumPhotonSteps = max(
+            1,
+            maximumPhotonSteps
+        )
 
         self.photonStepSize =
-            max(
-                photonStepSize,
-                0.00001
-            )
+            photonStepSize.isFinite && photonStepSize > 0.0
+            ? photonStepSize
+            : 0.20
 
-        self.maximumPhotonSteps =
-            max(
-                maximumPhotonSteps,
-                1
-            )
+        self.maximumPropagationRadius =
+            maximumPropagationRadius.isFinite &&
+            maximumPropagationRadius > 0.0
+            ? maximumPropagationRadius
+            : 20.0
 
-        // ====================================================
-        // LENSING
-        // ====================================================
+        self.photonEmissionRate = max(
+            photonEmissionRate.isFinite
+            ? photonEmissionRate
+            : 0.0,
+            0.0
+        )
+
+        self.maximumPhotonCount = max(
+            1,
+            maximumPhotonCount
+        )
+
+        // ========================================================
+        // GRAVITATIONAL DEFLECTION
+        // ========================================================
 
         self.deflectionStrength =
-            max(
-                deflectionStrength,
-                0.0
-            )
+            deflectionStrength.isFinite
+            ? deflectionStrength
+            : 1.0
 
-        self.qrtlLensingStrength =
-            max(
-                qrtlLensingStrength,
-                0.0
-            )
+        self.qrtlLensingStrength = max(
+            qrtlLensingStrength.isFinite
+            ? qrtlLensingStrength
+            : 0.0,
+            0.0
+        )
 
-        self.maximumPhotonBend =
-            max(
-                maximumPhotonBend,
-                0.0
-            )
+        self.maximumPhotonBend = max(
+            maximumPhotonBend.isFinite
+            ? maximumPhotonBend
+            : 0.0,
+            0.0
+        )
 
-        // ====================================================
-        // QRTL FIELD COUPLING
-        // ====================================================
-
-        self.qrtlFieldCoupling =
-            max(
-                qrtlFieldCoupling,
-                0.0
-            )
-
-        self.qrtlPhotonCoupling =
-            max(
-                qrtlPhotonCoupling,
-                0.0
-            )
-
-        // ====================================================
-        // ELECTROMAGNETIC COUPLING
-        // ====================================================
-
-        self.electromagneticCoupling =
-            max(
-                electromagneticCoupling,
-                0.0
-            )
-
-        self.magneticPhotonCoupling =
-            max(
-                magneticPhotonCoupling,
-                0.0
-            )
-
-        self.magneticBendingStrength =
-            max(
-                magneticBendingStrength,
-                0.0
-            )
-
-        self.currentCoupling =
-            max(
-                currentCoupling,
-                0.0
-            )
-
-        // ====================================================
+        // ========================================================
         // PROJECTION PLANE
-        // ====================================================
+        // ========================================================
 
-        self.targetPlaneX =
-            targetPlaneX
+        let safeProjectionX =
+            projectionX.isFinite
+            ? projectionX
+            : 10.0
+
+        let resolvedTargetPlaneX =
+            targetPlaneX ??
+            safeProjectionX
+
+        let safeTargetPlaneX =
+            resolvedTargetPlaneX.isFinite
+            ? resolvedTargetPlaneX
+            : safeProjectionX
+
+        self.projectionX = safeProjectionX
+        self.targetPlaneX = safeTargetPlaneX
 
         self.projectionPlaneHalfExtent =
-            max(
-                projectionPlaneHalfExtent,
-                0.001
-            )
+            projectionPlaneHalfExtent.isFinite &&
+            projectionPlaneHalfExtent > 0.0
+            ? projectionPlaneHalfExtent
+            : 10.0
 
-        // ====================================================
+        // ========================================================
+        // QRTL FIELD COUPLING
+        // ========================================================
+
+        self.qrtlFieldCoupling = max(
+            qrtlFieldCoupling.isFinite
+            ? qrtlFieldCoupling
+            : 0.0,
+            0.0
+        )
+
+        self.qrtlPhotonCoupling = max(
+            qrtlPhotonCoupling.isFinite
+            ? qrtlPhotonCoupling
+            : 0.0,
+            0.0
+        )
+
+        // ========================================================
+        // ELECTROMAGNETIC COUPLING
+        // ========================================================
+
+        self.electromagneticCoupling = max(
+            electromagneticCoupling.isFinite
+            ? electromagneticCoupling
+            : 0.0,
+            0.0
+        )
+
+        self.magneticPhotonCoupling = max(
+            magneticPhotonCoupling.isFinite
+            ? magneticPhotonCoupling
+            : 0.0,
+            0.0
+        )
+
+        self.magneticBendingStrength = max(
+            magneticBendingStrength.isFinite
+            ? magneticBendingStrength
+            : 0.0,
+            0.0
+        )
+
+        self.currentCoupling = max(
+            currentCoupling.isFinite
+            ? currentCoupling
+            : 0.0,
+            0.0
+        )
+
+        // ========================================================
         // OPTIONAL INTERACTION
-        // ====================================================
+        // ========================================================
 
-        self.interactionRate =
-            max(
-                interactionRate,
-                0.0
-            )
+        self.interactionRate = max(
+            interactionRate.isFinite
+            ? interactionRate
+            : 0.0,
+            0.0
+        )
     }
 }
+
