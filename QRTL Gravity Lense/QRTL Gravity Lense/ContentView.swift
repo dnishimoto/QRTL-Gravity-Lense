@@ -1,135 +1,3 @@
-
-
-/*
- Here is the corrected pipeline for your current QRTL Gravity Lense architecture:
-
- ============================================================
-           │
-           ▼
-
-
- ============================================================
-              QRTL FIELD NOW EXISTS
- ============================================================
-
-
-                  ┌───────────────────┐
-                  │                   │
-                  ▼                   ▼
-
-
- ============================================================
- E. GRAVITY SURFACE                  F. PHOTON TRACING
- ============================================================
-
-
-     QRTLField sampled                  QRTLField sampled
-     over surface grid                  along photon path
-           │                                  │
-           ├── energy density                 ├── total index
-           ├── potential                     ├── index gradient
-           ├── QRTL influence                ├── gravitational effect
-           └── EM influence                  ├── EM effect
-           │                                └── photon direction
-           ▼                                  │
-     surface geometry                        │
-           │                                  │
-           │                                  ▼
-           │                           curved photon paths
-           │                                  │
-           ▼                                  │
-     visual spacetime                         │
-     geometry                                 │
-           │                                  │
-           └──────────────┬───────────────────┘
-                          │
-                          ▼
-
-
- ============================================================
- G. PROJECTION PLANE
- ============================================================
-
-
-     Photon paths intersect projection plane
-                          │
-                          ▼
-
-
- ============================================================
- H. PHOTON ACCUMULATION
- ============================================================
-
-
-     ProjectionAccumulator
-                          │
-           ┌──────────────┴──────────────┐
-           │                             │
-      Photon A                       Photon B
-           │                             │
-           └──────────────┬──────────────┘
-                          ▼
-
-
- ============================================================
- I. TWO GALAXY IMAGES
- ============================================================
-
-
-        projected galaxy A
-                +
-        projected galaxy B
-                │
-                ▼
-        gravitational-lensing result
- The critical dependency
-
- The dependency should be:
-
- GlobularClusterDensityMap
-              ↓
- GlobularClusterDensitySource
-              ↓
-          QRTLField
-              ↓
-      ┌───────┴────────┐
-      ↓                ↓
- Gravity Surface   Photon Tracer
-      │                │
-      │                ↓
-      │          Projection Plane
-      │                │
-      │                ↓
-      │          Accumulation
-      │                │
-      └───────┬────────┘
-              ↓
-        Final Scene
- The key change is to stop making the photon follow the QRTL radial field vector. Instead, the QRTL field should behave as a central lensing potential whose transverse influence accumulates along the photon path.
- */
-//
-//  ContentView.swift
-//  QRTL Gravity Lense
-//
-//  Created by David Nishimoto on 8/18/26.
-//
-
-
-
-//
-//  ContentView.swift
-//  QRTL Gravity Lense
-//
-//  Created by David Nishimoto on 8/18/26.
-//
-
-//
-//  ContentView.swift
-//  QRTL Gravity Lense
-//
-//  Created by David Nishimoto on 8/18/26.
-//
-
 //
 //  ContentView.swift
 //  QRTL Gravity Lense
@@ -144,7 +12,11 @@ import Combine
 import UIKit
 
 struct ContentView: View {
-    
+
+    // ============================================================
+    // MARK: - PHOTON SIMULATION PROGRESS
+    // ============================================================
+
     @State private var photonSimulationProgress =
         PhotonSimulationProgress(
             total: 0,
@@ -189,10 +61,8 @@ struct ContentView: View {
     @State private var alphaQ: Double = 5e-6
     @State private var etaQ: Double = 3.0
     @State private var gammaQ: Double = 1.0
-
     @State private var electromagneticCoupling: Double = 2e-11
     @State private var photonEMCoupling: Double = 5e-21
-
     @State private var chiQ: Double = 1.0
     @State private var interactionRate: Double = 0.0
 
@@ -201,21 +71,28 @@ struct ContentView: View {
     // ============================================================
 
     @State private var result: QRTLExperimentResult?
-
     @State private var isRunning: Bool = false
 
     @State private var statusMessage: String =
         "Ready — source galaxy → QRTL lens → observation plane"
 
     @State private var showControls: Bool = false
-    @State private var showPhotonPaths: Bool = true
+
+    // ============================================================
+    // IMPORTANT:
+    //
+    // There is NO separate photon-path animation anymore.
+    //
+    // The continuous emitter is the only photon visualization.
+    // ============================================================
+
+    @State private var showPhotonPaths: Bool = false
 
     // ============================================================
     // MARK: - LIVE COMPUTATION OVERLAY
     // ============================================================
 
-    @State private var computationStage: String =
-        "Idle"
+    @State private var computationStage: String = "Idle"
 
     @State private var computationDetail: String =
         "Ready to begin QRTL lensing computation."
@@ -236,28 +113,11 @@ struct ContentView: View {
     // MARK: - CONTINUOUS PHOTON EMITTER
     // ============================================================
 
-    /*
-     The continuous emitter is intentionally NOT started during
-     Stages 1–4.
-
-     Stage 5 completion creates the authoritative field and then
-     starts continuous photon emission.
-
-     The same QRTLField and LensingParameters used by the initial
-     pipeline are retained by LensingSceneController.
-     */
-
     @State private var continuousPhotonEmissionStarted: Bool = false
 
     // ============================================================
     // MARK: - GRAVITY METRICS OVERLAY
     // ============================================================
-
-    /*
-     Gravity metrics remain hidden while the simulation is running.
-
-     They become visible ONLY after Stage 5 has completely finished.
-     */
 
     @State private var showGravityMetrics: Bool = false
 
@@ -266,10 +126,8 @@ struct ContentView: View {
     @State private var gravityRelativeMassError: Double = 0.0
 
     @State private var gravityStarCount: Int = 0
-
     @State private var gravityPerStarMassSolar: Double = 0.0
     @State private var gravityPerStarMassKg: Double = 0.0
-
     @State private var gravityClusterRadiusMeters: Double = 0.0
 
     // ============================================================
@@ -306,10 +164,6 @@ struct ContentView: View {
 
             // ====================================================
             // GRAVITY METRICS
-            //
-            // IMPORTANT:
-            //
-            // This is NOT displayed until Stage 5 has completed.
             // ====================================================
 
             if showGravityMetrics {
@@ -422,35 +276,7 @@ struct ContentView: View {
         // ========================================================
 
         .onAppear {
-
             runFullPipeline()
-        }
-
-        // ========================================================
-        // MARK: - PHOTON PATH VISIBILITY
-        // ========================================================
-
-        .onChange(
-            of: showPhotonPaths
-        ) { _, visible in
-
-            guard
-                let output =
-                    scene.lastPipelineOutput
-            else {
-                return
-            }
-
-            if visible {
-
-                scene.displayPhotonPaths(
-                    output.photonPaths
-                )
-
-            } else {
-
-                scene.clearPhotonPaths()
-            }
         }
     }
 
@@ -464,10 +290,6 @@ struct ContentView: View {
             alignment: .leading,
             spacing: 10
         ) {
-
-            // ====================================================
-            // HEADER
-            // ====================================================
 
             HStack {
 
@@ -489,10 +311,6 @@ struct ContentView: View {
             }
 
             Divider()
-
-            // ====================================================
-            // CURRENT STAGE
-            // ====================================================
 
             Text(
                 computationStage
@@ -531,15 +349,18 @@ struct ContentView: View {
 
             // ====================================================
             // PHOTON PROCESSING
+            //
+            // These values now represent the continuous emitter.
+            // There is no separate batch photon animation.
             // ====================================================
 
             computationRow(
-                "Photons created",
+                "Photons emitted",
                 "\(photonsCreated)"
             )
 
             computationRow(
-                "Photons traced",
+                "Photons processed",
                 "\(photonsTraced)"
             )
 
@@ -549,8 +370,8 @@ struct ContentView: View {
             )
 
             computationRow(
-                "Path points",
-                "\(photonPathPoints)"
+                "Active photons",
+                "\(photonSimulationProgress.active)"
             )
 
             computationRow(
@@ -667,13 +488,10 @@ struct ContentView: View {
                 vertical: true
             )
         }
-
         .padding(16)
-
         .frame(
             maxWidth: 360
         )
-
         .background(
             .ultraThinMaterial,
             in:
@@ -681,12 +499,9 @@ struct ContentView: View {
                     cornerRadius: 18
                 )
         )
-
         .foregroundStyle(.white)
-
         .padding(.top, 55)
         .padding(.horizontal, 16)
-
         .frame(
             maxHeight: .infinity,
             alignment: .top
@@ -852,13 +667,10 @@ struct ContentView: View {
                 "\(scene.projectionHitCount)"
             )
         }
-
         .padding(16)
-
         .frame(
             maxWidth: 320
         )
-
         .background(
             .ultraThinMaterial,
             in:
@@ -866,12 +678,9 @@ struct ContentView: View {
                     cornerRadius: 18
                 )
         )
-
         .foregroundStyle(.white)
-
         .padding(.bottom, 24)
         .padding(.horizontal, 16)
-
         .frame(
             maxWidth: .infinity,
             maxHeight: .infinity,
@@ -914,7 +723,7 @@ struct ContentView: View {
         }
 
         // ========================================================
-        // STOP CONTINUOUS PHOTON EMISSION
+        // STOP ONLY CONTINUOUS PHOTON SYSTEM
         // ========================================================
 
         scene.stopContinuousPhotonSimulation()
@@ -955,7 +764,6 @@ struct ContentView: View {
 
         computationElapsed = 0.0
         computationProgress = 0.0
-
         maximumQRTLInfluence = 0.0
 
         statusMessage =
@@ -972,7 +780,6 @@ struct ContentView: View {
         gravityRelativeMassError = 0.0
 
         gravityStarCount = 0
-
         gravityPerStarMassSolar = 0.0
         gravityPerStarMassKg = 0.0
 
@@ -999,10 +806,13 @@ struct ContentView: View {
             "The QRTL gravitational potential has not been sampled yet."
 
         // ========================================================
-        // CLEAR SCENE
+        // CLEAR DYNAMIC SCENE
         // ========================================================
 
         scene.clearDynamic()
+
+        // Source galaxy remains the photon source.
+        // It is NOT a second photon animation.
 
         scene.addGlobularCluster(
             radius: 4.0
@@ -1012,7 +822,7 @@ struct ContentView: View {
     }
 
     // ============================================================
-    // MARK: - FULL PHYSICS PIPELINE
+    // MARK: - FULL QRTL PIPELINE
     // ============================================================
 
     private func runFullPipeline() {
@@ -1022,7 +832,7 @@ struct ContentView: View {
         }
 
         // ========================================================
-        // STOP ANY PREVIOUS CONTINUOUS EMITTER
+        // STOP PREVIOUS EMITTER
         // ========================================================
 
         scene.stopContinuousPhotonSimulation()
@@ -1047,7 +857,6 @@ struct ContentView: View {
 
         computationProgress = 0.0
         computationElapsed = 0.0
-
         maximumQRTLInfluence = 0.0
 
         computationStage =
@@ -1075,9 +884,6 @@ struct ContentView: View {
         let radiusMeters =
             radiusSolar *
             PhysicalConstants.solarRadius
-
-        let showPaths =
-            showPhotonPaths
 
         // ========================================================
         // QRTL PARAMETERS
@@ -1109,6 +915,8 @@ struct ContentView: View {
 
         // ========================================================
         // LENSING PARAMETERS
+        //
+        // These are still passed to the continuous emitter.
         // ========================================================
 
         var lensingParameters =
@@ -1154,20 +962,20 @@ struct ContentView: View {
 
                 autoreleasepool {
 
-                    // ====================================================
-                    // STAGE 1A
-                    // ====================================================
+                    // =================================================
+                    // STAGE 1 — PHYSICAL SOURCE
+                    // =================================================
 
                     DispatchQueue.main.async {
 
                         self.computationStage =
-                            "Stage 1 / 5 — physical source"
+                            "Stage 1 / 4 — physical source"
 
                         self.computationDetail =
                             """
                             Creating the \(Int(self.massSolar)) solar-mass
                             globular cluster and generating its
-                            stellar positions.
+                            stellar mass distribution.
                             """
 
                         self.computationProgress =
@@ -1178,35 +986,27 @@ struct ContentView: View {
                             - computationStart
 
                         self.statusMessage =
-                            "Stage 1/5 — creating physical stellar source…"
+                            "Stage 1/4 — creating physical stellar source…"
                     }
 
-                    // ====================================================
+                    // =================================================
                     // STAR POSITIONS
-                    // ====================================================
+                    // =================================================
 
                     let starPositions =
                         self.scene.generateGlobularClusterStarPositions(
                             starCount:
                                 1000,
+
                             radiusMeters:
                                 Float(radiusMeters)
                         )
 
-                    let perStarMassKg =
-                        starPositions.isEmpty
-                        ? 0.0
-                        :
-                        mass /
-                        Double(
-                            starPositions.count
-                        )
+                    _ = starPositions
 
-                    _ = perStarMassKg
-
-                    // ====================================================
+                    // =================================================
                     // VISUAL SOURCE
-                    // ====================================================
+                    // =================================================
 
                     DispatchQueue.main.async {
 
@@ -1217,14 +1017,14 @@ struct ContentView: View {
                         self.scene.addSourceGalaxy()
                     }
 
-                    // ====================================================
-                    // STAGE 1B — QRTL FIELD
-                    // ====================================================
+                    // =================================================
+                    // STAGE 1B — AUTHORITATIVE QRTL FIELD
+                    // =================================================
 
                     DispatchQueue.main.async {
 
                         self.computationStage =
-                            "Stage 1 / 5 — QRTL spacetime field"
+                            "Stage 1 / 4 — QRTL spacetime field"
 
                         self.computationDetail =
                             """
@@ -1240,19 +1040,21 @@ struct ContentView: View {
                             - computationStart
 
                         self.statusMessage =
-                            "Stage 1/5 — creating QRTL spacetime field…"
+                            "Stage 1/4 — creating QRTL spacetime field…"
                     }
 
-                    // ====================================================
+                    // =================================================
                     // CREATE AUTHORITATIVE FIELD
-                    // ====================================================
+                    // =================================================
 
                     let experiment =
                         QRTLExperiment(
                             mass:
                                 mass,
+
                             radius:
                                 radiusMeters,
+
                             parameters:
                                 params
                         )
@@ -1260,46 +1062,21 @@ struct ContentView: View {
                     let field =
                         experiment.field
 
-                    // ====================================================
+                    // =================================================
                     // POTENTIAL OVERLAY
-                    // ====================================================
+                    // =================================================
 
                     self.updatePotentialOverlay(
                         field:
                             field,
+
                         radiusMeters:
                             radiusMeters
                     )
 
-                    // ====================================================
-                    // STAGE 1C — UNIFIED SPACETIME
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 1 / 5 — QRTL spacetime geometry"
-
-                        self.computationDetail =
-                            """
-                            Converting the authoritative QRTL gravitational
-                            potential into the QRTL spacetime metric.
-                            """
-
-                        self.computationProgress =
-                            0.12
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Stage 1/5 — evaluating QRTL spacetime geometry…"
-                    }
-
-                    // ====================================================
+                    // =================================================
                     // CENTER METRIC SAMPLE
-                    // ====================================================
+                    // =================================================
 
                     let centerPosition =
                         SIMD3<Float>(
@@ -1321,6 +1098,7 @@ struct ContentView: View {
                         ====================================================
                         QRTL UNIFIED SPACETIME
                         ====================================================
+
                         Position:
                         \(centerSpacetime.position)
 
@@ -1342,15 +1120,16 @@ struct ContentView: View {
 
                         Metric deformation:
                         \(centerSpacetime.metricDeformation)
+
                         ====================================================
                         """
                     )
 
                     #endif
 
-                    // ====================================================
+                    // =================================================
                     // MASS VALIDATION
-                    // ====================================================
+                    // =================================================
 
                     let requestedMass =
                         mass
@@ -1380,14 +1159,6 @@ struct ContentView: View {
                             field.densitySource.perStarMassKg
                         )
 
-                    // ====================================================
-                    // GRAVITY METRICS
-                    //
-                    // VALUES ARE CALCULATED NOW.
-                    //
-                    // UI IS STILL HIDDEN.
-                    // ====================================================
-
                     DispatchQueue.main.async {
 
                         self.gravityRequestedMassSolar =
@@ -1413,9 +1184,13 @@ struct ContentView: View {
                             radiusMeters
                     }
 
-                    // ====================================================
+                    // =================================================
                     // GRAVITATIONAL VALIDATION
-                    // ====================================================
+                    //
+                    // This validates the QRTL field.
+                    //
+                    // It does NOT create the animated photons.
+                    // =================================================
 
                     let outcome =
                         experiment.run(
@@ -1436,282 +1211,60 @@ struct ContentView: View {
                                 PhysicalConstants.solarRadius
                         )
 
-                    // ====================================================
-                    // STAGE 2 — PHOTON TRACING
-                    // ====================================================
+                    _ = outcome
+
+                    // =================================================
+                    // STAGE 2 — GRAVITY SURFACE
+                    // =================================================
 
                     DispatchQueue.main.async {
 
                         self.computationStage =
-                            "Stage 2 / 5 — tracing photons"
+                            "Stage 2 / 4 — QRTL spacetime visualization"
 
                         self.computationDetail =
                             """
-                            Tracing source-galaxy photons through the
-                            authoritative three-dimensional QRTL field.
+                            Building the QRTL gravity surface directly
+                            from the authoritative three-dimensional
+                            QRTL field.
                             """
 
                         self.computationProgress =
-                            0.20
+                            0.30
 
                         self.computationElapsed =
                             CFAbsoluteTimeGetCurrent()
                             - computationStart
 
                         self.statusMessage =
-                            "Stage 2/5 — tracing photons through QRTL gravity and EM field…"
-                    }
+                            "Stage 2/4 — building QRTL gravity surface…"
 
-                    // ====================================================
-                    // TRACE INITIAL SOURCE GALAXY
-                    // ====================================================
-
-                    let photonBatch =
-                        self.scene.traceSourceGalaxy(
-                            field:
-                                field,
-
-                            parameters:
-                                lensingParameters,
-
-                            progress: {
-
-                                progress in
-
-                                DispatchQueue.main.async {
-
-                                    self.photonsCreated =
-                                        progress.total
-
-                                    self.photonsTraced =
-                                        progress.completed
-
-                                    self.photonPathPoints =
-                                        progress.pathPoints
-
-                                    self.maximumQRTLInfluence =
-                                        progress.maximumQRTLInfluence
-
-                                    let photonFraction =
-                                        Double(
-                                            progress.completed
-                                        )
-                                        /
-                                        Double(
-                                            max(
-                                                progress.total,
-                                                1
-                                            )
-                                        )
-
-                                    self.computationProgress =
-                                        0.20 +
-                                        (
-                                            photonFraction *
-                                            0.55
-                                        )
-
-                                    self.computationStage =
-                                        "Stage 2 / 5 — tracing photons"
-
-                                    self.computationDetail =
-                                        """
-                                        Photon \(progress.completed)
-                                        of \(progress.total)
-                                        querying the QRTL field and
-                                        calculating photon propagation
-                                        through QRTL spacetime.
-                                        """
-
-                                    self.computationElapsed =
-                                        CFAbsoluteTimeGetCurrent()
-                                        - computationStart
-                                }
-                            }
-                        )
-
-                    // ====================================================
-                    // INITIAL PHOTON RESULTS
-                    // ====================================================
-
-                    let pathPointCount =
-                        photonBatch.paths.reduce(
-                            0
-                        ) {
-                            $0 + $1.count
-                        }
-
-                    DispatchQueue.main.async {
-
-                        self.photonsCreated =
-                            photonBatch.traces.count
-
-                        self.photonsTraced =
-                            photonBatch.traces.count
-
-                        self.photonPathPoints =
-                            pathPointCount
-
-                        self.projectionHits =
-                            photonBatch.hits.count
-
-                        self.computationProgress =
-                            0.76
-
-                        self.computationDetail =
-                            """
-                            Initial photon tracing complete.
-
-                            \(photonBatch.traces.count)
-                            photons traced.
-
-                            \(photonBatch.paths.count)
-                            curved photon paths generated.
-
-                            \(photonBatch.hits.count)
-                            photons reached the projection plane.
-                            """
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-                    }
-
-                    // ====================================================
-                    // STAGE 3 — PROJECTION
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 3 / 5 — projection plane"
-
-                        self.computationDetail =
-                            """
-                            Mapping curved photon trajectories onto
-                            the observation plane.
-                            """
-
-                        self.computationProgress =
-                            0.80
-
-                        self.statusMessage =
-                            "Stage 3/5 — preparing two-galaxy projection…"
-                    }
-
-                    let projection =
-                        LensingProjectionResult.calculate(
-                            from:
-                                photonBatch.hits
-                        )
-
-                    // ====================================================
-                    // STAGE 3 — HEATMAP
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 3 / 5 — QRTL density heatmap"
-
-                        self.computationDetail =
-                            """
-                            Sampling the precomputed QRTL radial
-                            gravity table for visualization.
-                            """
-
-                        self.computationProgress =
-                            0.86
-
-                        self.statusMessage =
-                            "Stage 3/5 — generating QRTL field visualization…"
-                    }
-
-                    let heatmapImage =
-                        QRTLHeatmapGenerator.makeHeatmapImage(
-                            field:
-                                field,
-
-                            size:
-                                128,
-
-                            halfExtent:
-                                Double(
-                                    self.scene.heatmapHalfExtent
-                                )
-                        )
-
-                    // ====================================================
-                    // PIPELINE OUTPUT
-                    // ====================================================
-
-                    let output =
-                        LensingPipelineOutput(
-                            experimentResult:
-                                outcome,
-
-                            field:
-                                field,
-
-                            photonTraces:
-                                photonBatch.traces,
-
-                            photonPaths:
-                                photonBatch.paths,
-
-                            photonHits:
-                                photonBatch.hits,
-
-                            projection:
-                                projection,
-
-                            tracedPhotonCount:
-                                photonBatch.traces.count,
-
-                            successfulProjectionHits:
-                                photonBatch.hits.count
-                        )
-
-                    // ====================================================
-                    // STAGE 4 — SCENEKIT
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 4 / 5 — spacetime visualization"
-
-                        self.computationDetail =
-                            """
-                            Rendering the QRTL spacetime geometry
-                            and photon lensing result.
-                            """
-
-                        self.computationProgress =
-                            0.90
-
-                        // --------------------------------------------
-                        // Initial photon paths
-                        // --------------------------------------------
-
-                        self.scene.renderPipelineOutput(
-                            output,
-                            showPhotonPaths:
-                                showPaths
-                        )
-
-                        // --------------------------------------------
-                        // Gravity surface
-                        // --------------------------------------------
+                        // ---------------------------------------------
+                        // QRTL GRAVITY SURFACE
+                        // ---------------------------------------------
 
                         self.scene.installQRTLGravitySurface(
                             field:
                                 field
                         )
 
-                        // --------------------------------------------
-                        // Deformed spacetime
-                        // --------------------------------------------
+                        // ---------------------------------------------
+                        // DEFORMED SPACETIME SURFACE
+                        // ---------------------------------------------
+
+                        let heatmapImage =
+                            QRTLHeatmapGenerator.makeHeatmapImage(
+                                field:
+                                    field,
+
+                                size:
+                                    128,
+
+                                halfExtent:
+                                    Double(
+                                        self.scene.heatmapHalfExtent
+                                    )
+                            )
 
                         self.scene.addDeformedSpacetimeSurface(
                             field:
@@ -1720,83 +1273,134 @@ struct ContentView: View {
                             heatmap:
                                 heatmapImage
                         )
-
-                        // --------------------------------------------
-                        // Store output
-                        // --------------------------------------------
-
-                        self.scene.lastPipelineOutput =
-                            output
-
-                        self.result =
-                            outcome
                     }
 
-                    // ====================================================
-                    // STAGE 5 — CONTINUOUS PHOTON FIELD
-                    // ====================================================
+                    // =================================================
+                    // STAGE 3 — CONTINUOUS PHOTON EMITTER
+                    // =================================================
 
                     DispatchQueue.main.async {
 
                         self.computationStage =
-                            "Stage 5 / 5 — continuous photon emission"
+                            "Stage 3 / 4 — continuous photon emission"
 
                         self.computationDetail =
                             """
-                            The initial QRTL field is complete.
-
-                            Starting the continuous source-galaxy photon
-                            emitter. New photons will now be emitted
-                            continuously, propagated through the same
-                            QRTL field, and deposited onto the projection
-                            plane when they arrive.
+                            Starting the single authoritative photon
+                            emitter. Every animated photon is emitted
+                            from the source galaxy, propagated through
+                            the same QRTL field, and deposited onto the
+                            projection plane.
                             """
 
                         self.computationProgress =
-                            0.95
+                            0.55
 
                         self.computationElapsed =
                             CFAbsoluteTimeGetCurrent()
                             - computationStart
 
                         self.statusMessage =
-                            "Stage 5/5 — starting continuous photon emission…"
-                    }
+                            "Stage 3/4 — starting continuous QRTL photon emitter…"
 
-                    // ====================================================
-                    // START CONTINUOUS PHOTON EMITTER
-                    //
-                    // CRITICAL:
-                    //
-                    // The emitter starts ONLY here.
-                    //
-                    // It receives:
-                    //
-                    //     SAME QRTLField
-                    //     SAME LensingParameters
-                    //
-                    // used by the completed pipeline.
-                    // ====================================================
-
-                    DispatchQueue.main.async {
+                        // =================================================
+                        // CRITICAL:
+                        //
+                        // THIS IS NOW THE ONLY PHOTON SYSTEM.
+                        //
+                        // NO:
+                        //
+                        // scene.traceSourceGalaxy(...)
+                        //
+                        // NO:
+                        //
+                        // scene.renderPipelineOutput(...)
+                        //
+                        // NO:
+                        //
+                        // separate photon-path animation.
+                        //
+                        // =================================================
 
                         self.scene.startContinuousPhotonSimulation(
-                            field: field,
-                            parameters: lensingParameters,
+                            field:
+                                field,
+
+                            parameters:
+                                lensingParameters,
+
                             progress: { progress in
 
                                 DispatchQueue.main.async {
-                                    self.photonSimulationProgress = progress
+
+                                    self.photonSimulationProgress =
+                                        progress
+
+                                    self.photonsCreated =
+                                        progress.total
+
+                                    self.photonsTraced =
+                                        progress.completed
+
+                                    self.projectionHits =
+                                        progress.projectionHits
+
+                                    self.computationProgress =
+                                        min(
+                                            0.95,
+                                            0.55 +
+                                            (
+                                                Double(
+                                                    progress.completed
+                                                )
+                                                /
+                                                Double(
+                                                    max(
+                                                        progress.total,
+                                                        1
+                                                    )
+                                                )
+                                                *
+                                                0.40
+                                            )
+                                        )
+
+                                    self.computationElapsed =
+                                        CFAbsoluteTimeGetCurrent()
+                                        - computationStart
+
+                                    self.computationStage =
+                                        "Stage 3 / 4 — continuous photon emission"
+
+                                    self.computationDetail =
+                                        """
+                                        Continuous photon emitter active.
+
+                                        Emitted:
+                                        \(progress.total)
+
+                                        Processed:
+                                        \(progress.completed)
+
+                                        Active:
+                                        \(progress.active)
+
+                                        Projection hits:
+                                        \(progress.projectionHits)
+                                        """
                                 }
                             }
                         )
 
                         self.continuousPhotonEmissionStarted =
                             true
+                    }
 
-                        // ====================================================
-                        // STAGE 5 COMPLETE
-                        // ====================================================
+                    // =================================================
+                    // STAGE 4 — COMPLETE
+                    // =================================================
+
+                    DispatchQueue.main.async {
 
                         self.computationProgress =
                             1.0
@@ -1807,22 +1411,17 @@ struct ContentView: View {
                         self.computationDetail =
                             """
                             QRTL unified spacetime lensing simulation
-                            completed.
+                            is running.
 
-                            \(photonBatch.traces.count)
-                            initial photons traced.
+                            The QRTL gravity surface is generated from
+                            the authoritative QRTL field.
 
-                            \(photonBatch.paths.count)
-                            initial photon paths generated.
-
-                            \(photonBatch.hits.count)
-                            initial photons reached the projection plane.
-
-                            Continuous photon emission is now running.
+                            The continuous photon emitter is the only
+                            photon animation.
 
                             New source-galaxy photons continuously travel
-                            through the authoritative QRTL field and onto
-                            the projection plane.
+                            through the QRTL field and arrive at the
+                            projection plane.
                             """
 
                         self.computationElapsed =
@@ -1837,10 +1436,6 @@ struct ContentView: View {
 
                         self.showComputationOverlay =
                             false
-
-                        // ====================================================
-                        // NOW — AND ONLY NOW — SHOW GRAVITY METRICS
-                        // ====================================================
 
                         self.showGravityMetrics =
                             true
@@ -2028,7 +1623,11 @@ struct ContentView: View {
                     "LOW / FLAT GRAVITY POTENTIAL"
 
                 self.potentialExplanation =
-                    "The QRTL potential changes very little from the center to the edge. A strong bowl-shaped spacetime deformation is therefore not expected."
+                    """
+                    The QRTL potential changes very little from the
+                    center to the edge. A strong bowl-shaped spacetime
+                    deformation is therefore not expected.
+                    """
 
             } else if formsWell {
 
@@ -2036,7 +1635,11 @@ struct ContentView: View {
                     "HIGH CENTER → LOW EDGE"
 
                 self.potentialExplanation =
-                    "The QRTL gravitational potential is strongest near the cluster center and decreases outward. This is the expected profile for a bowl-shaped gravity well."
+                    """
+                    The QRTL gravitational potential is strongest near
+                    the cluster center and decreases outward. This is
+                    the expected profile for a bowl-shaped gravity well.
+                    """
 
             } else {
 
@@ -2044,7 +1647,11 @@ struct ContentView: View {
                     "POTENTIAL PROFILE DETECTED"
 
                 self.potentialExplanation =
-                    "The QRTL field has a measurable potential, but the radial profile is not strictly decreasing from the center to the edge."
+                    """
+                    The QRTL field has a measurable potential, but the
+                    radial profile is not strictly decreasing from the
+                    center to the edge.
+                    """
             }
         }
     }
