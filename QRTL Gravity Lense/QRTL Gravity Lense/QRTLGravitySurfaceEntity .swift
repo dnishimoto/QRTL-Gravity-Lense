@@ -920,7 +920,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     func computeGalaxyProjections(
         lensingParameters: LensingParameters
     ) {
-
         photonPaths.removeAll(
             keepingCapacity: true
         )
@@ -929,43 +928,53 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             keepingCapacity: true
         )
 
-        // --------------------------------------------------------
+        // ------------------------------------------------------------
         // SINGLE AUTHORITATIVE TRACER
-        // --------------------------------------------------------
+        // ------------------------------------------------------------
 
-        let tracer =
-            QRTLPhotonTracer(
-                field: field
-            )
+        let tracer = QRTLPhotonTracer(
+            field: field
+        )
 
-        // --------------------------------------------------------
+        // ------------------------------------------------------------
         // SOURCE GALAXY
-        // --------------------------------------------------------
+        // ------------------------------------------------------------
 
-        let galaxyCenter =
-            SIMD3<Float>(
-                -extent,
-                0.0,
-                0.0
-            )
+        let galaxyCenter = SIMD3<Float>(
+            -extent,
+            0.0,
+            0.0
+        )
 
-        let galaxyRadius =
-            0.25 *
-            extent
+        let galaxyRadius = 0.25 * extent
 
-        // --------------------------------------------------------
-        // EXPLICIT SCENE → PHYSICAL SCALE
-        // --------------------------------------------------------
+        // ------------------------------------------------------------
+        // AUTHORITATIVE SCENE → NORMALIZED SCALE
+        //
+        // QRTLPhotonTracer expects:
+        //
+        //     q = sceneCoordinate / sceneToPhysicalScale
+        //
+        // where q is the normalized coordinate:
+        //
+        //     q = X / R
+        //
+        // Therefore the scale passed here is the scene-space
+        // radius corresponding to normalized radius = 1.
+        //
+        // DO NOT use:
+        //
+        //     clusterRadiusMeters / extent
+        //
+        // because that produces meters-per-scene-unit, whereas
+        // the tracer requires scene-units-per-normalized-radius.
+        // ------------------------------------------------------------
 
-        let sceneToPhysicalScale =
-            Float(
-                field.clusterRadiusMeters
-            ) /
-            extent
+        let sceneToPhysicalScale = extent
 
-        // --------------------------------------------------------
+        // ------------------------------------------------------------
         // TRACE SOURCE STARS
-        // --------------------------------------------------------
+        // ------------------------------------------------------------
 
         for i in 0..<numberOfStars {
 
@@ -975,59 +984,54 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 Float(i) /
                 Float(numberOfStars)
 
-            let local =
-                SIMD3<Float>(
-                    0.0,
-                    cos(angle),
-                    sin(angle)
-                )
+            let local = SIMD3<Float>(
+                0.0,
+                cos(angle),
+                sin(angle)
+            )
 
             let source =
                 galaxyCenter +
-                galaxyRadius *
-                local
+                galaxyRadius * local
 
-            let direction =
-                SIMD3<Float>(
-                    1.0,
-                    0.0,
-                    0.0
-                )
+            let direction = SIMD3<Float>(
+                1.0,
+                0.0,
+                0.0
+            )
 
-            let result =
-                tracer.tracePhoton(
-                    origin: source,
-                    direction: direction,
-                    parameters: lensingParameters,
-                    sceneToPhysicalScale: sceneToPhysicalScale
-                )
+            let result = tracer.tracePhoton(
+                origin: source,
+                direction: direction,
+                parameters: lensingParameters,
+                sceneToPhysicalScale: sceneToPhysicalScale
+            )
 
-            // ----------------------------------------------------
+            // --------------------------------------------------------
             // RAW PHYSICAL / SCENE TRACE
             //
             // DO NOT MODIFY THESE POINTS.
-            // ----------------------------------------------------
+            // --------------------------------------------------------
 
             if result.positions.count > 1 {
 
-                let path =
-                    result.positions.map { point in
+                let path = result.positions.map { point in
 
-                        SIMD3<Double>(
-                            Double(point.x),
-                            Double(point.y),
-                            Double(point.z)
-                        )
-                    }
+                    SIMD3<Double>(
+                        Double(point.x),
+                        Double(point.y),
+                        Double(point.z)
+                    )
+                }
 
                 photonPaths.append(
                     path
                 )
             }
 
-            // ----------------------------------------------------
+            // --------------------------------------------------------
             // PROJECTION HIT
-            // ----------------------------------------------------
+            // --------------------------------------------------------
 
             if result.hitProjection,
                let projection =
@@ -1048,7 +1052,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             "photon paths =",
             photonPaths.count,
             "projection hits =",
-            galaxyProjectionPositions.count
+            galaxyProjectionPositions.count,
+            "sceneToPhysicalScale =",
+            sceneToPhysicalScale,
+            "clusterRadiusMeters =",
+            field.clusterRadiusMeters
         )
     }
 

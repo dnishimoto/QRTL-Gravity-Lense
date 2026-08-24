@@ -69,6 +69,7 @@ import simd
 
 final class QRTLPhotonTracer {
 
+    static let sceneExtent: Float = 18.0
     // ============================================================
     // AUTHORITATIVE FIELD
     // ============================================================
