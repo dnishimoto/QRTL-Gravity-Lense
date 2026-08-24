@@ -1220,7 +1220,6 @@ struct ContentView: View {
         // ============================================================
 
         scene.stopContinuousPhotonSimulation()
-
         continuousPhotonEmissionStarted = false
 
         // ============================================================
@@ -1229,7 +1228,6 @@ struct ContentView: View {
 
         isRunning = true
         result = nil
-
         showGravityMetrics = false
 
         photonsCreated = 0
@@ -1241,675 +1239,227 @@ struct ContentView: View {
         computationElapsed = 0.0
         maximumQRTLInfluence = 0.0
 
-        photonSimulationProgress =
-            PhotonSimulationProgress(
-                total: 0,
-                completed: 0,
-                active: 0,
-                projectionHits: 0
-            )
+        photonSimulationProgress = PhotonSimulationProgress(
+            total: 0,
+            completed: 0,
+            active: 0,
+            projectionHits: 0
+        )
 
-        computationStage =
-            "Initializing QRTL lens"
-
-        computationDetail =
-            "Creating the physical stellar mass distribution."
-
-        statusMessage =
-            "Starting QRTL lensing pipeline…"
-
+        computationStage = "Initializing QRTL lens"
+        computationDetail = "Creating the physical stellar mass distribution."
+        statusMessage = "Starting QRTL lensing pipeline…"
         showComputationOverlay = true
 
-        let computationStart =
-            CFAbsoluteTimeGetCurrent()
+        let computationStart = CFAbsoluteTimeGetCurrent()
 
         // ============================================================
-        // STAGE 1 — PHYSICAL PARAMETERS
+        // PHYSICAL + QRTL + LENSING PARAMETERS (main thread values)
         // ============================================================
 
-        let mass =
-            massSolar *
-            PhysicalConstants.solarMass
+        let mass = massSolar * PhysicalConstants.solarMass
+        let radiusMeters = radiusSolar * PhysicalConstants.solarRadius
 
-        let radiusMeters =
-            radiusSolar *
-            PhysicalConstants.solarRadius
+        var params = QRTLParameters()
+        params.alphaQ = alphaQ
+        params.etaQ = etaQ
+        params.gammaQ = gammaQ
+        params.chiQ = chiQ
+        params.interactionRate = interactionRate
+        params.electromagneticCoupling = electromagneticCoupling
+        params.photonEMCoupling = photonEMCoupling
 
-        // ============================================================
-        // STAGE 1A — SCENE → PHYSICAL SCALE
-        // ============================================================
-        //
-        // The visible cluster has a radius of 4 SceneKit units.
-        //
-        // Therefore:
-        //
-        //      4 scene units
-        //          =
-        //      radiusMeters physical meters
-        //
-        // This conversion is passed into the photon system.
-        // ============================================================
+        var lensingParameters = LensingParameters()
+        lensingParameters.qrtlLensingStrength = 1.0
+        lensingParameters.qrtlFieldCoupling = 1.0
+        lensingParameters.maximumPhotonBend = 0.35
+        lensingParameters.electromagneticCoupling = Float(electromagneticCoupling)
+        lensingParameters.magneticPhotonCoupling = 1.0
+        lensingParameters.magneticBendingStrength = 1.0
+        lensingParameters.currentCoupling = 1.0
+        lensingParameters.interactionRate = Float(interactionRate)
+        lensingParameters.qrtlPhotonCoupling = 0.25
 
-        let sceneToPhysicalScale =
-            Float(
-                radiusMeters / 4.0
-            )
+        // Capture for the background work item
+        let massSolarCaptured = massSolar
+        let heatmapHalfExtent = scene.heatmapHalfExtent
 
-        // ============================================================
-        // STAGE 1B — QRTL PARAMETERS
-        // ============================================================
+        let physicsWorkItem = DispatchWorkItem {
 
-        var params =
-            QRTLParameters()
+            autoreleasepool {
 
-        params.alphaQ =
-            alphaQ
+                // ====================================================
+                // STAGE 1 — PHYSICAL SOURCE / FIELD
+                // ====================================================
 
-        params.etaQ =
-            etaQ
+                DispatchQueue.main.async {
+                    self.computationStage = "Stage 1 / 5 — physical source"
+                    self.computationDetail = """
+                        Creating the \(Int(massSolarCaptured)) solar-mass \
+                        globular cluster and QRTL field.
+                        """
+                    self.computationProgress = 0.08
+                    self.computationElapsed =
+                        CFAbsoluteTimeGetCurrent() - computationStart
+                    self.statusMessage =
+                        "Stage 1/5 — creating QRTL spacetime field…"
+                }
 
-        params.gammaQ =
-            gammaQ
+                let experiment = QRTLExperiment(
+                    mass: mass,
+                    radius: radiusMeters,
+                    parameters: params
+                )
+                let field = experiment.field
 
-        params.chiQ =
-            chiQ
+                self.updatePotentialOverlay(
+                    field: field,
+                    radiusMeters: radiusMeters
+                )
 
-        params.interactionRate =
-            interactionRate
+                // Mass validation metrics
+                let requestedMass = mass
+                let actualMass = Double(field.densitySource.totalMass)
+                let relativeMassError =
+                    requestedMass > 0.0
+                    ? abs(actualMass - requestedMass) / requestedMass
+                    : 0.0
+                let starCount = field.densitySource.starCount
+                let actualPerStarMass = Double(field.densitySource.perStarMassKg)
 
-        params.electromagneticCoupling =
-            electromagneticCoupling
+                let outcome = experiment.run(
+                    impactParameter: 0.15 * PhysicalConstants.solarRadius,
+                    startDistance: 6.0 * PhysicalConstants.solarRadius,
+                    endDistance: 6.0 * PhysicalConstants.solarRadius,
+                    stepSize: 0.15 * PhysicalConstants.solarRadius
+                )
 
-        params.photonEMCoupling =
-            photonEMCoupling
+                DispatchQueue.main.async {
+                    self.gravityRequestedMassSolar = massSolarCaptured
+                    self.gravityFieldMassKg = actualMass
+                    self.gravityRelativeMassError = relativeMassError
+                    self.gravityStarCount = starCount
+                    self.gravityPerStarMassKg = actualPerStarMass
+                    self.gravityPerStarMassSolar =
+                        actualPerStarMass / PhysicalConstants.solarMass
+                    self.gravityClusterRadiusMeters = radiusMeters
+                }
 
-        // ============================================================
-        // STAGE 1C — LENSING PARAMETERS
-        // ============================================================
+                // ====================================================
+                // STAGE 3 — HEATMAP
+                // ====================================================
 
-        var lensingParameters =
-            LensingParameters()
+                DispatchQueue.main.async {
+                    self.computationStage = "Stage 3 / 5 — QRTL density heatmap"
+                    self.computationDetail =
+                        "Sampling the QRTL radial gravity field for visualization."
+                    self.computationProgress = 0.55
+                    self.computationElapsed =
+                        CFAbsoluteTimeGetCurrent() - computationStart
+                    self.statusMessage =
+                        "Stage 3/5 — generating QRTL field visualization…"
+                }
 
-        lensingParameters.qrtlLensingStrength =
-            1.0
+                let heatmapImage = QRTLHeatmapGenerator.makeHeatmapImage(
+                    field: field,
+                    size: 128,
+                    halfExtent: Double(heatmapHalfExtent)
+                )
 
-        lensingParameters.qrtlFieldCoupling =
-            1.0
+                // ====================================================
+                // STAGE 4 + 5 — SCENE + ONE AUTHORITATIVE PHOTON PASS
+                // ====================================================
 
-        lensingParameters.maximumPhotonBend =
-            0.35
+                DispatchQueue.main.async {
 
-        lensingParameters.electromagneticCoupling =
-            Float(
-                electromagneticCoupling
-            )
+                    self.computationStage =
+                        "Stage 4–5 / 5 — scene + photon geodesics"
+                    self.computationDetail = """
+                        Installing gravity surface, source galaxy, \
+                        then a single QRTLPhotonTracer pass from \
+                        SourceGalaxy stars.
+                        """
+                    self.computationProgress = 0.75
+                    self.computationElapsed =
+                        CFAbsoluteTimeGetCurrent() - computationStart
+                    self.statusMessage =
+                        "Stage 4–5/5 — tracing photons through QRTL field…"
 
-        lensingParameters.magneticPhotonCoupling =
-            1.0
+                    // ------------------------------------------------
+                    // Field + static scene furniture
+                    // ------------------------------------------------
 
-        lensingParameters.magneticBendingStrength =
-            1.0
+                    self.scene.qrtlField = field
 
-        lensingParameters.currentCoupling =
-            1.0
+                    self.scene.addGlobularCluster(radius: 4.0)
+                    self.scene.addSourceGalaxy()
+                    // addSourceGalaxy fills sourceGalaxyStars,
+                    // sourceGalaxyPositions, sceneSourceGalaxyPositions
 
-        lensingParameters.interactionRate =
-            Float(
-                interactionRate
-            )
+                    self.scene.installQRTLGravitySurface(field: field)
+                    // buildScene is bowl-only; no internal galaxy/trace
 
-        lensingParameters.qrtlPhotonCoupling =
-            0.25
-
-        // ============================================================
-        // PHYSICS WORK ITEM
-        // ============================================================
-
-        let physicsWorkItem =
-            DispatchWorkItem {
-
-                autoreleasepool {
-
-                    // ====================================================
-                    // STAGE 1 — PHYSICAL SOURCE
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 1 / 5 — physical source"
-
-                        self.computationDetail =
-                            """
-                            Creating the \(Int(self.massSolar))
-                            solar-mass globular cluster and
-                            generating its stellar positions.
-                            """
-
-                        self.computationProgress =
-                            0.03
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Stage 1/5 — creating physical stellar source…"
-                    }
-
-                    // ====================================================
-                    // GENERATE PHYSICAL STAR POSITIONS
-                    // ====================================================
-
-                    let starPositions =
-                        self.scene.generateGlobularClusterStarPositions(
-                            starCount: 1000,
-                            radiusMeters: Float(radiusMeters)
-                        )
-
-                    let perStarMassKg =
-                        starPositions.isEmpty
-                        ? 0.0
-                        :
-                        mass /
-                        Double(
-                            starPositions.count
-                        )
-
-                    // ====================================================
-                    // STATIC VISUAL SOURCE
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.scene.addGlobularCluster(
-                            radius: 4.0
-                        )
-
-                        self.scene.addSourceGalaxy()
-                    }
-
-                    // ====================================================
-                    // STAGE 1B — AUTHORITATIVE QRTL FIELD
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 1 / 5 — QRTL spacetime field"
-
-                        self.computationDetail =
-                            """
-                            Building the authoritative QRTL field
-                            from the requested cluster mass and radius.
-                            """
-
-                        self.computationProgress =
-                            0.08
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Stage 1/5 — creating QRTL spacetime field…"
-                    }
-
-                    // ====================================================
-                    // CREATE AUTHORITATIVE EXPERIMENT
-                    // ====================================================
-
-                    let experiment =
-                        QRTLExperiment(
-                            mass: mass,
-                            radius: radiusMeters,
-                            parameters: params
-                        )
-
-                    let field =
-                        experiment.field
-
-                    // ====================================================
-                    // STORE AUTHORITATIVE FIELD
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.scene.qrtlField =
-                            field
-                    }
-
-                    // ====================================================
-                    // POTENTIAL PROFILE
-                    // ====================================================
-
-                    self.updatePotentialOverlay(
+                    self.scene.addDeformedSpacetimeSurface(
                         field: field,
-                        radiusMeters: radiusMeters
+                        heatmap: heatmapImage
                     )
 
-                    // ====================================================
-                    // STAGE 1C — UNIFIED SPACETIME
-                    // ====================================================
+                    // ------------------------------------------------
+                    // B: ONE trace pass (SourceGalaxy → geodesics)
+                    // ------------------------------------------------
 
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 1 / 5 — QRTL spacetime geometry"
-
-                        self.computationDetail =
-                            """
-                            Converting the authoritative QRTL
-                            gravitational potential into the
-                            QRTL spacetime metric.
-                            """
-
+                    let batch = self.scene.runAuthoritativePhotonPass(
+                        field: field,
+                        parameters: lensingParameters
+                    ) { progress in
+                        self.photonsTraced = progress.completed
+                        self.photonPathPoints = progress.pathPoints
+                        self.maximumQRTLInfluence = progress.maximumQRTLInfluence
                         self.computationProgress =
-                            0.12
-
+                            0.75 + 0.20 * Double(progress.completed)
+                            / max(Double(progress.total), 1.0)
                         self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Stage 1/5 — evaluating QRTL spacetime geometry…"
+                            CFAbsoluteTimeGetCurrent() - computationStart
                     }
 
-                    // ====================================================
-                    // CENTER SPACETIME SAMPLE
-                    // ====================================================
+                    self.photonsCreated = batch.traces.count
+                    self.photonsTraced = batch.traces.count
+                    self.projectionHits = batch.hits.count
+                    self.photonPathPoints = batch.paths.reduce(0) { $0 + $1.count }
+                    self.maximumQRTLInfluence = batch.traces
+                        .map(\.maximumQRTLInfluence)
+                        .max() ?? 0.0
 
-                    let centerPosition =
-                        SIMD3<Float>(
-                            0.0,
-                            0.0,
-                            0.0
-                        )
+                    self.result = outcome
 
-                    let centerSpacetime =
-                        field.evaluateQRTLUnifiedSpacetime(
-                            at: centerPosition
-                        )
+                    // ------------------------------------------------
+                    // E (optional): continuous emission from same origins
+                    // ------------------------------------------------
+                     self.scene.beginContinuousEmission(
+                         field: field,
+                         parameters: lensingParameters
+                     )
+                     self.continuousPhotonEmissionStarted = true
 
-                    #if DEBUG
-
-                    print(
+                    self.computationProgress = 1.0
+                    self.computationStage = "COMPLETE"
+                    self.computationDetail = """
+                        Photons started on SourceGalaxy stars and \
+                        followed QRTL spacetime geodesics.
                         """
-                        ====================================================
-                        QRTL UNIFIED SPACETIME
-                        ====================================================
-
-                        Position:
-                        \(centerSpacetime.position)
-
-                        QRTL gravitational potential:
-                        \(centerSpacetime.potential)
-
-                        Metric:
-                        g00 = \(centerSpacetime.metric.g00)
-                        g11 = \(centerSpacetime.metric.g11)
-                        g22 = \(centerSpacetime.metric.g22)
-                        g33 = \(centerSpacetime.metric.g33)
-
-                        Metric deformation:
-                        \(centerSpacetime.metricDeformation)
-
-                        ====================================================
-                        """
-                    )
-
-                    #endif
-
-                    // ====================================================
-                    // MASS VALIDATION
-                    // ====================================================
-
-                    let requestedMass =
-                        mass
-
-                    let actualMass =
-                        Double(
-                            field.densitySource.totalMass
-                        )
-
-                    let relativeMassError =
-                        requestedMass > 0.0
-                        ?
-                        abs(
-                            actualMass -
-                            requestedMass
-                        )
-                        /
-                        requestedMass
-                        :
-                        0.0
-
-                    let starCount =
-                        field.densitySource.starCount
-
-                    let actualPerStarMass =
-                        Double(
-                            field.densitySource.perStarMassKg
-                        )
-
-                    // ====================================================
-                    // GRAVITY METRICS
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.gravityRequestedMassSolar =
-                            self.massSolar
-
-                        self.gravityFieldMassKg =
-                            actualMass
-
-                        self.gravityRelativeMassError =
-                            relativeMassError
-
-                        self.gravityStarCount =
-                            starCount
-
-                        self.gravityPerStarMassKg =
-                            actualPerStarMass
-
-                        self.gravityPerStarMassSolar =
-                            actualPerStarMass /
-                            PhysicalConstants.solarMass
-
-                        self.gravityClusterRadiusMeters =
-                            radiusMeters
-                    }
-
-                    // ====================================================
-                    // GRAVITATIONAL VALIDATION
-                    // ====================================================
-
-                    let outcome =
-                        experiment.run(
-                            impactParameter:
-                                0.15 *
-                                PhysicalConstants.solarRadius,
-
-                            startDistance:
-                                6.0 *
-                                PhysicalConstants.solarRadius,
-
-                            endDistance:
-                                6.0 *
-                                PhysicalConstants.solarRadius,
-
-                            stepSize:
-                                0.15 *
-                                PhysicalConstants.solarRadius
-                        )
-
-                    // ====================================================
-                    // STAGE 2 — PHOTON PREPARATION
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 2 / 5 — preparing photon system"
-
-                        self.computationDetail =
-                            """
-                            The authoritative QRTL field is complete.
-                            Preparing the source galaxy and projection
-                            system for photon propagation.
-                            """
-
-                        self.computationProgress =
-                            0.20
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Stage 2/5 — preparing photon pipeline…"
-                    }
-
-                    // ====================================================
-                    // INITIAL EMPTY PIPELINE OUTPUT
-                    // ====================================================
-
-                    let emptyProjection =
-                        LensingProjectionResult.calculate(
-                            from: []
-                        )
-
-                    let initialOutput =
-                        LensingPipelineOutput(
-                            experimentResult:
-                                outcome,
-
-                            field:
-                                field,
-
-                            photonTraces:
-                                [],
-
-                            photonPaths:
-                                [],
-
-                            photonHits:
-                                [],
-
-                            projection:
-                                emptyProjection,
-
-                            tracedPhotonCount:
-                                0,
-
-                            successfulProjectionHits:
-                                0
-                        )
-
-                    // ====================================================
-                    // STAGE 3 — QRTL DENSITY HEATMAP
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 3 / 5 — QRTL density heatmap"
-
-                        self.computationDetail =
-                            """
-                            Sampling the QRTL radial gravity field
-                            for spacetime visualization.
-                            """
-
-                        self.computationProgress =
-                            0.55
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Stage 3/5 — generating QRTL field visualization…"
-                    }
-
-                    let heatmapImage =
-                        QRTLHeatmapGenerator.makeHeatmapImage(
-                            field: field,
-                            size: 128,
-                            halfExtent:
-                                Double(
-                                    self.scene.heatmapHalfExtent
-                                )
-                        )
-
-                    // ====================================================
-                    // STAGE 4 — STATIC SPACETIME SCENE
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 4 / 5 — spacetime visualization"
-
-                        self.computationDetail =
-                            """
-                            Rendering the QRTL gravity surface,
-                            deformed spacetime, source galaxy,
-                            and projection system.
-                            """
-
-                        self.computationProgress =
-                            0.70
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        // =================================================
-                        // RENDER INITIAL PIPELINE STATE
-                        // =================================================
-
-                        self.scene.renderPipelineOutput(
-                            initialOutput,
-                            showPhotonPaths: false
-                        )
-
-                        // =================================================
-                        // GRAVITY SURFACE
-                        // =================================================
-
-                        self.scene.installQRTLGravitySurface(
-                            field: field
-                        )
-
-                        // =================================================
-                        // DEFORMED SPACETIME
-                        // =================================================
-
-                        self.scene.addDeformedSpacetimeSurface(
-                            field: field,
-                            heatmap: heatmapImage
-                        )
-
-                        // =================================================
-                        // SOURCE GALAXY
-                        // =================================================
-
-                        self.scene.addSourceGalaxy()
-
-                        // =================================================
-                        // AUTHORITATIVE FIELD
-                        // =================================================
-
-                        self.scene.qrtlField =
-                            field
-
-                        // =================================================
-                        // INITIAL PIPELINE OUTPUT
-                        // =================================================
-
-                        self.scene.lastPipelineOutput =
-                            initialOutput
-
-                        self.result =
-                            outcome
-                    }
-
-                    // ====================================================
-                    // STAGE 5 — AUTHORITATIVE PHOTON PROPAGATION
-                    // ====================================================
-
-                    DispatchQueue.main.async {
-
-                        self.computationStage =
-                            "Stage 5 / 5 — authoritative photon propagation"
-
-                        self.computationDetail =
-                            """
-                            The QRTL field, gravity surface,
-                            source galaxy, and projection plane
-                            are ready.
-
-                            The scene controller now performs the
-                            authoritative photon propagation.
-
-                            ContentView does not perform a second
-                            photon-tracing calculation.
-                            """
-
-                        self.computationProgress =
-                            0.90
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Stage 5/5 — tracing photons through QRTL field…"
-
-
-                        // =================================================
-                        // AUTHORITATIVE PHOTON SYSTEM ACTIVE
-                        // =================================================
-
-                        self.continuousPhotonEmissionStarted =
-                            true
-
-                        self.computationProgress =
-                            1.0
-
-                        self.computationStage =
-                            "COMPLETE"
-
-                        self.computationDetail =
-                            """
-                            QRTL unified spacetime lensing simulation
-                            is running.
-
-                            The source galaxy is visible behind the
-                            QRTL gravitational lens.
-
-                            Photons are propagated through the
-                            authoritative QRTL field.
-
-                            The controller owns the photon trajectories
-                            and projection system.
-
-                            No independent photon-tracing operation
-                            is performed by ContentView.
-                            """
-
-                        self.computationElapsed =
-                            CFAbsoluteTimeGetCurrent()
-                            - computationStart
-
-                        self.statusMessage =
-                            "Continuous photon emission active — QRTL lens running"
-
-                        self.isRunning =
-                            false
-
-                        self.showComputationOverlay =
-                            false
-
-                        self.showGravityMetrics =
-                            true
-                    }
+                    self.computationElapsed =
+                        CFAbsoluteTimeGetCurrent() - computationStart
+                    self.statusMessage =
+                        "QRTL lensing complete — \(batch.hits.count) projection hits"
+
+                    self.isRunning = false
+                    self.showComputationOverlay = false
+                    self.showGravityMetrics = true
                 }
             }
+        }
 
-        // ============================================================
-        // EXECUTE PHYSICS OFF MAIN THREAD
-        // ============================================================
-
-        DispatchQueue.global(
-            qos: .userInitiated
-        )
-        .async(
-            execute:
-                physicsWorkItem
-        )
+        DispatchQueue.global(qos: .userInitiated).async(execute: physicsWorkItem)
     }
 
 

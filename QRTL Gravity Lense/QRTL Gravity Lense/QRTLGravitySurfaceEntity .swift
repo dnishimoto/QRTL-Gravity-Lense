@@ -129,7 +129,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         maximumPotential = 0.0
 
         // --------------------------------------------------------
-        // GRAVITY SURFACE
+        // GRAVITY SURFACE ONLY
+        //
+        // Do not trace photons here.
+        // Controller: SourceGalaxy → QRTLPhotonTracer → paths,
+        // then setPhotonPathsForDisplay(...).
         // --------------------------------------------------------
 
         let surface = makeSurfaceNode()
@@ -138,47 +142,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         addChildNode(surface)
 
-        // --------------------------------------------------------
-        // AUTHORITATIVE PHOTON TRACING
-        // --------------------------------------------------------
-
-        computeGalaxyProjections(
-            lensingParameters: lensingParameters
-        )
-
-        // --------------------------------------------------------
-        // RAW PHOTON PATHS
-        // --------------------------------------------------------
-
-        let photonGraphicsNode =
-            makeTravelingPhotonParticles(
-                paths: photonPaths,
-                color: .cyan
-            )
-
-        photonNode = photonGraphicsNode
-
-        addChildNode(
-            photonGraphicsNode
-        )
-
-        // --------------------------------------------------------
-        // PROJECTED GALAXY
-        // --------------------------------------------------------
-
-        let galaxy =
-            makeProjectionNode(
-                positions: galaxyProjectionPositions,
-                color: .cyan
-            )
-
-        galaxyNode = galaxy
-
-        addChildNode(
-            galaxy
-        )
+        // photonNode / galaxyNode remain nil until
+        // setPhotonPathsForDisplay is called.
     }
-
     // ============================================================
     // AUTHORITATIVE POTENTIAL SAMPLE
     // ============================================================
@@ -917,147 +883,39 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // PHOTON PIPELINE
     // ============================================================
 
-    func computeGalaxyProjections(
-        lensingParameters: LensingParameters
+    /// Visualization only. Paths must already come from QRTLPhotonTracer
+    /// using SourceGalaxy origins. Do not generate a second galaxy here.
+    func setPhotonPathsForDisplay(
+        _ paths: [[SIMD3<Float>]],
+        projectionHits: [SIMD3<Float>] = []
     ) {
-        photonPaths.removeAll(
-            keepingCapacity: true
-        )
-
-        galaxyProjectionPositions.removeAll(
-            keepingCapacity: true
-        )
-
-        // ------------------------------------------------------------
-        // SINGLE AUTHORITATIVE TRACER
-        // ------------------------------------------------------------
-
-        let tracer = QRTLPhotonTracer(
-            field: field
-        )
-
-        // ------------------------------------------------------------
-        // SOURCE GALAXY
-        // ------------------------------------------------------------
-
-        let galaxyCenter = SIMD3<Float>(
-            -extent,
-            0.0,
-            0.0
-        )
-
-        let galaxyRadius = 0.25 * extent
-
-        // ------------------------------------------------------------
-        // AUTHORITATIVE SCENE → NORMALIZED SCALE
-        //
-        // QRTLPhotonTracer expects:
-        //
-        //     q = sceneCoordinate / sceneToPhysicalScale
-        //
-        // where q is the normalized coordinate:
-        //
-        //     q = X / R
-        //
-        // Therefore the scale passed here is the scene-space
-        // radius corresponding to normalized radius = 1.
-        //
-        // DO NOT use:
-        //
-        //     clusterRadiusMeters / extent
-        //
-        // because that produces meters-per-scene-unit, whereas
-        // the tracer requires scene-units-per-normalized-radius.
-        // ------------------------------------------------------------
-
-        let sceneToPhysicalScale = extent
-
-        // ------------------------------------------------------------
-        // TRACE SOURCE STARS
-        // ------------------------------------------------------------
-
-        for i in 0..<numberOfStars {
-
-            let angle =
-                2.0 *
-                Float.pi *
-                Float(i) /
-                Float(numberOfStars)
-
-            let local = SIMD3<Float>(
-                0.0,
-                cos(angle),
-                sin(angle)
-            )
-
-            let source =
-                galaxyCenter +
-                galaxyRadius * local
-
-            let direction = SIMD3<Float>(
-                1.0,
-                0.0,
-                0.0
-            )
-
-            let result = tracer.tracePhoton(
-                origin: source,
-                direction: direction,
-                parameters: lensingParameters,
-                sceneToPhysicalScale: sceneToPhysicalScale
-            )
-
-            // --------------------------------------------------------
-            // RAW PHYSICAL / SCENE TRACE
-            //
-            // DO NOT MODIFY THESE POINTS.
-            // --------------------------------------------------------
-
-            if result.positions.count > 1 {
-
-                let path = result.positions.map { point in
-
-                    SIMD3<Double>(
-                        Double(point.x),
-                        Double(point.y),
-                        Double(point.z)
-                    )
-                }
-
-                photonPaths.append(
-                    path
-                )
-            }
-
-            // --------------------------------------------------------
-            // PROJECTION HIT
-            // --------------------------------------------------------
-
-            if result.hitProjection,
-               let projection =
-                    result.projectionCoordinates {
-
-                galaxyProjectionPositions.append(
-                    SIMD3<Double>(
-                        Double(projection.x),
-                        0.0,
-                        Double(projection.y)
-                    )
-                )
+        photonPaths = paths.map { path in
+            path.map {
+                SIMD3<Double>(Double($0.x), Double($0.y), Double($0.z))
             }
         }
 
-        print(
-            "QRTL LENSING:",
-            "photon paths =",
-            photonPaths.count,
-            "projection hits =",
-            galaxyProjectionPositions.count,
-            "sceneToPhysicalScale =",
-            sceneToPhysicalScale,
-            "clusterRadiusMeters =",
-            field.clusterRadiusMeters
+        galaxyProjectionPositions = projectionHits.map {
+            SIMD3<Double>(Double($0.x), Double($0.y), Double($0.z))
+        }
+
+        // Rebuild only photon + projection graphics (not the gravity bowl)
+        photonNode?.removeFromParentNode()
+        galaxyNode?.removeFromParentNode()
+
+        let photonGraphicsNode = makeTravelingPhotonParticles(
+            paths: photonPaths,
+            color: .white   // or .cyan if you prefer
         )
+        photonNode = photonGraphicsNode
+        addChildNode(photonGraphicsNode)
+
+        let galaxy = makeProjectionNode(
+            positions: galaxyProjectionPositions,
+            color: .white
+        )
+        galaxyNode = galaxy
+        addChildNode(galaxy)
     }
 
     // ============================================================

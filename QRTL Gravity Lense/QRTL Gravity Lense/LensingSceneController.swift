@@ -297,6 +297,55 @@ final class LensingSceneController:
       
       
     }
+    
+    // LensingSceneController.swift
+
+    /// Single authoritative pass:
+    /// SourceGalaxy stars → QRTLPhotonTracer geodesics → paths + hits → display
+    func runAuthoritativePhotonPass(
+        field: QRTLField,
+        parameters: LensingParameters,
+        progress: ((PhotonTraceProgress) -> Void)? = nil
+    ) -> PhotonTraceBatch {
+
+        let batch = traceSourceGalaxy(
+            field: field,
+            parameters: parameters,
+            progress: progress
+        )
+
+        photonTraceResults = batch.traces
+
+        displayPhotonPaths(batch.paths)
+
+        if let surface = qrtlGravitySurface {
+            let hits: [SIMD3<Float>] = batch.hits.map { $0.point }
+            surface.setPhotonPathsForDisplay(
+                batch.paths,
+                projectionHits: hits
+            )
+        }
+
+        return batch
+    }
+    func beginContinuousEmission(
+        field: QRTLField,
+        parameters: LensingParameters
+    ) {
+        stopContinuousPhotonSimulation()
+
+        continuousPhotonField = field
+        continuousPhotonParameters = parameters
+        continuousPhotonSimulationRunning = true
+
+        activePhotons.removeAll()
+        activePhotonCount = 0
+        photonEmissionAccumulator = 0.0
+        continuousPhotonEmissionIndex = 0
+
+        // Origins must already be in sceneSourceGalaxyPositions (from addSourceGalaxy)
+        startPhotonSimulationDisplayLink()
+    }
     func setQRTLField(
         _ field: QRTLField
     ) {
@@ -4109,96 +4158,41 @@ final class LensingSceneController:
 
     func addSourceGalaxy() {
 
-        // ========================================================
-        // CLEAR PREVIOUS SOURCE GALAXY
-        // ========================================================
-
         sourceGalaxyNode?.removeFromParentNode()
 
         let galaxyNode = SCNNode()
+        sourceGalaxyNode = galaxyNode
 
-        sourceGalaxyNode =
-            galaxyNode
+        sourceGalaxyPositions.removeAll(keepingCapacity: true)
+        sourceGalaxyStars.removeAll(keepingCapacity: true)
+        sceneSourceGalaxyPositions.removeAll(keepingCapacity: true)
 
-        sourceGalaxyPositions.removeAll(
-            keepingCapacity: true
-        )
+        let galaxy = SourceGalaxy()
+        sourceGalaxy = galaxy
 
-        sourceGalaxyStars.removeAll(
-            keepingCapacity: true
-        )
-
-        // ========================================================
-        // BUILD THE AUTHORITATIVE SOURCE GALAXY
-        // ========================================================
-
-        let galaxy =
-            SourceGalaxy()
-
-        sourceGalaxy =
-            galaxy
-
-        // ========================================================
-        // STORE + RENDER THE SAME POSITIONS
-        // ========================================================
-
-        let starGeometry =
-            SCNSphere(radius: 0.035)
-
-        let starMaterial =
-            SCNMaterial()
-
-        starMaterial.diffuse.contents = UIColor.white
-        starMaterial.emission.contents = UIColor.white
-        starMaterial.isDoubleSided = true
-        starMaterial.lightingModel = .constant
-
-        starGeometry.materials = [starMaterial]
+        let starGeometry = SCNSphere(radius: 0.035)
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.white
+        material.emission.contents = UIColor.white
+        material.isDoubleSided = true
+        material.lightingModel = .constant
+        starGeometry.materials = [material]
 
         for (index, position) in galaxy.starPositions.enumerated() {
 
-            // ----------------------------------------------------
-            // AUTHORITATIVE PHOTON ORIGIN
-            //
-            // Both arrays are populated from the identical
-            // position, so the initial trace batch, the continuous
-            // emitter, and the visible stars can never disagree
-            // about where a given star actually is.
-            // ----------------------------------------------------
-
-            sourceGalaxyPositions.append(
-                position
-            )
-
+            // Single authoritative origin list — every consumer reads the same positions
+            sourceGalaxyPositions.append(position)
+            sceneSourceGalaxyPositions.append(position)   // continuous emitter
             sourceGalaxyStars.append(
-                SourceGalaxyStar(
-                    id: index,
-                    position: position
-                )
+                SourceGalaxyStar(id: index, position: position)
             )
 
-            // ----------------------------------------------------
-            // VISUAL STAR
-            // ----------------------------------------------------
-
-            let starNode =
-                SCNNode(geometry: starGeometry)
-
-            starNode.position =
-                SCNVector3(
-                    position.x,
-                    position.y,
-                    position.z
-                )
-
-            galaxyNode.addChildNode(
-                starNode
-            )
+            let starNode = SCNNode(geometry: starGeometry)
+            starNode.position = SCNVector3(position.x, position.y, position.z)
+            galaxyNode.addChildNode(starNode)
         }
 
-        scene.rootNode.addChildNode(
-            galaxyNode
-        )
+        scene.rootNode.addChildNode(galaxyNode)
     }
 
     func addGlobularCluster(
