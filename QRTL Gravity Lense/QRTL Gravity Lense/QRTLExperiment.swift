@@ -573,6 +573,9 @@ final class QRTLExperiment {
 
         let lensingParameters =
             LensingParameters(
+                maximumPhotonSteps:
+                    calculatedMaxSteps,
+
                    deflectionStrength:
                     1.0,
                    projectionPlaneHalfExtent:
@@ -591,9 +594,7 @@ final class QRTLExperiment {
                     ),
 
 
-                maximumPhotonSteps:
-                    calculatedMaxSteps,
-
+         
             
                 qrtlLensingStrength:
                     Float(
@@ -683,7 +684,9 @@ final class QRTLExperiment {
                     direction,
 
                 parameters:
-                    lensingParameters
+                    lensingParameters,
+                
+                sceneToPhysicalScale: 1.0
             )
 
         // ====================================================
@@ -968,3 +971,4 @@ final class QRTLExperiment {
         )
     }
 }
+

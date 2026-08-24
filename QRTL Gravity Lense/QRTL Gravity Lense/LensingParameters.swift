@@ -22,6 +22,32 @@ import Foundation
 import Foundation
 
 struct LensingParameters {
+    
+    // ============================================================
+        // PHOTON INTEGRATION
+        // ============================================================
+
+        /// Maximum number of integration steps allowed for one photon.
+        let maximumPhotonSteps: Int
+
+        /// Scene-space integration step used by the photon tracer.
+        let stepSize: Float
+
+        // ============================================================
+        // PHOTON TERMINATION
+        // ============================================================
+
+        /// Maximum scene-space radius allowed during tracing.
+        let maxRadius: Float
+
+        /// Distance from the lens to the projection/observer plane.
+        let projectionDistance: Float
+
+        // ============================================================
+        // LENSING / CURVATURE
+        // ============================================================
+
+        let deflectionStrength: Float
 
     // ============================================================
     // MARK: - PHOTON PROPAGATION
@@ -30,14 +56,6 @@ struct LensingParameters {
     /// Legacy PhotonTracer name.
     let maxSteps: Int
 
-    /// Legacy PhotonTracer name.
-    let stepSize: Float
-
-    /// Legacy PhotonTracer name.
-    let maxRadius: Float
-
-    /// Current descriptive name.
-    let maximumPhotonSteps: Int
 
     /// Current descriptive name.
     let photonStepSize: Float
@@ -55,8 +73,7 @@ struct LensingParameters {
     // MARK: - GRAVITATIONAL DEFLECTION
     // ============================================================
 
-    /// Base QRTL transverse deflection strength.
-    let deflectionStrength: Float
+    let targetPlaneZ: Float
 
     /// QRTL-specific lensing multiplier.
     var qrtlLensingStrength: Float
@@ -114,11 +131,14 @@ struct LensingParameters {
     // ============================================================
 
     init(
+        targetPlaneZ: Float = 20.0,
+        maximumPhotonSteps: Int = 2000,
+           stepSize: Float = 0.01,
+           maxRadius: Float = 20.0,
+           projectionDistance: Float = 20.0,
+           deflectionStrength: Float = 1.0,
+        
         maxSteps: Int = 2000,
-        stepSize: Float = 0.01,
-        maxRadius: Float = 20.0,
-
-        deflectionStrength: Float = 1.0,
 
         projectionX: Float = 10.0,
         projectionPlaneHalfExtent: Float = 10.0,
@@ -128,8 +148,7 @@ struct LensingParameters {
         maximumPropagationRadius: Float = 20.0,
         photonStepSize: Float = 0.20,
         photonEmissionRate: Float = 60.0,
-        maximumPhotonSteps: Int = 100,
-
+  
         qrtlLensingStrength: Float = 1.0,
         maximumPhotonBend: Float = 0.35,
 
@@ -150,6 +169,9 @@ struct LensingParameters {
         // PHOTON PROPAGATION
         // ========================================================
 
+        self.targetPlaneZ = targetPlaneZ
+
+        
         let safeMaxSteps = max(
             1,
             maxSteps
@@ -311,6 +333,11 @@ struct LensingParameters {
             : 0.0,
             0.0
         )
+        
+
+
+              self.projectionDistance = projectionDistance
+
     }
 }
 

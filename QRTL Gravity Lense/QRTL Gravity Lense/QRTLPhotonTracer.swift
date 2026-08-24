@@ -1,603 +1,972 @@
-
+//
+//  QRTLPhotonTracer.swift
+//  QRTL Gravity Lense
+//
+//  Photon propagation through the QRTL-derived spacetime metric.
+//
+//  ARCHITECTURE
+//
+//  QRTLField
+//      ↓
+//  QRTL gravitational potential Φ
+//      ↓
+//  dimensionless potential U = Φ / c²
+//      ↓
+//  weak-field spacetime metric gμν
+//      ↓
+//  ∂gμν / ∂xα
+//      ↓
+//  Christoffel symbols Γᵘαβ
+//      ↓
+//  null geodesic equation
+//      ↓
+//  photon trajectory
+//
+//  The renderer does NOT bend the photon.
+//  The gravity surface does NOT bend the photon.
+//  The photon tracer follows the calculated spacetime geometry.
+//
+//  Coordinate convention:
+//
+//      Scene X = photon propagation direction
+//      Scene Y = transverse direction
+//      Scene Z = transverse direction
+//
+//      Physical X = photon propagation direction
+//      Physical Y = transverse direction
+//      Physical Z = transverse direction
+//
+//  The fourth coordinate is:
+//
+//      q⁰ = ct / R
+//
+//  where R is the QRTL cluster radius.
+//
+//  Spatial coordinates are:
+//
+//      q¹ = X / R
+//      q² = Y / R
+//      q³ = Z / R
+//
+//  The metric is evaluated in the weak-field limit:
+//
+//      g₀₀ = -(1 + 2Φ/c²)
+//
+//      gᵢⱼ = (1 - 2Φ/c²) δᵢⱼ
+//
+//  with γ = 1.
+//
+//  This is a weak-field GR-style null-geodesic implementation.
+//  QRTL supplies Φ; the renderer remains a consumer.
+//
 
 import Foundation
 import simd
 
+// ============================================================
+// QRTL PHOTON TRACER
+// ============================================================
+
 final class QRTLPhotonTracer {
 
     // ============================================================
-    // MARK: - FIELD
+    // AUTHORITATIVE FIELD
     // ============================================================
 
-    let field: QRTLField
+    private let field: QRTLField
+
+    // ============================================================
+    // PHYSICAL CONSTANTS
+    // ============================================================
+
+    private let speedOfLight: Double = 299_792_458.0
+
+    // GR PPN spatial-curvature parameter.
+    //
+    // General relativity:
+    //
+    //     γ = 1
+    //
+    // Keeping it explicit makes the GR/QRTL comparison easier.
+    private let gamma: Double = 1.0
+
+    // ============================================================
+    // INITIALIZATION
+    // ============================================================
 
     init(field: QRTLField) {
         self.field = field
     }
 
     // ============================================================
-    // MARK: - TRANSVERSE COMPONENT
-    //
-    // Removes the component of the gravitational response
-    // parallel to photon propagation.
-    //
-    // Only the transverse component changes photon direction.
-    // ============================================================
-
-    private func transverseComponent(
-        _ vector: SIMD3<Float>,
-        relativeTo direction: SIMD3<Float>
-    ) -> SIMD3<Float> {
-
-        let length = simd_length(direction)
-
-        guard
-            length.isFinite,
-            length > 1.0e-12
-        else {
-            return .zero
-        }
-
-        let d = direction / length
-
-        let parallel =
-            simd_dot(vector, d)
-
-        let result =
-            vector - d * parallel
-
-        guard
-            result.x.isFinite,
-            result.y.isFinite,
-            result.z.isFinite
-        else {
-            return .zero
-        }
-
-        return result
-    }
-
-    // ============================================================
-    // MARK: - PROJECTION PLANE INTERSECTION
-    //
-    // Photons propagate primarily along +X.
-    //
-    // Projection plane:
-    //
-    //     X = targetPlaneX
-    //
-    // Projection coordinates:
-    //
-    //     horizontal = Y
-    //     vertical   = Z
-    // ============================================================
-
-    private func projectionIntersection(
-        previousPosition: SIMD3<Float>,
-        currentPosition: SIMD3<Float>,
-        parameters: LensingParameters
-    ) -> (
-        point: SIMD3<Float>,
-        coordinates: SIMD2<Float>
-    )? {
-
-        let targetX =
-            Float(parameters.targetPlaneX)
-
-        let previousX =
-            previousPosition.x
-
-        let currentX =
-            currentPosition.x
-
-        let dx =
-            currentX - previousX
-
-        guard
-            dx.isFinite,
-            abs(dx) > 1.0e-8
-        else {
-            return nil
-        }
-
-        // --------------------------------------------------------
-        // Segment / plane intersection
-        // --------------------------------------------------------
-
-        let t =
-            (targetX - previousX) / dx
-
-        guard
-            t.isFinite,
-            t >= 0.0,
-            t <= 1.0
-        else {
-            return nil
-        }
-
-        // --------------------------------------------------------
-        // Intersection point
-        // --------------------------------------------------------
-
-        let point =
-            previousPosition
-            +
-            (
-                currentPosition
-                -
-                previousPosition
-            )
-            * t
-
-        // --------------------------------------------------------
-        // Projection scale
-        // --------------------------------------------------------
-
-        let halfExtent =
-            Float(
-                parameters.projectionPlaneHalfExtent
-            )
-
-        guard
-            halfExtent.isFinite,
-            halfExtent > 0.0
-        else {
-            return nil
-        }
-
-        // --------------------------------------------------------
-        // Y/Z become image coordinates
-        // --------------------------------------------------------
-
-        let coordinates =
-            SIMD2<Float>(
-                point.y / halfExtent,
-                point.z / halfExtent
-            )
-
-        // --------------------------------------------------------
-        // Validation
-        // --------------------------------------------------------
-
-        guard
-            point.x.isFinite,
-            point.y.isFinite,
-            point.z.isFinite,
-            coordinates.x.isFinite,
-            coordinates.y.isFinite,
-            abs(coordinates.x) <= 1.0,
-            abs(coordinates.y) <= 1.0
-        else {
-            return nil
-        }
-
-        return (
-            point: point,
-            coordinates: coordinates
-        )
-    }
-
-    // ============================================================
-    // MARK: - TRACE PHOTON
-    //
-    // Pipeline:
-    //
-    // Photon origin
-    //      ↓
-    // Normalize direction
-    //      ↓
-    // Sample QRTL gravitational field
-    //      ↓
-    // Remove longitudinal component
-    //      ↓
-    // Apply gravitational deflection
-    //      ↓
-    // Normalize direction
-    //      ↓
-    // Advance photon
-    //      ↓
-    // Check projection plane
-    //      ↓
-    // Repeat
+    // TRACE PHOTON
     // ============================================================
 
     func tracePhoton(
         origin: SIMD3<Float>,
         direction: SIMD3<Float>,
         parameters: LensingParameters,
-        sceneToPhysicalScale: Float = 1.0
+        sceneToPhysicalScale: Float
     ) -> PhotonTraceResult {
 
-        // --------------------------------------------------------
-        // SCENE-SPACE vs. PHYSICAL-SPACE
-        //
-        // origin/direction/position/stepSize all live in the
-        // caller's SCENE coordinates (e.g. a visualization's
-        // -extent...+extent range). QRTLField's gravity table,
-        // however, is built over the cluster's REAL physical
-        // radius in meters (field.clusterRadiusMeters), which can
-        // be many orders of magnitude larger than any reasonable
-        // scene extent.
-        //
-        // Without a conversion, every scene-space query position
-        // — from a "far away" source galaxy to the point of
-        // closest approach — lands inside the very first, tiny
-        // sliver of the physical table, so the field always reads
-        // as if the photon were sitting at the exact center: no
-        // "before curvature starts" is representable, and a
-        // source galaxy can never be meaningfully positioned
-        // outside the cluster's influence.
-        //
-        // sceneToPhysicalScale converts a scene-space position to
-        // the equivalent physical position (in meters) ONLY for
-        // querying the field — the photon's actual integration
-        // (position, direction, step size) stays entirely in
-        // scene-space, so nothing about rendering, step size, or
-        // the projection plane needs to change. Default 1.0
-        // preserves prior behavior for any caller already passing
-        // literal physical positions.
-        // --------------------------------------------------------
+        // ========================================================
+        // SCALE
+        // ========================================================
 
-        let sceneToPhysical =
-            sceneToPhysicalScale.isFinite &&
-            sceneToPhysicalScale > 0.0
-            ? sceneToPhysicalScale
-            : 1.0
+        let clusterRadius = Double(field.clusterRadiusMeters)
 
-        var position =
-            origin
-
-        // --------------------------------------------------------
-        // Initial photon direction
-        // --------------------------------------------------------
-
-        var rayDirection =
-            simd_normalize(direction)
-
-        guard
-            rayDirection.x.isFinite,
-            rayDirection.y.isFinite,
-            rayDirection.z.isFinite,
-            simd_length(rayDirection) > 1.0e-12
+        guard clusterRadius.isFinite,
+              clusterRadius > 0.0
         else {
-
-            return PhotonTraceResult(
+            return emptyResult(
                 origin: origin,
-                direction: .zero,
-                positions: [origin],
-                finalPosition: origin,
-                finalDirection: .zero,
-                hitProjection: false,
-                projectionPoint: nil,
-                projectionCoordinates: nil,
-                stepCount: 0,
-                traveledDistance: 0.0,
-                maximumQRTLInfluence: 0.0,
-                maximumMagneticField: 0.0,
-                maximumMagneticPhotonInfluence: 0.0,
-                sourceCoordinates: nil,
-                interactionCount: 0
+                direction: direction
             )
         }
 
-        // --------------------------------------------------------
-        // Photon path
-        // --------------------------------------------------------
+        let sceneToPhysical = Double(sceneToPhysicalScale)
 
-        var positions:
-            [SIMD3<Float>] = []
+        guard sceneToPhysical.isFinite,
+              sceneToPhysical > 0.0
+        else {
+            return emptyResult(
+                origin: origin,
+                direction: direction
+            )
+        }
 
-        positions.reserveCapacity(
-            parameters.maximumPhotonSteps + 1
+        // ========================================================
+        // INITIAL DIRECTION
+        // ========================================================
+
+        let initialDirection = simd_normalize(
+            SIMD3<Double>(
+                Double(direction.x),
+                Double(direction.y),
+                Double(direction.z)
+            )
         )
 
-        positions.append(position)
-
-        // --------------------------------------------------------
-        // Diagnostics
-        // --------------------------------------------------------
-
-        var stepCount =
-            0
-
-        var traveledDistance:
-            Float = 0.0
-
-        var interactionCount =
-            0
-
-        var maximumQRTLInfluence:
-            Float = 0.0
-
-        // --------------------------------------------------------
-        // These fields remain zero because electromagnetic
-        // photon bending has been removed from this tracer.
-        //
-        // They are retained only for compatibility with the
-        // existing PhotonTraceResult structure.
-        // --------------------------------------------------------
-
-        let maximumMagneticField:
-            Float = 0.0
-
-        let maximumMagneticPhotonInfluence:
-            Float = 0.0
-
-        // --------------------------------------------------------
-        // Projection state
-        // --------------------------------------------------------
-
-        var hitProjection =
-            false
-
-        var projectionPoint:
-            SIMD3<Float>? = nil
-
-        var projectionCoordinates:
-            SIMD2<Float>? = nil
-
-        // --------------------------------------------------------
-        // Propagation parameters
-        // --------------------------------------------------------
-
-        let stepSize =
-            Float(
-                parameters.photonStepSize
-            )
-
-        let maximumRadius =
-            Float(
-                parameters.maximumPropagationRadius
-            )
-
-        guard
-            stepSize.isFinite,
-            stepSize > 0.0,
-            maximumRadius.isFinite,
-            maximumRadius > 0.0
+        guard simd_length_squared(initialDirection) > 1.0e-20
         else {
-
-            return PhotonTraceResult(
+            return emptyResult(
                 origin: origin,
-                direction: rayDirection,
-                positions: positions,
-                finalPosition: position,
-                finalDirection: rayDirection,
-                hitProjection: false,
-                projectionPoint: nil,
-                projectionCoordinates: nil,
-                stepCount: 0,
-                traveledDistance: 0.0,
-                maximumQRTLInfluence: 0.0,
-                maximumMagneticField: 0.0,
-                maximumMagneticPhotonInfluence: 0.0,
-                sourceCoordinates: nil,
-                interactionCount: 0
+                direction: direction
             )
         }
 
         // ========================================================
-        // PHOTON PROPAGATION
+        // INITIAL POSITION
+        //
+        // Scene coordinates are converted into dimensionless
+        // coordinates relative to the cluster radius.
+        //
+        // q = x / R
         // ========================================================
 
-        for step
-        in 0..<parameters.maximumPhotonSteps {
+        var position = SIMD3<Double>(
+            Double(origin.x) / sceneToPhysical,
+            Double(origin.y) / sceneToPhysical,
+            Double(origin.z) / sceneToPhysical
+        )
 
-            stepCount =
-                step + 1
+        // ========================================================
+        // FOUR-POSITION
+        //
+        // q⁰ = ct / R
+        // q¹ = X / R
+        // q² = Y / R
+        // q³ = Z / R
+        // ========================================================
 
-            let currentPosition =
-                position
+        var q = SIMD4<Double>(
+            0.0,
+            position.x,
+            position.y,
+            position.z
+        )
 
-            // ====================================================
-            // CONVERT TO PHYSICAL SPACE FOR THE FIELD QUERY ONLY
-            // ====================================================
+        // ========================================================
+        // INITIAL NULL TANGENT
+        //
+        // In flat spacetime:
+        //
+        //     dq⁰/dλ = 1
+        //
+        //     |d⃗q/dλ| = 1
+        //
+        // Therefore the initial tangent is null:
+        //
+        //     gμν kμ kν = 0
+        // ========================================================
 
-            let physicalQueryPosition =
-                currentPosition *
-                sceneToPhysical
+        var k = SIMD4<Double>(
+            1.0,
+            initialDirection.x,
+            initialDirection.y,
+            initialDirection.z
+        )
 
-            // ====================================================
-            // QRTL GRAVITATIONAL LENSING
-            // ====================================================
+        // ========================================================
+        // TRACE CONFIGURATION
+        // ========================================================
 
-            let qrtlResponse =
-                field.qrtlLensingAcceleration(
-                    at: physicalQueryPosition,
-                    direction: rayDirection
-                )
+        let maxSteps = max(
+            parameters.maximumPhotonSteps,
+            1
+        )
+
+        let stepSize = max(
+            Double(parameters.stepSize),
+            1.0e-6
+        )
+
+        let maxRadius = max(
+            Double(parameters.maxRadius),
+            0.001
+        )
+
+        // ========================================================
+        // PATH STORAGE
+        // ========================================================
+
+        var positions: [SIMD3<Float>] = []
+
+        positions.reserveCapacity(
+            maxSteps + 1
+        )
+
+        positions.append(
+            SIMD3<Float>(
+                origin.x,
+                origin.y,
+                origin.z
+            )
+        )
+
+        // ========================================================
+        // DIAGNOSTIC STATE
+        // ========================================================
+
+        var maximumQRTLInfluence: Float = 0.0
+        var maximumMagneticField: Float = 0.0
+        var maximumMagneticPhotonInfluence: Float = 0.0
+
+        var hitProjection = false
+        var projectionCoordinates: SIMD2<Float>? = nil
+
+        var traveledDistance: Double = 0.0
+
+        // ========================================================
+        // GEODESIC INTEGRATION
+        // ========================================================
+
+        for _ in 0..<maxSteps {
 
             // ----------------------------------------------------
-            // Keep only the component perpendicular to the
-            // direction of photon travel.
+            // CURRENT SCENE POSITION
             // ----------------------------------------------------
 
-            let qrtlTransverse =
-                transverseComponent(
-                    qrtlResponse,
-                    relativeTo: rayDirection
-                )
+            let scenePosition = SIMD3<Float>(
+                Float(q.y * sceneToPhysical),
+                Float(q.z * sceneToPhysical),
+                Float(q.w * sceneToPhysical)
+            )
 
             // ----------------------------------------------------
-            // Diagnostic magnitude
+            // RADIUS
             // ----------------------------------------------------
 
-            let qrtlMagnitude =
-                simd_length(
-                    qrtlTransverse
-                )
+            let radius = simd_length(position)
 
-            guard
-                qrtlMagnitude.isFinite
-            else {
+            if !radius.isFinite {
                 break
             }
 
-            maximumQRTLInfluence =
-                max(
-                    maximumQRTLInfluence,
-                    qrtlMagnitude
-                )
+            // ----------------------------------------------------
+            // TERMINATION
+            // ----------------------------------------------------
 
-            if qrtlMagnitude > 0.0 {
-                interactionCount += 1
-            }
-
-            // ====================================================
-            // UPDATE PHOTON DIRECTION
-            //
-            // dD/ds ≈ QRTL transverse response
-            //
-            // D_new =
-            // normalize(
-            //     D + response * deflectionStrength * ds
-            // )
-            // ====================================================
-
-            rayDirection +=
-                qrtlTransverse
-                *
-                Float(
-                    parameters.deflectionStrength
-                )
-                *
-                stepSize
-
-            let directionLength =
-                simd_length(
-                    rayDirection
-                )
-
-            guard
-                directionLength.isFinite,
-                directionLength > 1.0e-12
-            else {
+            if radius > maxRadius {
                 break
             }
 
-            rayDirection =
-                simd_normalize(
-                    rayDirection
+            // ----------------------------------------------------
+            // FIELD DIAGNOSTICS
+            //
+            // These are observational only.
+            // They do NOT drive the geodesic.
+            // ----------------------------------------------------
+
+            updateDiagnostics(
+                physicalPosition: SIMD3<Double>(
+                    position.x,
+                    position.y,
+                    position.z
+                ) * clusterRadius,
+                maximumQRTLInfluence: &maximumQRTLInfluence,
+                maximumMagneticField: &maximumMagneticField,
+                maximumMagneticPhotonInfluence:
+                    &maximumMagneticPhotonInfluence
+            )
+
+            // ----------------------------------------------------
+            // PROJECTION PLANE
+            //
+            // The existing lensing architecture uses X as the
+            // photon travel direction.
+            //
+            // Projection is therefore based on the scene X
+            // coordinate reaching targetPlaneZ only if that
+            // parameter is being used as the existing projection
+            // boundary.
+            //
+            // Keep this separate from the geodesic physics.
+            // ----------------------------------------------------
+
+            if scenePosition.x >= parameters.targetPlaneZ {
+
+                hitProjection = true
+
+                projectionCoordinates = SIMD2<Float>(
+                    scenePosition.y,
+                    scenePosition.z
                 )
 
-            // ====================================================
-            // ADVANCE PHOTON
-            // ====================================================
+                break
+            }
 
-            let previousPosition =
-                position
+            // ----------------------------------------------------
+            // RK4 GEODESIC STEP
+            // ----------------------------------------------------
 
-            position +=
-                rayDirection
-                *
-                stepSize
+            let step = geodesicStep(
+                q: q,
+                k: k,
+                step: stepSize,
+                clusterRadius: clusterRadius
+            )
 
-            traveledDistance +=
-                stepSize
+            let qIsFinite = q.x.isFinite && q.y.isFinite && q.z.isFinite && q.w.isFinite
+            let kIsFinite = k.x.isFinite && k.y.isFinite && k.z.isFinite && k.w.isFinite
+
+            let stepQIsFinite = step.q.x.isFinite && step.q.y.isFinite && step.q.z.isFinite && step.q.w.isFinite
+            let stepKIsFinite = step.k.x.isFinite && step.k.y.isFinite && step.k.z.isFinite && step.k.w.isFinite
+
+            if !stepQIsFinite || !stepKIsFinite {
+                break
+            }
+
+            q = step.q
+            k = step.k
+
+            position = SIMD3<Double>(
+                q.y,
+                q.z,
+                q.w
+            )
+
+            traveledDistance += stepSize
+
+            // ----------------------------------------------------
+            // STORE VISUAL SCENE POSITION
+            // ----------------------------------------------------
 
             positions.append(
-                position
-            )
-
-            // ====================================================
-            // PROJECTION PLANE
-            // ====================================================
-
-            if
-                !hitProjection,
-                let hit =
-                    projectionIntersection(
-                        previousPosition:
-                            previousPosition,
-                        currentPosition:
-                            position,
-                        parameters:
-                            parameters
-                    )
-            {
-
-                hitProjection =
-                    true
-
-                projectionPoint =
-                    hit.point
-
-                projectionCoordinates =
-                    hit.coordinates
-            }
-
-            // ====================================================
-            // PROPAGATION LIMIT
-            // ====================================================
-
-            let radius =
-                simd_length(
-                    position
+                SIMD3<Float>(
+                    Float(q.y * sceneToPhysical),
+                    Float(q.z * sceneToPhysical),
+                    Float(q.w * sceneToPhysical)
                 )
-
-            guard radius.isFinite else {
-                break
-            }
-
-            if radius > maximumRadius {
-                break
-            }
+            )
         }
 
         // ========================================================
-        // FINAL RESULT
+        // FINAL STATE
         // ========================================================
 
+        let finalPosition: SIMD3<Float>
+
+        if let last = positions.last {
+            finalPosition = last
+        } else {
+            finalPosition = origin
+        }
+
+        let finalDirection = simd_normalize(
+            SIMD3<Float>(
+                Float(k.y),
+                Float(k.z),
+                Float(k.w)
+            )
+        )
+
+        // projectionPoint: We do not have a computed 3D intersection point on the plane,
+        // so per instructions we set this to nil for now.
+        let projectionPoint: SIMD3<Float>? = nil
+
         return PhotonTraceResult(
+            origin: origin,
+            direction: direction,
+            positions: positions,
+            finalPosition: finalPosition,
+            finalDirection: finalDirection,
+            hitProjection: hitProjection,
+            projectionPoint: projectionPoint,
+            projectionCoordinates: projectionCoordinates,
+            stepCount: positions.count,
+            traveledDistance: Float(traveledDistance),
+            maximumQRTLInfluence: maximumQRTLInfluence,
+            maximumMagneticField: maximumMagneticField,
+            maximumMagneticPhotonInfluence: maximumMagneticPhotonInfluence,
+            sourceCoordinates: nil,
+            interactionCount: 0
+        )
+    }
 
-            origin:
-                origin,
+    // ============================================================
+    // GEODESIC STEP
+    // ============================================================
 
-            direction:
-                simd_normalize(
-                    direction
-                ),
+    private func geodesicStep(
+        q: SIMD4<Double>,
+        k: SIMD4<Double>,
+        step: Double,
+        clusterRadius: Double
+    ) -> (
+        q: SIMD4<Double>,
+        k: SIMD4<Double>
+    ) {
 
-            positions:
-                positions,
+        // --------------------------------------------------------
+        // RK4
+        //
+        // dqᵘ/dλ = kᵘ
+        //
+        // dkᵘ/dλ =
+        //
+        //     -Γᵘαβ kᵅ kᵝ
+        // --------------------------------------------------------
 
-            finalPosition:
-                position,
+        let a1 = derivative(
+            q: q,
+            k: k,
+            clusterRadius: clusterRadius
+        )
 
-            finalDirection:
-                rayDirection,
+        let q2 = q + 0.5 * step * k
+        let k2 = k + 0.5 * step * a1
 
-            hitProjection:
-                hitProjection,
+        let a2 = derivative(
+            q: q2,
+            k: k2,
+            clusterRadius: clusterRadius
+        )
 
-            projectionPoint:
-                projectionPoint,
+        let q3 = q + 0.5 * step * k2
+        let k3 = k + 0.5 * step * a2
 
-            projectionCoordinates:
-                projectionCoordinates,
+        let a3 = derivative(
+            q: q3,
+            k: k3,
+            clusterRadius: clusterRadius
+        )
 
-            stepCount:
-                stepCount,
+        let q4 = q + step * k3
+        let k4 = k + step * a3
 
-            traveledDistance:
-                traveledDistance,
+        let a4 = derivative(
+            q: q4,
+            k: k4,
+            clusterRadius: clusterRadius
+        )
 
-            maximumQRTLInfluence:
+        let newQ =
+            q +
+            (step / 6.0) *
+            (
+                k +
+                2.0 * k2 +
+                2.0 * k3 +
+                k4
+            )
+
+        let newK =
+            k +
+            (step / 6.0) *
+            (
+                a1 +
+                2.0 * a2 +
+                2.0 * a3 +
+                a4
+            )
+
+        return (
+            q: newQ,
+            k: newK
+        )
+    }
+
+    // ============================================================
+    // GEODESIC DERIVATIVE
+    // ============================================================
+
+    private func derivative(
+        q: SIMD4<Double>,
+        k: SIMD4<Double>,
+        clusterRadius: Double
+    ) -> SIMD4<Double> {
+
+        let christoffel =
+            christoffelSymbols(
+                q: q,
+                clusterRadius: clusterRadius
+            )
+
+        var acceleration = SIMD4<Double>(
+            repeating: 0.0
+        )
+
+        // --------------------------------------------------------
+        // -Γᵘαβ kᵅ kᵝ
+        // --------------------------------------------------------
+
+        for mu in 0..<4 {
+
+            var value = 0.0
+
+            for alpha in 0..<4 {
+
+                for beta in 0..<4 {
+
+                    value +=
+                        christoffel[mu][alpha][beta] *
+                        k[alpha] *
+                        k[beta]
+                }
+            }
+
+            acceleration[mu] = -value
+        }
+
+        return acceleration
+    }
+
+    // ============================================================
+    // CHRISTOFFEL SYMBOLS
+    // ============================================================
+
+    private func christoffelSymbols(
+        q: SIMD4<Double>,
+        clusterRadius: Double
+    ) -> [[[Double]]] {
+
+        let metric =
+            spacetimeMetric(
+                q: q,
+                clusterRadius: clusterRadius
+            )
+
+        let inverseMetric =
+            inverseMetric(
+                metric
+            )
+
+        let derivatives =
+            metricDerivatives(
+                q: q,
+                clusterRadius: clusterRadius
+            )
+
+        var gammaSymbols =
+            Array(
+                repeating:
+                    Array(
+                        repeating:
+                            Array(
+                                repeating: 0.0,
+                                count: 4
+                            ),
+                        count: 4
+                    ),
+                count: 4
+            )
+
+        // --------------------------------------------------------
+        // Γᵘαβ =
+        //
+        // 1/2 gᵘν
+        //
+        // [ ∂α gνβ
+        // + ∂β gνα
+        // - ∂ν gαβ ]
+        // --------------------------------------------------------
+
+        for mu in 0..<4 {
+
+            for alpha in 0..<4 {
+
+                for beta in 0..<4 {
+
+                    var value = 0.0
+
+                    for nu in 0..<4 {
+
+                        let first =
+                            derivatives[nu][beta][alpha]
+
+                        let second =
+                            derivatives[nu][alpha][beta]
+
+                        let third =
+                            derivatives[alpha][beta][nu]
+
+                        value +=
+                            inverseMetric[mu][nu] *
+                            (
+                                first +
+                                second -
+                                third
+                            )
+                    }
+
+                    gammaSymbols[mu][alpha][beta] =
+                        0.5 * value
+                }
+            }
+        }
+
+        return gammaSymbols
+    }
+
+    // ============================================================
+    // SPACETIME METRIC
+    // ============================================================
+
+    private func spacetimeMetric(
+        q: SIMD4<Double>,
+        clusterRadius: Double
+    ) -> [[Double]] {
+
+        let potential =
+            qrtlPotential(
+                q: q,
+                clusterRadius: clusterRadius
+            )
+
+        // --------------------------------------------------------
+        // Dimensionless weak-field potential
+        //
+        // U = Φ / c²
+        // --------------------------------------------------------
+
+        let U =
+            potential /
+            (speedOfLight * speedOfLight)
+
+        // --------------------------------------------------------
+        // Weak-field isotropic metric
+        //
+        // g00 = -(1 + 2U)
+        //
+        // gij = (1 - 2γU)δij
+        // --------------------------------------------------------
+
+        let temporal =
+            -(1.0 + 2.0 * U)
+
+        let spatial =
+            1.0 - 2.0 * gamma * U
+
+        return [
+            [
+                temporal, 0.0, 0.0, 0.0
+            ],
+            [
+                0.0, spatial, 0.0, 0.0
+            ],
+            [
+                0.0, 0.0, spatial, 0.0
+            ],
+            [
+                0.0, 0.0, 0.0, spatial
+            ]
+        ]
+    }
+
+    // ============================================================
+    // METRIC DERIVATIVES
+    // ============================================================
+
+    private func metricDerivatives(
+        q: SIMD4<Double>,
+        clusterRadius: Double
+    ) -> [[[Double]]] {
+
+        var result =
+            Array(
+                repeating:
+                    Array(
+                        repeating:
+                            Array(
+                                repeating: 0.0,
+                                count: 4
+                            ),
+                        count: 4
+                    ),
+                count: 4
+            )
+
+        // --------------------------------------------------------
+        // Static gravitational field.
+        //
+        // Therefore:
+        //
+        // ∂gμν / ∂q⁰ = 0
+        // --------------------------------------------------------
+
+        for coordinate in 1...3 {
+
+            let derivative =
+                metricDerivative(
+                    q: q,
+                    coordinate: coordinate,
+                    clusterRadius: clusterRadius
+                )
+
+            for mu in 0..<4 {
+
+                for nu in 0..<4 {
+
+                    result[mu][nu][coordinate] =
+                        derivative[mu][nu]
+                }
+            }
+        }
+
+        return result
+    }
+
+    // ============================================================
+    // SINGLE METRIC DERIVATIVE
+    // ============================================================
+
+    private func metricDerivative(
+        q: SIMD4<Double>,
+        coordinate: Int,
+        clusterRadius: Double
+    ) -> [[Double]] {
+
+        // --------------------------------------------------------
+        // Physical finite-difference spacing.
+        //
+        // This is intentionally tied to the cluster scale rather
+        // than SceneKit scale.
+        // --------------------------------------------------------
+
+        let normalizedStep = 1.0e-5
+
+        var plus = q
+        var minus = q
+
+        plus[coordinate] += normalizedStep
+        minus[coordinate] -= normalizedStep
+
+        let gPlus =
+            spacetimeMetric(
+                q: plus,
+                clusterRadius: clusterRadius
+            )
+
+        let gMinus =
+            spacetimeMetric(
+                q: minus,
+                clusterRadius: clusterRadius
+            )
+
+        let denominator =
+            2.0 * normalizedStep
+
+        var derivative =
+            Array(
+                repeating:
+                    Array(
+                        repeating: 0.0,
+                        count: 4
+                    ),
+                count: 4
+            )
+
+        for mu in 0..<4 {
+
+            for nu in 0..<4 {
+
+                derivative[mu][nu] =
+                    (
+                        gPlus[mu][nu] -
+                        gMinus[mu][nu]
+                    ) /
+                    denominator
+            }
+        }
+
+        return derivative
+    }
+
+    // ============================================================
+    // INVERSE METRIC
+    //
+    // The weak-field metric is diagonal, so no general matrix
+    // inversion is necessary.
+    // ============================================================
+
+    private func inverseMetric(
+        _ metric: [[Double]]
+    ) -> [[Double]] {
+
+        var inverse =
+            Array(
+                repeating:
+                    Array(
+                        repeating: 0.0,
+                        count: 4
+                    ),
+                count: 4
+            )
+
+        for i in 0..<4 {
+
+            let value = metric[i][i]
+
+            if abs(value) > 1.0e-30 {
+                inverse[i][i] = 1.0 / value
+            }
+        }
+
+        return inverse
+    }
+
+    // ============================================================
+    // QRTL POTENTIAL
+    // ============================================================
+
+    private func qrtlPotential(
+        q: SIMD4<Double>,
+        clusterRadius: Double
+    ) -> Double {
+
+        let x = q.y * clusterRadius
+        let y = q.z * clusterRadius
+        let z = q.w * clusterRadius
+
+        let radius = sqrt(
+            x * x +
+            y * y +
+            z * z
+        )
+
+        guard radius.isFinite
+        else {
+            return 0.0
+        }
+
+        return field.interpolateRadialPotential(
+            radius: radius
+        )
+    }
+
+    // ============================================================
+    // DIAGNOSTICS
+    // ============================================================
+
+    private func updateDiagnostics(
+        physicalPosition: SIMD3<Double>,
+        maximumQRTLInfluence: inout Float,
+        maximumMagneticField: inout Float,
+        maximumMagneticPhotonInfluence:
+            inout Float
+    ) {
+
+        let position = SIMD3<Float>(
+            Float(physicalPosition.x),
+            Float(physicalPosition.y),
+            Float(physicalPosition.z)
+        )
+
+        // --------------------------------------------------------
+        // These calls are diagnostic only.
+        //
+        // They do NOT enter the geodesic equation here.
+        //
+        // Gravity geometry is supplied by the QRTL potential.
+        // --------------------------------------------------------
+
+        let influence =
+            field.influence(
+                at: position
+            )
+
+        maximumQRTLInfluence =
+            max(
                 maximumQRTLInfluence,
+                Float(influence)
+            )
 
-            maximumMagneticField:
+        let magneticField =
+            field.magneticField(
+                at: position
+            )
+
+        maximumMagneticField =
+            max(
                 maximumMagneticField,
+                simd_length(magneticField)
+            )
 
-            maximumMagneticPhotonInfluence:
+        let magneticInfluence =
+            field.electromagneticInfluence(
+                at: position
+            )
+
+        maximumMagneticPhotonInfluence =
+            max(
                 maximumMagneticPhotonInfluence,
+                Float(magneticInfluence)
+            )
+    }
 
-            sourceCoordinates:
-                nil,
+    // ============================================================
+    // EMPTY RESULT
+    // ============================================================
 
-            interactionCount:
-                interactionCount
+    private func emptyResult(
+        origin: SIMD3<Float>,
+        direction: SIMD3<Float>
+    ) -> PhotonTraceResult {
+
+        return PhotonTraceResult(
+            origin: origin,
+            direction: direction,
+            positions: [
+                origin
+            ],
+            finalPosition: origin,
+            finalDirection: SIMD3<Float>(
+                1.0,
+                0.0,
+                0.0
+            ),
+            hitProjection: false,
+            projectionPoint: nil,
+            projectionCoordinates: nil,
+            stepCount: 1,
+            traveledDistance: 0.0,
+            maximumQRTLInfluence: 0.0,
+            maximumMagneticField: 0.0,
+            maximumMagneticPhotonInfluence: 0.0,
+            sourceCoordinates: nil,
+            interactionCount: 0
         )
     }
 }
-
 

@@ -1366,16 +1366,11 @@ final class LensingSceneController:
 
             let trace =
                 tracer.tracePhoton(
-                    origin:
-                        sourcePosition,
-
-                    direction:
-                        initialDirection,
-
-                    parameters:
-                        parameters,
-
-                      )
+                    origin: sourcePosition,
+                    direction: initialDirection,
+                    parameters: parameters,
+                    sceneToPhysicalScale: 1.0
+                )
 
             // ====================================================
             // RETAIN ONLY VALID TRAJECTORIES
@@ -3212,13 +3207,15 @@ final class LensingSceneController:
             // TRACE PHOTON THROUGH QRTL FIELD
             // --------------------------------------------------------
 
+    
             let trace =
                 tracer.tracePhoton(
                     origin: origin,
                     direction: direction,
-                    parameters: parameters
+                    parameters: parameters,
+                    sceneToPhysicalScale: 1.0
                 )
-
+            
             // --------------------------------------------------------
             // STORE TRACE
             // --------------------------------------------------------
