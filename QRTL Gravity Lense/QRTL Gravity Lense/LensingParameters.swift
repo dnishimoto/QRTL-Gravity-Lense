@@ -132,18 +132,18 @@ struct LensingParameters {
 
     init(
         targetPlaneZ: Float = 20.0,
-        maximumPhotonSteps: Int = 2000,
-           stepSize: Float = 0.01,
+        maximumPhotonSteps: Int = 100,
+           stepSize: Float = 0.1,
            maxRadius: Float = 20.0,
            projectionDistance: Float = 20.0,
            deflectionStrength: Float = 1.0,
         
-        maxSteps: Int = 2000,
+        maxSteps: Int = 100,
 
         projectionX: Float = 10.0,
         projectionPlaneHalfExtent: Float = 10.0,
 
-        maximumPhotonCount: Int = 10000,
+        maximumPhotonCount: Int = 1000,
 
         maximumPropagationRadius: Float = 20.0,
         photonStepSize: Float = 0.20,

@@ -97,56 +97,38 @@ final class QRTLHeatmapGenerator {
         halfExtent: Double
     ) -> UIImage {
 
-        let resolution =
-            max(
-                size,
-                64
-            )
+        let resolution = max(size, 64)
 
         guard halfExtent.isFinite,
-              halfExtent > 0.0
-        else {
+              halfExtent > 0.0 else {
             return makeEmptyHeatmap(
                 resolution: resolution
             )
         }
 
-        // ========================================================
-        // GET CURRENT RADIAL QRTL TABLE
-        // ========================================================
+        let table = field.radialGravityTable
 
-        let table =
-            field.radialGravityTable
-
-        guard table.count >= 2
-        else {
+        guard table.count >= 2 else {
             return makeEmptyHeatmap(
                 resolution: resolution
             )
         }
 
-        // ========================================================
-        // SAMPLE STORAGE
-        // ========================================================
-
-        var samples =
-            Array(
-                repeating:
-                    Array(
-                        repeating: 0.0,
-                        count: resolution
-                    ),
+        var samples = Array(
+            repeating: Array(
+                repeating: 0.0,
                 count: resolution
-            )
+            ),
+            count: resolution
+        )
 
         var maximum = 0.0
 
-        // ========================================================
-        // SAMPLE RADIAL QRTL FIELD
-        // ========================================================
+        // ============================================================
+        // SAMPLE PHYSICAL QRTL POTENTIAL
+        // ============================================================
 
         for j in 0..<resolution {
-
             for i in 0..<resolution {
 
                 let normalizedY =
@@ -169,72 +151,73 @@ final class QRTLHeatmapGenerator {
                     2.0 *
                     halfExtent
 
-                // ------------------------------------------------
-                // X = 0
-                //
-                // Therefore:
-                //
-                // r = sqrt(y² + z²)
-                //
-                // ------------------------------------------------
+                // X = 0 plane
+                let radius = sqrt(
+                    y * y +
+                    z * z
+                )
 
-                let radius =
-                    sqrt(
-                        y * y +
-                        z * z
-                    )
-
-                // ------------------------------------------------
-                // LOOK UP QRTL GRAVITY FROM TABLE
-                // ------------------------------------------------
-
-                let value =
+                let potential =
                     interpolateGravityTable(
                         table: table,
                         radius: radius
                     )
 
-                let safeValue: Double
-
-                if value.isFinite {
-
-                    safeValue =
-                        max(
-                            value,
-                            0.0
-                        )
-
-                } else {
-
-                    safeValue = 0.0
+                guard potential.isFinite else {
+                    samples[j][i] = 0.0
+                    continue
                 }
 
-                samples[j][i] =
-                    safeValue
+                // ====================================================
+                // POTENTIAL WELL DEPTH
+                // ====================================================
+                //
+                // Gravitational potentials are normally negative.
+                //
+                // Example:
+                //
+                //     -1000 → depth 1000
+                //      -100 → depth 100
+                //       -10  → depth 10
+                //
+                // This makes the center of the gravity well bright.
+                //
+                // abs() also keeps the visualization working if the
+                // QRTL implementation uses the opposite sign.
+                //
+                // ====================================================
 
-                maximum =
-                    max(
-                        maximum,
-                        safeValue
-                    )
+                let depth = abs(potential)
+
+                guard depth.isFinite else {
+                    samples[j][i] = 0.0
+                    continue
+                }
+
+                samples[j][i] = depth
+
+                maximum = max(
+                    maximum,
+                    depth
+                )
             }
         }
 
-        // ========================================================
+        // ============================================================
         // VALIDATE
-        // ========================================================
+        // ============================================================
 
         guard maximum.isFinite,
-              maximum > 0.0
-        else {
+              maximum > 0.0 else {
+
             return makeEmptyHeatmap(
                 resolution: resolution
             )
         }
 
-        // ========================================================
+        // ============================================================
         // CREATE IMAGE
-        // ========================================================
+        // ============================================================
 
         UIGraphicsBeginImageContextWithOptions(
             CGSize(
@@ -246,80 +229,62 @@ final class QRTLHeatmapGenerator {
         )
 
         guard let context =
-                UIGraphicsGetCurrentContext()
-        else {
+                UIGraphicsGetCurrentContext() else {
 
             UIGraphicsEndImageContext()
-
             return UIImage()
         }
 
-        // ========================================================
+        // ============================================================
         // DRAW
-        // ========================================================
+        // ============================================================
 
         for j in 0..<resolution {
-
             for i in 0..<resolution {
 
-                let raw =
-                    samples[j][i]
+                let raw = samples[j][i]
 
-                guard raw.isFinite
-                else {
+                guard raw.isFinite else {
                     continue
                 }
 
                 var normalized =
                     raw / maximum
 
-                normalized =
-                    min(
-                        max(
-                            normalized,
-                            0.0
-                        ),
-                        1.0
-                    )
+                normalized = min(
+                    max(
+                        normalized,
+                        0.0
+                    ),
+                    1.0
+                )
 
-                // ------------------------------------------------
-                // LOG CONTRAST
-                // ------------------------------------------------
+                // ====================================================
+                // LOGARITHMIC CONTRAST
+                // ====================================================
 
                 let contrast =
                     log10(
                         1.0 +
                         99.0 *
                         normalized
-                    )
-                    /
+                    ) /
                     log10(100.0)
 
-                let t =
-                    min(
-                        max(
-                            contrast,
-                            0.0
-                        ),
-                        1.0
-                    )
-
-                // ------------------------------------------------
-                // COLOR
-                // ------------------------------------------------
+                let t = min(
+                    max(
+                        contrast,
+                        0.0
+                    ),
+                    1.0
+                )
 
                 let color =
-                    colorForHeatmapValue(
-                        t
-                    )
+                    colorForHeatmapValue(t)
 
                 context.setFillColor(
                     color.cgColor
                 )
-
-                // ------------------------------------------------
-                // FLIP IMAGE Y
-                // ------------------------------------------------
 
                 context.fill(
                     CGRect(
@@ -334,10 +299,6 @@ final class QRTLHeatmapGenerator {
                 )
             }
         }
-
-        // ========================================================
-        // FINAL IMAGE
-        // ========================================================
 
         let image =
             UIGraphicsGetImageFromCurrentImageContext()

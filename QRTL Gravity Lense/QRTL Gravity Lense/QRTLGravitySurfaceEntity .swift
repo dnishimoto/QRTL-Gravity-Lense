@@ -200,36 +200,118 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         z: Float
     ) -> Float {
 
+        return physicalCurvatureHeight(
+            x: x,
+            z: z
+        )
+    }
+
+    // ============================================================
+    // PHYSICAL CURVATURE HEIGHT (FIXED SCALE — NOT NORMALIZED)
+    // ============================================================
+    //
+    // PREVIOUS BEHAVIOR (removed):
+    //
+    //     normalized = potential / maximumPotential   // self-relative
+    //     visualPotential = pow(normalized, 0.45)      // compresses contrast
+    //     height = -visualPotential * curvatureScale
+    //
+    // maximumPotential was always the CENTER sample itself (the
+    // potential is highest at r = 0 by construction), so the center
+    // vertex was pinned to exactly -curvatureScale on every rebuild
+    // regardless of how strong the underlying field actually was —
+    // increasing the physical well depth could never make the bowl
+    // visibly deeper. The pow(x, 0.45) curve then pulled distant,
+    // physically-weak points UP toward the same height as the
+    // center, flattening the bowl into a shallow, wide dish instead
+    // of a localized dip.
+    //
+    // FIXED APPROACH:
+    //
+    // Use the same fixed-scale linear mapping already proven correct
+    // for the heatmap/bottom-plane surface in
+    // LensingSceneController.addDeformedSpacetimeSurface — the
+    // standard weak-field relationship
+    //
+    //     curvature ∝ -2Φ/c²
+    //
+    // multiplied by a constant visual amplification factor, with NO
+    // division by any per-frame maximum. Absolute changes in Φ now
+    // translate directly into absolute changes in displayed height,
+    // and the falloff shape reflects the real density profile
+    // instead of being renormalized away.
+    // ============================================================
+
+    private func physicalCurvatureHeight(
+        x: Float,
+        z: Float
+    ) -> Float {
+
+        // --------------------------------------------------------
+        // SCENE → PHYSICAL
+        //
+        // Same canonical conversion QRTLPhotonTracer and
+        // samplePotentialMagnitude use: a scene-unit distance is a
+        // fraction of `extent`, which is a fraction of
+        // field.clusterRadiusMeters.
+        // --------------------------------------------------------
+
+        let metersPerSceneUnit =
+            Float(field.clusterRadiusMeters) /
+            extent
+
+        let physicalPosition =
+            SIMD3<Float>(
+                x * metersPerSceneUnit,
+                0.0,
+                z * metersPerSceneUnit
+            )
+
         let potential =
-            samplePotentialMagnitude(
-                x: x,
-                z: z
+            field.gravitationalPotential(
+                at: physicalPosition
             )
 
-        let normalization =
-            max(
-                maximumPotential,
-                1.0e-30
-            )
+        guard potential.isFinite else {
+            return 0.0
+        }
 
-        let normalized =
-            min(
-                max(
-                    potential / normalization,
-                    0.0
-                ),
-                1.0
-            )
+        let potentialValue =
+            Float(potential)
 
-        let visualPotential =
-            pow(
-                normalized,
-                0.45
-            )
+        guard potentialValue.isFinite else {
+            return 0.0
+        }
 
-        return
-            -visualPotential *
+        // --------------------------------------------------------
+        // WEAK-FIELD CURVATURE, FIXED VISUAL AMPLIFICATION
+        //
+        // Matches LensingSceneController.addDeformedSpacetimeSurface
+        // exactly, so the bowl mesh and the heatmap plane agree on
+        // what "deep" means.
+        // --------------------------------------------------------
+
+        let speedOfLightSquared: Float =
+            299_792_458.0 * 299_792_458.0
+
+        let visualizationHeightScale: Float =
+            1.0e6
+
+        let physicalCurvatureScale =
+            -2.0 *
+            visualizationHeightScale /
+            speedOfLightSquared
+
+        let height =
+            potentialValue *
+            physicalCurvatureScale *
             curvatureScale
+
+        guard height.isFinite else {
+            return 0.0
+        }
+
+        return height
     }
 
     // ============================================================
@@ -503,35 +585,25 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             potentialMagnitudes.count
         )
 
-        let normalization =
-            max(
-                maximumPotential,
-                1.0e-30
-            )
-
         // --------------------------------------------------------
         // CENTER VERTEX
+        //
+        // Height comes directly from the fixed-scale physical
+        // mapping (physicalCurvatureHeight) — NOT from
+        // centerPotential / maximumPotential. maximumPotential is
+        // still computed above because curvatureIntensity() (used
+        // for surface coloring) legitimately wants a relative
+        // 0...1 scale; but the center of a radially-decreasing
+        // potential is ALWAYS the maximum sample, so dividing the
+        // center's own height by that same maximum would pin it to
+        // 1.0 every time regardless of the field's real strength.
         // --------------------------------------------------------
 
-        let centerNormalized =
-            min(
-                max(
-                    centerPotential /
-                    normalization,
-                    0.0
-                ),
-                1.0
-            )
-
-        let centerVisualPotential =
-            pow(
-                centerNormalized,
-                0.45
-            )
-
         let centerY =
-            -centerVisualPotential *
-            curvatureScale
+            physicalCurvatureHeight(
+                x: 0.0,
+                z: 0.0
+            )
 
         positions.append(
             SCNVector3(
@@ -544,8 +616,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         // --------------------------------------------------------
         // RING VERTICES
         // --------------------------------------------------------
-
-        var potentialIndex = 1
 
         for radialIndex in 1...radialSegments {
 
@@ -616,27 +686,21 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     radius *
                     sin(angle)
 
-                let normalizedPotential =
-                    min(
-                        max(
-                            potentialMagnitudes[
-                                potentialIndex
-                            ] /
-                            normalization,
-                            0.0
-                        ),
-                        1.0
-                    )
-
-                let visualPotential =
-                    pow(
-                        normalizedPotential,
-                        0.45
-                    )
+                // ------------------------------------------------
+                // RING VERTEX HEIGHT
+                //
+                // Same fixed-scale physical mapping as the center
+                // vertex — no per-frame normalization, no
+                // contrast-flattening pow() curve. rimFade is kept:
+                // it's an intentional edge taper, not part of the
+                // normalization bug.
+                // ------------------------------------------------
 
                 let y =
-                    -visualPotential *
-                    curvatureScale *
+                    physicalCurvatureHeight(
+                        x: x,
+                        z: z
+                    ) *
                     rimFade
 
                 positions.append(
@@ -646,8 +710,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                         z
                     )
                 )
-
-                potentialIndex += 1
             }
         }
 
