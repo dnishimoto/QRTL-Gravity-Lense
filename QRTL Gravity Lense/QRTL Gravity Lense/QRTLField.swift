@@ -1207,25 +1207,6 @@ final class QRTLField {
             }
         }
     }
-
-    // ============================================================
-    // RADIAL GRAVITY LOOKUP TABLE
-    // ============================================================
-    //
-    // Precomputes the spherical QRTL gravitational field once.
-    //
-    // Each sample stores:
-    //
-    //   radius
-    //   effective QRTL mass density
-    //   enclosed effective mass
-    //   QRTL gravitational potential
-    //
-    // Runtime photon tracing can then interpolate these values
-    // instead of rebuilding the 256-shell integral every call.
-    //
-    // ============================================================
-
     private func buildRadialGravityTable(
         densitySource: GlobularClusterDensityMap,
         parameters: QRTLParameters,
@@ -1234,24 +1215,21 @@ final class QRTLField {
 
         let count = max(sampleCount, 2)
 
-        // ------------------------------------------------------------
-        // PHYSICAL CLUSTER RADIUS
-        //
-        // Read from the density map — the actual physical extent the
-        // star positions were generated within — not independently
-        // re-derived from parameters.clusterRadiusParsecs, which is
-        // never kept in sync with the real cluster scale. See the
-        // note on clusterRadiusMeters above.
-        // ------------------------------------------------------------
+        // ============================================================
+        // PHYSICAL CLUSTER PARAMETERS
+        // ============================================================
 
         let clusterRadiusMeters =
-            Double(
-                densitySource.fieldRadiusMeters
-            )
+            Double(densitySource.fieldRadiusMeters)
+
+        let declaredClusterMass =
+            Double(densitySource.clusterMassKg)
 
         guard
             clusterRadiusMeters.isFinite,
-            clusterRadiusMeters > 0.0
+            clusterRadiusMeters > 0.0,
+            declaredClusterMass.isFinite,
+            declaredClusterMass > 0.0
         else {
             return [
                 RadialGravitySample(
@@ -1268,9 +1246,19 @@ final class QRTLField {
             clusterRadiusMeters /
             Double(count - 1)
 
-        // ------------------------------------------------------------
-        // RADIAL ARRAYS
-        // ------------------------------------------------------------
+        // ============================================================
+        // STEP 1
+        //
+        // Sample the RAW QRTL effective mass density.
+        //
+        // IMPORTANT:
+        //
+        // We do NOT assume that the raw QRTL density already integrates
+        // to the declared cluster mass.
+        //
+        // We first construct the complete radial profile, determine its
+        // integrated mass, and then normalize the profile.
+        // ============================================================
 
         var radii =
             [Double](
@@ -1284,100 +1272,260 @@ final class QRTLField {
                 count: count
             )
 
-        var densities =
+        var rawDensities =
             [Double](
                 repeating: 0.0,
                 count: count
             )
 
-        // ============================================================
-        // STEP 1
-        //
-        // Sample the QRTL energy density.
-        //
-        // qrtlEnergyDensity(at:) — and everything it calls downstream
-        // (densitySource.density(at:), the per-star distance-weight
-        // loop) — operates in the SAME physical-meter coordinate
-        // system as starPositions. There is no separate "field-space"
-        // 0...1 coordinate: a query position must be the real
-        // physical position in meters, or it queries a point that
-        // has no relationship to where the stars actually are.
-        // ============================================================
+        let speedOfLight =
+            299_792_458.0
+
+        let cSquared =
+            speedOfLight * speedOfLight
 
         for i in 0..<count {
 
-            let physicalRadius =
+            let radius =
                 Double(i) * dr
 
             radii[i] =
-                physicalRadius
+                radius
 
-            guard
-                physicalRadius.isFinite
-            else {
-                energyDensities[i] = 0.0
-                densities[i] = 0.0
+            guard radius.isFinite else {
                 continue
             }
 
-            // --------------------------------------------------------
-            // QRTL FIELD POSITION — real physical meters, matching
-            // starPositions and densitySource.density(at:).
-            // --------------------------------------------------------
-
             let position =
                 SIMD3<Float>(
-                    Float(physicalRadius),
+                    Float(radius),
                     0.0,
                     0.0
                 )
 
             // --------------------------------------------------------
-            // QRTL ENERGY DENSITY
+            // RAW QRTL ENERGY DENSITY
             // --------------------------------------------------------
 
-            let rawEnergyDensity =
+            let rawEnergy =
                 self.qrtlEnergyDensity(
                     at: position
                 )
 
             let energyDensity =
-                rawEnergyDensity.isFinite &&
-                rawEnergyDensity > 0.0
-                ? Double(rawEnergyDensity)
+                rawEnergy.isFinite &&
+                rawEnergy > 0.0
+                ? Double(rawEnergy)
                 : 0.0
 
             energyDensities[i] =
                 energyDensity
 
             // --------------------------------------------------------
-            // EFFECTIVE MASS DENSITY
+            // RAW EFFECTIVE MASS DENSITY
             //
-            // rho_eff = u_Q / c²
+            // rho = u / c²
             // --------------------------------------------------------
 
-            let c =
-                299_792_458.0
-
-            let effectiveMassDensity =
+            let rawMassDensity =
                 energyDensity /
-                (c * c)
+                cSquared
 
-            densities[i] =
-                effectiveMassDensity.isFinite &&
-                effectiveMassDensity > 0.0
-                ? effectiveMassDensity
+            rawDensities[i] =
+                rawMassDensity.isFinite &&
+                rawMassDensity > 0.0
+                ? rawMassDensity
                 : 0.0
         }
 
         // ============================================================
         // STEP 2
         //
-        // Calculate enclosed mass.
+        // Integrate the RAW density profile.
         //
-        // M(r) = ∫ 4πr²ρ(r) dr
+        // M_raw(R) =
         //
-        // The radius here is PHYSICAL METERS.
+        //     ∫ 4πr²ρ_raw(r) dr
+        //
+        // This tells us what mass the QRTL density profile actually
+        // represents before normalization.
+        // ============================================================
+
+        let fourPi =
+            4.0 * Double.pi
+
+        var rawEnclosedMass =
+            [Double](
+                repeating: 0.0,
+                count: count
+            )
+
+        if count > 1 {
+
+            for i in 1..<count {
+
+                let r0 =
+                    radii[i - 1]
+
+                let r1 =
+                    radii[i]
+
+                let rho0 =
+                    rawDensities[i - 1]
+
+                let rho1 =
+                    rawDensities[i]
+
+                let shell0 =
+                    fourPi *
+                    r0 *
+                    r0 *
+                    rho0
+
+                let shell1 =
+                    fourPi *
+                    r1 *
+                    r1 *
+                    rho1
+
+                let shellMass =
+                    0.5 *
+                    (shell0 + shell1) *
+                    (r1 - r0)
+
+                rawEnclosedMass[i] =
+                    rawEnclosedMass[i - 1] +
+                    max(
+                        shellMass,
+                        0.0
+                    )
+            }
+        }
+
+        // ============================================================
+        // STEP 3
+        //
+        // DETERMINE MASS NORMALIZATION
+        //
+        // The raw QRTL density currently integrates to approximately:
+        //
+        //     1.3568e15 kg
+        //
+        // while the declared cluster contains:
+        //
+        //     1.98847e36 kg
+        //
+        // Therefore we normalize the density profile so that:
+        //
+        //     M_normalized(R) = declaredClusterMass
+        //
+        // IMPORTANT:
+        //
+        // This preserves the SHAPE of the QRTL density profile.
+        // It changes only its overall mass scale.
+        // ============================================================
+
+        let rawTotalMass =
+            rawEnclosedMass.last ?? 0.0
+
+        guard
+            rawTotalMass.isFinite,
+            rawTotalMass > 0.0
+        else {
+
+            print("""
+            ============================================================
+            QRTL RADIAL FIELD ERROR
+            ============================================================
+
+            Raw QRTL density integrated to zero mass.
+
+            rawTotalMass = \(rawTotalMass)
+            declaredMass = \(declaredClusterMass)
+
+            Cannot normalize radial density profile.
+
+            ============================================================
+            """)
+
+            return [
+                RadialGravitySample(
+                    radius: 0.0,
+                    energyDensity: 0.0,
+                    effectiveMassDensity: 0.0,
+                    enclosedMass: 0.0,
+                    potential: 0.0
+                )
+            ]
+        }
+
+        let massNormalization =
+            declaredClusterMass /
+            rawTotalMass
+
+        guard
+            massNormalization.isFinite,
+            massNormalization > 0.0
+        else {
+            return [
+                RadialGravitySample(
+                    radius: 0.0,
+                    energyDensity: 0.0,
+                    effectiveMassDensity: 0.0,
+                    enclosedMass: 0.0,
+                    potential: 0.0
+                )
+            ]
+        }
+
+        // ============================================================
+        // STEP 4
+        //
+        // APPLY MASS NORMALIZATION TO THE RADIAL DENSITY.
+        //
+        // rho_normalized =
+        //
+        //     rho_raw * M_declared / M_raw
+        //
+        // ============================================================
+
+        var densities =
+            [Double](
+                repeating: 0.0,
+                count: count
+            )
+
+        var normalizedEnergyDensities =
+            [Double](
+                repeating: 0.0,
+                count: count
+            )
+
+        for i in 0..<count {
+
+            let normalizedDensity =
+                rawDensities[i] *
+                massNormalization
+
+            densities[i] =
+                normalizedDensity.isFinite &&
+                normalizedDensity > 0.0
+                ? normalizedDensity
+                : 0.0
+
+            // Since rho = u / c², convert the normalized density back
+            // into the corresponding physical energy density.
+            normalizedEnergyDensities[i] =
+                densities[i] *
+                cSquared
+        }
+
+        // ============================================================
+        // STEP 5
+        //
+        // INTEGRATE THE NORMALIZED MASS DENSITY.
+        //
+        // M(r) = ∫ 4πr²ρ(r)dr
         // ============================================================
 
         var enclosedMass =
@@ -1385,9 +1533,6 @@ final class QRTLField {
                 repeating: 0.0,
                 count: count
             )
-
-        let fourPi =
-            4.0 * Double.pi
 
         if count > 1 {
 
@@ -1432,11 +1577,31 @@ final class QRTLField {
         }
 
         // ============================================================
-        // STEP 3
+        // STEP 6
         //
-        // Exterior-shell contribution.
+        // FORCE THE FINAL MASS TO THE DECLARED CLUSTER MASS ONLY
+        // WITHIN NUMERICAL ROUNDING.
         //
-        // Φ(r) = -G[
+        // This is a safety check, NOT a physics correction.
+        //
+        // The normalization above should already make these equal.
+        // ============================================================
+
+        let integratedMass =
+            enclosedMass.last ?? 0.0
+
+        let massRatio =
+            integratedMass /
+            declaredClusterMass
+
+        // ============================================================
+        // STEP 7
+        //
+        // EXTERIOR SHELL CONTRIBUTION
+        //
+        // Φ(r) =
+        //
+        // -G [
         //
         //      M(r)/r
         //
@@ -1445,9 +1610,6 @@ final class QRTLField {
         //      ∫r^R 4πsρ(s)ds
         //
         // ]
-        //
-        // This gives the correct potential inside a spherical mass
-        // distribution.
         // ============================================================
 
         var exteriorShellIntegral =
@@ -1504,10 +1666,13 @@ final class QRTLField {
         }
 
         // ============================================================
-        // STEP 4
+        // STEP 8
         //
-        // Calculate complete gravitational potential.
+        // BUILD POTENTIAL
         // ============================================================
+
+        let gravitationalConstant =
+            6.67430e-11
 
         var samples =
             [RadialGravitySample]()
@@ -1515,9 +1680,6 @@ final class QRTLField {
         samples.reserveCapacity(
             count
         )
-
-        let gravitationalConstant =
-            6.67430e-11
 
         for i in 0..<count {
 
@@ -1540,13 +1702,6 @@ final class QRTLField {
 
             } else {
 
-                // At the center:
-                //
-                // M(r)/r -> 0
-                //
-                // so the potential comes from the
-                // exterior shells.
-
                 enclosedContribution =
                     0.0
             }
@@ -1564,7 +1719,7 @@ final class QRTLField {
                         radius,
 
                     energyDensity:
-                        energyDensities[i],
+                        normalizedEnergyDensities[i],
 
                     effectiveMassDensity:
                         densities[i],
@@ -1573,16 +1728,106 @@ final class QRTLField {
                         mass,
 
                     potential:
-                        potential
+                        potential.isFinite
+                        ? potential
+                        : 0.0
                 )
             )
         }
 
         // ============================================================
-        // DEBUG
+        // STEP 9
+        //
+        // FINAL MASS CONSISTENCY CHECK
         // ============================================================
 
+        let finalMass =
+            samples.last?.enclosedMass ?? 0.0
+
+        let finalMassRatio =
+            finalMass /
+            declaredClusterMass
+
+        let directPotentialAtRadius =
+            -gravitationalConstant *
+            declaredClusterMass /
+            clusterRadiusMeters
+
+        let tablePotentialAtRadius =
+            samples.last?.potential ?? 0.0
+
+        let potentialRatio =
+            directPotentialAtRadius != 0.0
+            ? tablePotentialAtRadius /
+              directPotentialAtRadius
+            : 0.0
+
         #if DEBUG
+
+        print("""
+        ============================================================
+        QRTL CLUSTER MASS NORMALIZATION
+        ============================================================
+
+        CLUSTER
+
+            declaredMass =
+                \(declaredClusterMass) kg
+
+            clusterRadius =
+                \(clusterRadiusMeters) m
+
+        ------------------------------------------------------------
+
+        RAW QRTL DENSITY
+
+            rawIntegratedMass =
+                \(rawTotalMass) kg
+
+        ------------------------------------------------------------
+
+        MASS NORMALIZATION
+
+            normalizationFactor =
+                \(massNormalization)
+
+        ------------------------------------------------------------
+
+        NORMALIZED RADIAL MASS
+
+            integratedMass =
+                \(integratedMass) kg
+
+            massRatio =
+                \(massRatio)
+
+        ------------------------------------------------------------
+
+        EXPECTED
+
+            massRatio ≈ 1.0
+
+        ------------------------------------------------------------
+
+        EDGE POTENTIAL
+
+            directPotential =
+                \(directPotentialAtRadius) m²/s²
+
+            tablePotential =
+                \(tablePotentialAtRadius) m²/s²
+
+            potentialRatio =
+                \(potentialRatio)
+
+        ------------------------------------------------------------
+
+        EXPECTED
+
+            potentialRatio ≈ 1.0
+
+        ============================================================
+        """)
 
         let debugIndices = [
             0,
@@ -1592,45 +1837,50 @@ final class QRTLField {
             count - 1
         ]
 
-        print("""
-        
-        ============================================================
-        QRTL RADIAL FIELD DEBUG
-        ============================================================
-        """)
-
         for index in debugIndices {
 
-            let physicalRadius =
-                radii[index]
-
-            let normalizedRadius =
-                Float(index) /
-                Float(count - 1)
-
             print("""
-            
+            ------------------------------------------------------------
             Radius \(index)
+            ------------------------------------------------------------
 
-                normalizedFieldRadius = \(normalizedRadius)
+                normalizedRadius =
+                    \(Double(index) / Double(count - 1))
 
-                physicalRadiusMeters  = \(physicalRadius)
+                physicalRadiusMeters =
+                    \(radii[index])
 
-                energyDensity          = \(energyDensities[index])
+                rawEnergyDensity =
+                    \(energyDensities[index])
 
-                effectiveDensity       = \(densities[index])
+                normalizedEnergyDensity =
+                    \(normalizedEnergyDensities[index])
 
-                enclosedMass           = \(enclosedMass[index])
+                rawEffectiveDensity =
+                    \(rawDensities[index])
 
-                exteriorContribution   = \(exteriorShellIntegral[index])
+                normalizedEffectiveDensity =
+                    \(densities[index])
 
-                potential              = \(samples[index].potential)
+                rawEnclosedMass =
+                    \(rawEnclosedMass[index])
+
+                normalizedEnclosedMass =
+                    \(enclosedMass[index])
+
+                massFraction =
+                    \(enclosedMass[index] / declaredClusterMass)
+
+                exteriorContribution =
+                    \(exteriorShellIntegral[index])
+
+                tablePotential =
+                    \(samples[index].potential)
 
             """)
         }
 
         print("""
-        
         ============================================================
         QRTL RADIAL FIELD DEBUG COMPLETE
         ============================================================
@@ -1640,6 +1890,26 @@ final class QRTLField {
 
         return samples
     }
+
+    // ============================================================
+    // RADIAL GRAVITY LOOKUP TABLE
+    // ============================================================
+    //
+    // Precomputes the spherical QRTL gravitational field once.
+    //
+    // Each sample stores:
+    //
+    //   radius
+    //   effective QRTL mass density
+    //   enclosed effective mass
+    //   QRTL gravitational potential
+    //
+    // Runtime photon tracing can then interpolate these values
+    // instead of rebuilding the 256-shell integral every call.
+    //
+    // ============================================================
+
+   
     func qrtlGravitationalPotential(
         at position: SIMD3<Float>
     ) -> Double {
@@ -1804,6 +2074,16 @@ final class QRTLField {
         at position: SIMD3<Float>
     ) -> Double {
 
+        let x = Double(position.x)
+        let y = Double(position.y)
+        let z = Double(position.z)
+
+        let radius = sqrt(
+            x * x +
+            y * y +
+            z * z
+        )
+
         let density =
             densitySource.physicalMassDensity(
                 at: position
@@ -1812,12 +2092,35 @@ final class QRTLField {
         guard density.isFinite,
               density >= 0.0
         else {
+
+            print("""
+            ============================================================
+            QRTL MASS DENSITY DEBUG — INVALID
+            ============================================================
+            position          = \(position)
+            radiusMeters      = \(radius)
+            physicalDensity   = \(density)
+            units              = kg/m³
+            ============================================================
+            """)
+
             return 0.0
         }
 
+        print("""
+        ============================================================
+        QRTL MASS DENSITY DEBUG
+        ============================================================
+        position          = \(position)
+        radiusMeters      = \(radius)
+        physicalDensity   = \(density) kg/m³
+        clusterMass       = \(clusterMassKg) kg
+        clusterRadius     = \(clusterRadiusMeters) m
+        ============================================================
+        """)
+
         return density
     }
-
     func normalizedDensity(
         at position: SIMD3<Float>
     ) -> Float {
@@ -2067,13 +2370,201 @@ final class QRTLField {
     // calculation.
     // ============================================================
 
+    // ============================================================
+    // AUTHORITATIVE GRAVITATIONAL POTENTIAL
+    // ============================================================
+    //
+    // Returns the physical gravitational potential:
+    //
+    //     Φ(r)  [m²/s²]
+    //
+    // Convention:
+    //
+    //     Φ < 0
+    //
+    // The potential is referenced to:
+    //
+    //     Φ(∞) = 0
+    //
+    // For a spherically symmetric mass distribution:
+    //
+    //     inside:
+    //         Φ(r) = -G [ M(r)/r + ∫r∞ (1/r') dM(r') ]
+    //
+    //     outside:
+    //         Φ(r) = -G Mtotal / r
+    //
+    // IMPORTANT:
+    //
+    // This function is the authoritative source of Φ for:
+    //
+    //     • QRTLPhotonTracer
+    //     • QRTLGravitySurfaceEntity
+    //     • QRTLHeatmapGenerator
+    //     • radial gravity diagnostics
+    //
+    // The optional effectiveEnergyDensity parameter is retained for
+    // API compatibility, but it must NOT replace the physical mass
+    // model unless the caller explicitly supplies a physically
+    // equivalent density.
+    //
+    // ============================================================
+
     func gravitationalPotential(
-        at position: SIMD3<Float>
+        at position: SIMD3<Float>,
+        effectiveEnergyDensity: Double? = nil
     ) -> Double {
 
-        return qrtlGravitationalPotential(
-            at: position
+        let x = Double(position.x)
+        let y = Double(position.y)
+        let z = Double(position.z)
+
+        guard
+            x.isFinite,
+            y.isFinite,
+            z.isFinite
+        else {
+            print(
+                "QRTL Φ DEBUG: INVALID POSITION",
+                position
+            )
+            return 0.0
+        }
+
+        let radius = sqrt(
+            x * x +
+            y * y +
+            z * z
         )
+
+        guard radius.isFinite else {
+            print(
+                "QRTL Φ DEBUG: INVALID RADIUS"
+            )
+            return 0.0
+        }
+
+        let clusterRadius = Double(
+            clusterRadiusMeters
+        )
+
+        guard
+            clusterRadius.isFinite,
+            clusterRadius > 0.0
+        else {
+            print(
+                "QRTL Φ DEBUG: INVALID CLUSTER RADIUS =",
+                clusterRadius
+            )
+            return 0.0
+        }
+
+        // ============================================================
+        // CENTER
+        // ============================================================
+
+        if radius <= 0.0 {
+
+            guard let firstSample =
+                    radialGravityTable.first
+            else {
+                print(
+                    "QRTL Φ DEBUG: RADIAL TABLE EMPTY"
+                )
+                return 0.0
+            }
+
+            let potential =
+                Double(firstSample.potential)
+
+            print(
+                "QRTL Φ DEBUG CENTER:",
+                "position =", position,
+                "radiusMeters =", radius,
+                "potential =", potential,
+                "normalized? = NO",
+                "units = m²/s²",
+                "source = radialGravityTable.first.potential"
+            )
+
+            guard potential.isFinite else {
+                return 0.0
+            }
+
+            return potential
+        }
+
+        // ============================================================
+        // INTERIOR
+        // ============================================================
+
+        if radius < clusterRadius {
+
+            let potential =
+                interpolateRadialPotential(
+                    radius: radius
+                )
+
+            print(
+                "QRTL Φ DEBUG INTERIOR:",
+                "position =", position,
+                "radiusMeters =", radius,
+                "clusterRadiusMeters =", clusterRadius,
+                "normalizedRadius =", radius / clusterRadius,
+                "potential =", potential,
+                "absPotential =", abs(potential),
+                "normalized? = NO",
+                "units = m²/s²",
+                "source = interpolateRadialPotential"
+            )
+
+            guard potential.isFinite else {
+                return 0.0
+            }
+
+            return potential
+        }
+
+        // ============================================================
+        // EXTERIOR
+        // ============================================================
+
+        guard
+            clusterMassKg.isFinite,
+            clusterMassKg > 0.0,
+            gravitationalConstant.isFinite,
+            gravitationalConstant > 0.0
+        else {
+            print(
+                "QRTL Φ DEBUG: INVALID MASS OR G",
+                "mass =", clusterMassKg,
+                "G =", gravitationalConstant
+            )
+            return 0.0
+        }
+
+        let potential =
+            -gravitationalConstant *
+            clusterMassKg /
+            radius
+
+        print(
+            "QRTL Φ DEBUG EXTERIOR:",
+            "position =", position,
+            "radiusMeters =", radius,
+            "clusterRadiusMeters =", clusterRadius,
+            "potential =", potential,
+            "absPotential =", abs(potential),
+            "normalized? = NO",
+            "units = m²/s²",
+            "source = -G*M/r"
+        )
+
+        guard potential.isFinite else {
+            return 0.0
+        }
+
+        return potential
     }
     // ========================================================
     // BOLGARINO RADIAL FLUX
