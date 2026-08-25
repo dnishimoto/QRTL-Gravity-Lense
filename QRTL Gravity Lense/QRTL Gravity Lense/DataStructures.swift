@@ -12,10 +12,48 @@ import SwiftUI
 struct MetersPerSceneUnit {
     /// The number of physical meters per SceneKit scene unit.
     ///
-    /// CHANGE THIS VALUE to match your actual visualization geometry.
-    /// For most visualizations, this should be:
-    ///     physical cluster radius (meters) / surface grid extent (scene units)
-    static let value: Double = 1.0e9 // Placeholder: replace with the correct scale for your scene
+    /// THIS IS THE SINGLE AUTHORITATIVE SCENE↔PHYSICAL CONVERSION.
+    /// Every place in the project that needs to turn a SceneKit
+    /// coordinate into a physical (meters) coordinate — or back —
+    /// should go through this struct rather than computing its own
+    /// ratio inline. That was the actual bug behind the
+    /// "6.2 m radius" debug output: SceneKit coordinates were being
+    /// treated as meters directly in some code paths, with no
+    /// conversion applied at all.
+    ///
+    /// `value` is NOT a fixed guess. It is derived once, at scene
+    /// build time, from the two quantities that actually define the
+    /// mapping:
+    ///
+    ///     value = physical cluster radius (meters)
+    ///             / surface grid extent (scene units)
+    ///
+    /// Call `configure(clusterRadiusMeters:extentSceneUnits:)` as
+    /// soon as both of those are known (QRTLGravitySurfaceEntity
+    /// does this in its initializer) before reading `value` or
+    /// calling the conversion helpers below.
+    private(set) static var value: Double = 1.0
+
+    private(set) static var isConfigured: Bool = false
+
+    /// Establishes the single authoritative scene↔physical mapping
+    /// from the actual runtime cluster radius and the actual scene
+    /// extent the surface is drawn at — not a hardcoded placeholder.
+    static func configure(
+        clusterRadiusMeters: Double,
+        extentSceneUnits: Double
+    ) {
+        guard clusterRadiusMeters.isFinite,
+              clusterRadiusMeters > 0.0,
+              extentSceneUnits.isFinite,
+              extentSceneUnits > 0.0
+        else {
+            return
+        }
+
+        value = clusterRadiusMeters / extentSceneUnits
+        isConfigured = true
+    }
 
     /// Convert SceneKit units (Float) to physical meters (Double).
     static func sceneUnitsToMeters(_ sceneUnits: Float) -> Double {

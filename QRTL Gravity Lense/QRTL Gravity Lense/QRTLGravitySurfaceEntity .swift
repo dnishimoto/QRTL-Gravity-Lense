@@ -30,7 +30,16 @@ import UIKit
 
 final class QRTLGravitySurfaceEntity: SCNNode {
 
-    private let metersPerSceneUnit = MetersPerSceneUnit.value
+    // ============================================================
+    // AUTHORITATIVE SCENE↔PHYSICAL CONVERSION
+    // ============================================================
+    //
+    // Configured in init() from the real field.clusterRadiusMeters
+    // and the real extent this surface is drawn at — NOT read as a
+    // stale snapshot of the (potentially still-default) placeholder.
+    // Every meters conversion in this file should go through
+    // MetersPerSceneUnit rather than computing its own ratio.
+    // ============================================================
 
     // ============================================================
     // AUTHORITATIVE PHYSICS
@@ -106,6 +115,20 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             0.0001
         )
 
+        // ========================================================
+        // CONFIGURE THE AUTHORITATIVE SCENE↔PHYSICAL CONVERSION
+        //
+        // Must happen before buildScene() runs, since
+        // samplePotentialMagnitude() (called during the mesh/color
+        // build) now reads through MetersPerSceneUnit instead of
+        // computing its own ratio inline.
+        // ========================================================
+
+        MetersPerSceneUnit.configure(
+            clusterRadiusMeters: Double(field.clusterRadiusMeters),
+            extentSceneUnits: Double(self.extent)
+        )
+
         super.init()
 
         buildScene(
@@ -173,19 +196,23 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 z * z
             )
 
-        let normalizedRadius =
+        // Clamp in SCENE-UNIT space first (never sample past the
+        // mesh's own edge), then hand off to the single authoritative
+        // conversion instead of computing (displayRadius / extent) *
+        // clusterRadiusMeters inline here.
+        let clampedDisplayRadius =
             min(
                 max(
-                    displayRadius / extent,
+                    displayRadius,
                     0.0
                 ),
-                1.0
+                extent
             )
 
-        // SceneKit units → physical meters
         let physicalRadius =
-            Double(normalizedRadius) *
-            Double(field.clusterRadiusMeters)
+            MetersPerSceneUnit.sceneUnitsToMeters(
+                clampedDisplayRadius
+            )
 
         let potential =
             field.interpolateRadialPotential(
@@ -917,7 +944,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // Example usage:
     //
     // let scenePosition = SIMD3<Float>(x, 0.0, z)
-    // let positionMeters = scenePosition * Float(metersPerSceneUnit) // SceneKit units → physical meters
+    // let positionMeters = SIMD3<Float>(
+    //     Float(MetersPerSceneUnit.sceneUnitsToMeters(scenePosition.x)),
+    //     Float(MetersPerSceneUnit.sceneUnitsToMeters(scenePosition.y)),
+    //     Float(MetersPerSceneUnit.sceneUnitsToMeters(scenePosition.z))
+    // )
     //
     // Then pass positionMeters to field queries:
     //
