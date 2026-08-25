@@ -89,6 +89,39 @@
 // surface.
 //
 
+//
+//  QRTLHeatmapGenerator.swift
+//  QRTL Gravity Lense
+//
+//  Visualization-only renderer of the authoritative QRTL
+//  gravitational potential.
+//
+//  PHYSICS PIPELINE
+//
+//      QRTLField
+//          ↓
+//      gravitationalPotential(at:)
+//          ↓
+//      Φ [m²/s²]
+//          ↓
+//      |Φ|
+//          ↓
+//      visualization normalization
+//          ↓
+//      heatmap color
+//
+//  IMPORTANT:
+//
+//  This module does NOT calculate gravity.
+//
+//  This module does NOT calculate curvature.
+//
+//  This module does NOT calculate photon bending.
+//
+//  This module only visualizes the authoritative physical
+//  gravitational potential supplied by QRTLField.
+//
+
 import Foundation
 import UIKit
 import simd
@@ -103,18 +136,22 @@ final class QRTLHeatmapGenerator {
     // MAKE QRTL GRAVITY POTENTIAL HEATMAP
     // ============================================================
     //
-    // The returned image represents the magnitude of the
-    // authoritative QRTL gravitational potential:
+    // The image represents:
     //
-    //              Φ(x)
+    //                  |Φ|
     //
-    // The heatmap color represents:
+    // where Φ is the authoritative physical QRTL gravitational
+    // potential returned by:
     //
-    //              |Φ|
+    //      field.gravitationalPotential(at:)
     //
-    // It does NOT alter the physical potential.
+    // Φ remains signed and physical.
     //
-    // It is visualization only.
+    // The absolute value is used ONLY for visualization.
+    //
+    // Units of Φ:
+    //
+    //      m² / s²
     //
     // ============================================================
 
@@ -128,11 +165,7 @@ final class QRTLHeatmapGenerator {
         // RESOLUTION
         // --------------------------------------------------------
 
-        let resolution =
-            max(
-                size,
-                64
-            )
+        let resolution = max(size, 64)
 
         // --------------------------------------------------------
         // VALIDATE DISPLAY EXTENT
@@ -142,14 +175,13 @@ final class QRTLHeatmapGenerator {
             halfExtent.isFinite,
             halfExtent > 0.0
         else {
-
             return makeEmptyHeatmap(
                 resolution: resolution
             )
         }
 
         // --------------------------------------------------------
-        // VALIDATE PHYSICAL CLUSTER RADIUS
+        // VALIDATE FIELD RADIUS
         // --------------------------------------------------------
 
         let clusterRadiusMeters =
@@ -171,31 +203,41 @@ final class QRTLHeatmapGenerator {
         }
 
         // ========================================================
-        // CANONICAL SCENE → PHYSICAL CONVERSION
+        // PHYSICAL DISPLAY EXTENT
         // ========================================================
         //
-        // This is the SAME relationship used by
-        // QRTLGravitySurfaceEntity.physicalCurvatureHeight().
+        // IMPORTANT:
         //
-        // Example:
+        // halfExtent is interpreted as the physical radial extent
+        // in units of the cluster radius.
         //
-        // extent = 2 scene units
-        // clusterRadius = R meters
+        // Therefore:
         //
-        // therefore:
+        //      halfExtent = 1.0
         //
-        // 1 scene unit = R / 2 meters
+        // means:
+        //
+        //      -R ... +R
+        //
+        // across each displayed transverse axis.
+        //
+        // This preserves the same physical coordinate convention
+        // used by the field and photon tracer.
         //
         // ========================================================
 
-        let metersPerSceneUnit =
-            clusterRadiusMeters /
-            Double(halfExtent)
+        let physicalHalfExtent =
+            clusterRadiusMeters * halfExtent
 
         guard
-            metersPerSceneUnit.isFinite,
-            metersPerSceneUnit > 0.0
+            physicalHalfExtent.isFinite,
+            physicalHalfExtent > 0.0
         else {
+
+            print(
+                "QRTL HEATMAP: invalid physicalHalfExtent =",
+                physicalHalfExtent
+            )
 
             return makeEmptyHeatmap(
                 resolution: resolution
@@ -216,28 +258,24 @@ final class QRTLHeatmapGenerator {
                 count: resolution
             )
 
-        var maximumDepth =
-            0.0
-
+        var maximumDepth = 0.0
         var minimumDepth =
             Double.greatestFiniteMagnitude
 
         // ========================================================
-        // SAMPLE AUTHORITATIVE QRTL POTENTIAL
+        // SAMPLE AUTHORITATIVE PHYSICAL POTENTIAL
         // ========================================================
         //
-        // IMPORTANT:
+        // The heatmap samples the exact same physical potential
+        // function used elsewhere in the QRTL architecture.
         //
-        // We deliberately do NOT use radialGravityTable here.
+        // No radial table is reconstructed here.
         //
-        // We sample:
+        // No gravitational acceleration is calculated here.
         //
-        //     field.gravitationalPotential(at:)
+        // No normalized density is used.
         //
-        // directly.
-        //
-        // This guarantees that the heatmap is visualizing the
-        // same potential used by QRTLGravitySurfaceEntity.
+        // No "influence" value is used.
         //
         // ========================================================
 
@@ -246,60 +284,41 @@ final class QRTLHeatmapGenerator {
             for i in 0..<resolution {
 
                 // ------------------------------------------------
-                // NORMALIZED DISPLAY COORDINATES
+                // NORMALIZED IMAGE COORDINATES
                 // ------------------------------------------------
 
                 let normalizedY =
-                    (
-                        Double(i) + 0.5
-                    ) /
+                    (Double(i) + 0.5) /
                     Double(resolution)
 
                 let normalizedZ =
-                    (
-                        Double(j) + 0.5
-                    ) /
+                    (Double(j) + 0.5) /
                     Double(resolution)
 
                 // ------------------------------------------------
-                // SCENE-SPACE COORDINATES
-                // ------------------------------------------------
-
-                let sceneY =
-                    -halfExtent +
-                    normalizedY *
-                    2.0 *
-                    halfExtent
-
-                let sceneZ =
-                    -halfExtent +
-                    normalizedZ *
-                    2.0 *
-                    halfExtent
-
-                // ------------------------------------------------
-                // SCENE → PHYSICAL METERS
-                //
-                // The heatmap is the X = 0 plane.
-                //
-                // This matches the gravity surface's physical
-                // coordinate construction:
-                //
-                // SIMD3<Float>(
-                //     x * metersPerSceneUnit,
-                //     0,
-                //     z * metersPerSceneUnit
-                // )
-                //
+                // PHYSICAL TRANSVERSE COORDINATES
                 // ------------------------------------------------
 
                 let physicalY =
-                    sceneY *
-                    metersPerSceneUnit
+                    -physicalHalfExtent +
+                    normalizedY *
+                    2.0 *
+                    physicalHalfExtent
 
                 let physicalZ =
-                    sceneZ *
-                    metersPerSceneUnit
+                    -physicalHalfExtent +
+                    normalizedZ *
+                    2.0 *
+                    physicalHalfExtent
+
+                // ------------------------------------------------
+                // X = 0 DISPLAY PLANE
+                // ------------------------------------------------
+                //
+                // The displayed gravity surface is the transverse
+                // plane through the center of the source.
+                //
+                // ------------------------------------------------
 
                 let physicalPosition =
                     SIMD3<Float>(
@@ -310,6 +329,12 @@ final class QRTLHeatmapGenerator {
 
                 // ------------------------------------------------
                 // AUTHORITATIVE QRTL POTENTIAL
+                // ------------------------------------------------
+                //
+                // Φ is returned in physical units:
+                //
+                //      m² / s²
+                //
                 // ------------------------------------------------
 
                 let potential =
@@ -322,7 +347,6 @@ final class QRTLHeatmapGenerator {
                 else {
 
                     samples[j][i] = 0.0
-
                     continue
                 }
 
@@ -330,22 +354,17 @@ final class QRTLHeatmapGenerator {
                 // POTENTIAL DEPTH
                 // ------------------------------------------------
                 //
-                // A conventional gravitational potential is
-                // negative:
+                // Physics:
                 //
-                //     Φ < 0
+                //      Φ < 0
                 //
-                // The visualization represents its depth:
+                // Visualization:
                 //
-                //     depth = |Φ|
+                //      depth = |Φ|
                 //
-                // Therefore:
+                // IMPORTANT:
                 //
-                // deeper potential well
-                //        ↓
-                // larger depth
-                //        ↓
-                // brighter / hotter color
+                // We do NOT modify Φ itself.
                 //
                 // ------------------------------------------------
 
@@ -359,7 +378,6 @@ final class QRTLHeatmapGenerator {
                 else {
 
                     samples[j][i] = 0.0
-
                     continue
                 }
 
@@ -381,7 +399,7 @@ final class QRTLHeatmapGenerator {
         }
 
         // ========================================================
-        // VALIDATE SAMPLED FIELD
+        // VALIDATE FIELD
         // ========================================================
 
         guard
@@ -390,7 +408,7 @@ final class QRTLHeatmapGenerator {
         else {
 
             print(
-                "QRTL HEATMAP: gravitational potential contains no usable depth."
+                "QRTL HEATMAP: no usable gravitational potential."
             )
 
             return makeEmptyHeatmap(
@@ -398,32 +416,40 @@ final class QRTLHeatmapGenerator {
             )
         }
 
-        // --------------------------------------------------------
+        // ========================================================
         // DIAGNOSTIC
-        // --------------------------------------------------------
+        // ========================================================
 
         let minimumForPrint =
             minimumDepth.isFinite
             ? minimumDepth
             : 0.0
 
+        let dynamicRange =
+            maximumDepth /
+            max(
+                minimumForPrint,
+                1.0e-30
+            )
+
         print(
             "QRTL HEATMAP:",
-            "minimumDepth =",
+            "minimum |Φ| =",
             minimumForPrint,
-            "maximumDepth =",
+            "m²/s²",
+            "maximum |Φ| =",
             maximumDepth,
+            "m²/s²",
             "dynamicRange =",
-            maximumDepth > 0.0
-                ? maximumDepth / max(
-                    minimumForPrint,
-                    1.0e-30
-                )
-                : 0.0,
+            dynamicRange,
+            "physicalHalfExtent =",
+            physicalHalfExtent,
+            "m",
+            "clusterRadius =",
+            clusterRadiusMeters,
+            "m",
             "resolution =",
-            resolution,
-            "metersPerSceneUnit =",
-            metersPerSceneUnit
+            resolution
         )
 
         // ========================================================
@@ -453,17 +479,11 @@ final class QRTLHeatmapGenerator {
         // DRAW HEATMAP
         // ========================================================
         //
-        // IMPORTANT:
+        // Linear normalization:
         //
-        // We use DIRECT LINEAR NORMALIZATION here.
+        //      normalized = |Φ| / max(|Φ|)
         //
-        // There is deliberately no logarithmic compression.
-        //
-        // This makes the displayed gradient directly correspond
-        // to the sampled potential depth.
-        //
-        //     0.0 → weakest
-        //     1.0 → deepest
+        // This produces a direct visualization of potential depth.
         //
         // ========================================================
 
@@ -480,22 +500,15 @@ final class QRTLHeatmapGenerator {
                     continue
                 }
 
-                // ------------------------------------------------
-                // NORMALIZE POTENTIAL DEPTH
-                // ------------------------------------------------
-
                 let normalized =
                     min(
                         max(
-                            raw / maximumDepth,
+                            raw /
+                            maximumDepth,
                             0.0
                         ),
                         1.0
                     )
-
-                // ------------------------------------------------
-                // DIRECT COLOR MAPPING
-                // ------------------------------------------------
 
                 let color =
                     colorForHeatmapValue(
@@ -505,10 +518,6 @@ final class QRTLHeatmapGenerator {
                 context.setFillColor(
                     color.cgColor
                 )
-
-                // ------------------------------------------------
-                // FLIP IMAGE Y
-                // ------------------------------------------------
 
                 context.fill(
                     CGRect(
@@ -538,14 +547,17 @@ final class QRTLHeatmapGenerator {
     }
 
     // ============================================================
-    // GRAVITY POTENTIAL DIAGNOSTIC VALUE
+    // GRAVITY POTENTIAL DIAGNOSTIC
     // ============================================================
     //
-    // Returns the SAME authoritative potential used by the
-    // curvature surface.
+    // Returns the actual signed physical potential.
     //
-    // This function intentionally does NOT use
-    // radialGravityTable.
+    // Units:
+    //
+    //      m² / s²
+    //
+    // This is intentionally the same function used by the
+    // authoritative QRTL field.
     //
     // ============================================================
 
@@ -572,11 +584,12 @@ final class QRTLHeatmapGenerator {
     // GRAVITY POTENTIAL DEPTH
     // ============================================================
     //
-    // Returns:
+    // Visualization quantity:
     //
-    //              |Φ|
+    //      |Φ|
     //
-    // This is the quantity used for heatmap intensity.
+    // This function does NOT change the underlying physical
+    // potential.
     //
     // ============================================================
 
@@ -598,25 +611,6 @@ final class QRTLHeatmapGenerator {
 
     // ============================================================
     // HEATMAP COLOR
-    // ============================================================
-    //
-    // Color scale:
-    //
-    // LOW
-    //   blue
-    //
-    // LOW-MEDIUM
-    //   blue → cyan
-    //
-    // MEDIUM
-    //   cyan → yellow
-    //
-    // HIGH
-    //   yellow → orange
-    //
-    // EXTREME
-    //   orange → red
-    //
     // ============================================================
 
     private static func colorForHeatmapValue(
@@ -740,17 +734,14 @@ final class QRTLHeatmapGenerator {
                     0.80 +
                     0.20 *
                     CGFloat(local),
-
                 green:
                     1.0 -
                     0.35 *
                     CGFloat(local),
-
                 blue:
                     0.20 -
                     0.20 *
                     CGFloat(local),
-
                 alpha: 1.0
             )
         }
@@ -768,14 +759,11 @@ final class QRTLHeatmapGenerator {
 
         return UIColor(
             red: 1.0,
-
             green:
                 0.65 -
                 0.65 *
                 CGFloat(local),
-
             blue: 0.0,
-
             alpha: 1.0
         )
     }

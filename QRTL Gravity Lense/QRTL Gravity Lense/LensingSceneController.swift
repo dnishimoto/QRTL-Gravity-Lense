@@ -108,7 +108,7 @@ final class LensingSceneController:
     let lensX: Float = 0.0
     let frontPlaneX: Float = 10.0
 
-    let bottomY: Float = 5.0
+    let bottomY: Float = 10
 
     // Make the target substantially larger.
     let planeHalfExtent: Float = 10.0

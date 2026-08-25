@@ -1668,87 +1668,121 @@ final class QRTLField {
         radius: Double
     ) -> Double {
 
-        guard !radialGravityTable.isEmpty,
-              radius.isFinite
-        else {
+        let table = radialGravityTable
+
+        guard !table.isEmpty,
+              radius.isFinite else {
             return 0.0
         }
 
-        // --------------------------------------------------------
-        // Clamp to the precomputed radial domain.
-        // --------------------------------------------------------
+        let r = max(radius, 0.0)
 
-        if radius <= radialGravityTable[0].radius {
-            return radialGravityTable[0].potential
-        }
-
-        let lastIndex =
-            radialGravityTable.count - 1
-
-        if radius >= radialGravityTable[lastIndex].radius {
-            return radialGravityTable[lastIndex].potential
-        }
-
-        // --------------------------------------------------------
-        // Binary search for the interval:
+        // ============================================================
+        // BELOW TABLE RANGE
+        // ============================================================
         //
-        // table[lower].radius <= radius <= table[upper].radius
-        // --------------------------------------------------------
+        // IMPORTANT:
+        // Do NOT clamp the gravitational potential to zero.
+        //
+        // A gravitational potential is normally negative:
+        //
+        //     Phi < 0
+        //
+        // The sign must be preserved because QRTLPhotonTracer
+        // converts this physical potential into:
+        //
+        //     U = Phi / c²
+        //
+        // which then determines the spacetime metric.
+        //
+        // ============================================================
 
-        var lower = 0
-        var upper = lastIndex
+        if r <= table[0].radius {
+            return table[0].potential.isFinite
+                ? table[0].potential
+                : 0.0
+        }
 
-        while upper - lower > 1 {
+        // ============================================================
+        // ABOVE TABLE RANGE
+        // ============================================================
+        //
+        // Preserve the signed physical potential.
+        //
+        // Do NOT use:
+        //
+        //     max(potential, 0.0)
+        //
+        // ============================================================
 
-            let middle =
-                (lower + upper) >> 1
+        if r >= table[table.count - 1].radius {
+            return table[table.count - 1].potential.isFinite
+                ? table[table.count - 1].potential
+                : 0.0
+        }
 
-            if radialGravityTable[middle].radius <= radius {
-                lower = middle
+        // ============================================================
+        // BINARY SEARCH
+        // ============================================================
+
+        var low = 0
+        var high = table.count - 1
+
+        while high - low > 1 {
+
+            let middle = (low + high) / 2
+
+            if table[middle].radius <= r {
+                low = middle
             } else {
-                upper = middle
+                high = middle
             }
         }
 
-        let lowerSample =
-            radialGravityTable[lower]
+        let lower = table[low]
+        let upper = table[high]
 
-        let upperSample =
-            radialGravityTable[upper]
+        // ============================================================
+        // VALIDATE RADIAL INTERVAL
+        // ============================================================
 
-        let radiusSpan =
-            upperSample.radius -
-            lowerSample.radius
+        let denominator =
+            upper.radius - lower.radius
 
-        guard radiusSpan.isFinite,
-              radiusSpan > 0.0
-        else {
-            return lowerSample.potential
+        guard denominator.isFinite,
+              denominator > 0.0,
+              lower.radius.isFinite,
+              upper.radius.isFinite,
+              lower.potential.isFinite,
+              upper.potential.isFinite else {
+
+            return lower.potential.isFinite
+                ? lower.potential
+                : 0.0
         }
 
-        // --------------------------------------------------------
-        // Linear interpolation.
-        // --------------------------------------------------------
+        // ============================================================
+        // LINEAR INTERPOLATION
+        // ============================================================
 
-        let t =
-            (radius - lowerSample.radius) /
-            radiusSpan
-
-        guard t.isFinite
-        else {
-            return lowerSample.potential
-        }
+        let t = min(
+            max(
+                (r - lower.radius) / denominator,
+                0.0
+            ),
+            1.0
+        )
 
         let potential =
-            lowerSample.potential +
-            (
-                upperSample.potential -
-                lowerSample.potential
-            ) * t
+            lower.potential +
+            (upper.potential - lower.potential) * t
 
-        guard potential.isFinite
-        else {
-            return lowerSample.potential
+        // ============================================================
+        // RETURN SIGNED PHYSICAL POTENTIAL
+        // ============================================================
+
+        guard potential.isFinite else {
+            return 0.0
         }
 
         return potential
