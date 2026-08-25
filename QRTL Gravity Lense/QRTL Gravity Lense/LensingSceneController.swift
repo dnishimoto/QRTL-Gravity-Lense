@@ -108,7 +108,7 @@ final class LensingSceneController:
     let lensX: Float = 0.0
     let frontPlaneX: Float = 10.0
 
-    let bottomY: Float = -5.0
+    let bottomY: Float = 5.0
 
     // Make the target substantially larger.
     let planeHalfExtent: Float = 10.0
@@ -1143,185 +1143,8 @@ final class LensingSceneController:
         photonSimulationDisplayLink = displayLink
     }
   
-    // ============================================================
-    // GENERATE GLOBULAR CLUSTER STAR POSITIONS
-    // ============================================================
-    //
-    // Generates the physical 3D positions of the stars that make
-    // up the globular cluster.
-    //
-    // These positions are used by:
-    //   1. GlobularClusterDensityMap
-    //   2. QRTLField
-    //   3. Gravity-surface generation
-    //   4. Source-photon generation
-    //
-    // The distribution is spherical and centrally concentrated.
-    //
-    // IMPORTANT:
-    // These are REAL 3D positions. They are not a 2D visual-only
-    // distribution and they are not all placed at the origin.
-    // ============================================================
-
-    func generateGlobularClusterStarPositions(
-        starCount: Int,
-        radiusMeters: Float
-    ) -> [SIMD3<Float>] {
-
-        guard starCount > 0 else {
-            return []
-        }
-
-        guard radiusMeters.isFinite,
-              radiusMeters > 0.0 else {
-            return []
-        }
-
-        var positions:
-            [SIMD3<Float>] = []
-
-        positions.reserveCapacity(
-            starCount
-        )
-
-        // ========================================================
-        // RANDOM NUMBER GENERATOR
-        // ========================================================
-
-        var generator =
-            SystemRandomNumberGenerator()
-
-        // ========================================================
-        // HELPER — UNIFORM RANDOM NUMBER
-        // ========================================================
-
-        func randomUnit() -> Float {
-
-            return Float.random(
-                in: 0.0...1.0,
-                using: &generator
-            )
-        }
-
-        // ========================================================
-        // GENERATE SPHERICAL DIRECTION
-        // ========================================================
-        //
-        // Uses an isotropic distribution over the sphere.
-        //
-        // z = cos(theta)
-        //
-        // phi = azimuth
-        // ========================================================
-
-        func randomDirection()
-            -> SIMD3<Float> {
-
-            let z =
-                randomUnit() * 2.0 - 1.0
-
-            let phi =
-                randomUnit()
-                * 2.0
-                * Float.pi
-
-            let radial =
-                sqrt(
-                    max(
-                        0.0,
-                        1.0 - z * z
-                    )
-                )
-
-            return SIMD3<Float>(
-                radial * cos(phi),
-                radial * sin(phi),
-                z
-            )
-        }
-
-        // ========================================================
-        // PLUMMER-LIKE RADIAL DISTRIBUTION
-        // ========================================================
-        //
-        // We want substantially more stars toward the center.
-        //
-        // The inverse cumulative distribution for a Plummer model
-        // can be written:
-        //
-        //     r = a / sqrt(u^(-2/3) - 1)
-        //
-        // where:
-        //
-        //     u = uniform random number
-        //
-        // The generated distribution is then truncated at the
-        // requested cluster radius.
-        //
-        // ========================================================
-
-        let scale =
-            radiusMeters * 0.30
-
-        // ========================================================
-        // GENERATE STARS
-        // ========================================================
-
-        while positions.count < starCount {
-
-            let u =
-                max(
-                    randomUnit(),
-                    1.0e-6
-                )
-
-            let denominator =
-                pow(
-                    u,
-                    -2.0 / 3.0
-                ) - 1.0
-
-            guard denominator > 0.0,
-                  denominator.isFinite else {
-                continue
-            }
-
-            let radius =
-                scale /
-                sqrt(
-                    denominator
-                )
-
-            let maximumRadius =
-                Float(radiusMeters)
-
-            guard radius.isFinite,
-                  radius >= 0.0,
-                  radius <= maximumRadius
-            else {
-                continue
-            }
-
-            let direction =
-                randomDirection()
-
-            let position =
-                direction *
-                Float(radius)
-
-            guard position.x.isFinite,
-                  position.y.isFinite,
-                  position.z.isFinite else {
-                continue
-            }
-
-            positions.append(
-                position
-            )
-        }
-
-        return positions
-    }
+   
+   
 
     // ============================================================
     // MARK: - CONTINUOUS PHOTON SIMULATION
@@ -2287,12 +2110,6 @@ final class LensingSceneController:
 
         // =========================================================
         // VISUALIZATION GRID
-        //
-        // Keep the physics/radial lookup resolution independent
-        // from the SceneKit surface resolution.
-        //
-        // 64 x 64 = 4,096 vertices
-        // 63 x 63 x 2 = 7,938 triangles
         // =========================================================
 
         let n: Int =
@@ -2329,21 +2146,15 @@ final class LensingSceneController:
 
         // =========================================================
         // COLOR INTENSITY CACHE
+        //
+        // Radial lookup values are used ONLY for visualization.
+        // They do not determine photon trajectories or curvature.
         // =========================================================
 
         var intensityCache = [Float](
             repeating: 0.0,
             count: vertexCount
         )
-
-        // =========================================================
-        // PASS 1
-        //
-        // Calculate visualization intensity once per vertex
-        // using the precomputed radial lookup tables.
-        //
-        // This pass does NOT calculate gravitational curvature.
-        // =========================================================
 
         var maximumIntensity: Float = 0.000001
 
@@ -2370,7 +2181,9 @@ final class LensingSceneController:
                     )
 
                 // -------------------------------------------------
-                // RADIAL DISTANCE (shared by all lookups)
+                // RADIAL DISTANCE
+                //
+                // Used only for visualization intensity.
                 // -------------------------------------------------
 
                 let radiusSquared =
@@ -2388,7 +2201,7 @@ final class LensingSceneController:
                     )
 
                 // -------------------------------------------------
-                // DENSITY  (radial table)
+                // DENSITY
                 // -------------------------------------------------
 
                 let density =
@@ -2408,7 +2221,7 @@ final class LensingSceneController:
                     : 0.0
 
                 // -------------------------------------------------
-                // QRTL SOURCE  (radial table)
+                // QRTL SOURCE
                 // -------------------------------------------------
 
                 let qrtlSource =
@@ -2431,7 +2244,7 @@ final class LensingSceneController:
                     : 0.0
 
                 // -------------------------------------------------
-                // BOLGARINO FLOW  (radial table)
+                // BOLGARINO FLOW
                 // -------------------------------------------------
 
                 let flow =
@@ -2441,9 +2254,7 @@ final class LensingSceneController:
 
                 let flowMagnitude =
                     flow.isFinite
-                    ? abs(
-                        Float(flow)
-                    )
+                    ? abs(Float(flow))
                     : 0.0
 
                 let flowTerm =
@@ -2451,7 +2262,7 @@ final class LensingSceneController:
                     (flowMagnitude + 1.0)
 
                 // -------------------------------------------------
-                // MAGNETIC FIELD  (radial magnitude + geometric direction)
+                // MAGNETIC FIELD
                 // -------------------------------------------------
 
                 let magnetic =
@@ -2500,53 +2311,54 @@ final class LensingSceneController:
                 intensityCache[index] =
                     safeIntensity
 
-                if safeIntensity > maximumIntensity {
-                    maximumIntensity =
+                maximumIntensity =
+                    max(
+                        maximumIntensity,
                         safeIntensity
-                }
+                    )
             }
         }
 
         // =========================================================
         // GRAVITY → SURFACE HEIGHT
         //
-        // h = (-2 Phi / c²) × scale
+        // This is visualization of the same physical potential
+        // used by the authoritative field.
         //
-        // Precompute the constant multiplier once.
+        // IMPORTANT:
+        // sceneToPhysicalScale must be the SAME canonical scale
+        // used by QRTLPhotonTracer.
         // =========================================================
 
         let speedOfLightSquared =
             299_792_458.0 *
             299_792_458.0
 
-        let spacetimeHeightScale =
+        // Visualization-only vertical amplification.
+        let visualizationHeightScale =
             1.0e6
 
         let curvatureScale =
             -2.0 *
-            spacetimeHeightScale /
+            visualizationHeightScale /
             speedOfLightSquared
 
         // =========================================================
         // PASS 2
         //
-        // BUILD SURFACE VERTICES
+        // LIVE 3D PHYSICAL FIELD → SURFACE
         //
-        // Gravity path:
-        //
-        // x,z
-        //  ↓
-        // radius
-        //  ↓
-        // radialGravityTable
-        //  ↓
-        // interpolateRadialPotential()
-        //  ↓
-        // weak-field curvature
-        //  ↓
-        // SceneKit Y
-        //
-        // NO radial integration occurs here.
+        // Scene x,z
+        //     ↓
+        // canonical scene → meter conversion
+        //     ↓
+        // physical x,y,z
+        //     ↓
+        // QRTLField.gravitationalPotential(at:)
+        //     ↓
+        // Φ(x,y,z)
+        //     ↓
+        // visualization height
         // =========================================================
 
         for j in 0..<n {
@@ -2573,32 +2385,45 @@ final class LensingSceneController:
                     CGFloat(n - 1)
 
                 // -------------------------------------------------
-                // RADIAL DISTANCE
+                // SCENE-SPACE SURFACE POSITION
+                //
+                // X/Z are the transverse visualization coordinates.
+                // Y is the curvature height.
                 // -------------------------------------------------
 
-                let radiusSquared =
-                    x * x +
-                    z * z
-
-                let radius =
-                    sqrt(
-                        max(
-                            0.0,
-                            radiusSquared
-                        )
+                let scenePosition =
+                    SIMD3<Float>(
+                        x,
+                        0.0,
+                        z
                     )
 
                 // -------------------------------------------------
-                // RADIAL POTENTIAL LOOKUP
+                // SCENE → PHYSICAL
+                //
+                // DO NOT use a second scale factor here.
+                //
+                // This value must be the same canonical conversion
+                // used by QRTLPhotonTracer.
+                // -------------------------------------------------
+
+                let physicalPosition =
+                    scenePosition *
+                    Float(sceneToPhysicalScale)
+
+                // -------------------------------------------------
+                // AUTHORITATIVE 3D POTENTIAL
+                //
+                // No radial potential lookup here.
                 // -------------------------------------------------
 
                 let potential =
-                    field.interpolateRadialPotential(
-                        radius: Double(radius)
+                    field.gravitationalPotential(
+                        at: physicalPosition
                     )
 
                 // -------------------------------------------------
-                // POTENTIAL → CURVATURE HEIGHT
+                // POTENTIAL → VISUAL HEIGHT
                 // -------------------------------------------------
 
                 let curvatureHeight =
@@ -2612,7 +2437,7 @@ final class LensingSceneController:
                     : 0.0
 
                 // -------------------------------------------------
-                // POSITION
+                // FINAL SCENE POSITION
                 // -------------------------------------------------
 
                 positions.append(
@@ -2834,7 +2659,6 @@ final class LensingSceneController:
         bottomPlaneNode =
             node
     }
-
     // ========================================================
     // DEFORMED SPACETIME SURFACE
     //

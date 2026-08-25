@@ -335,12 +335,75 @@ final class QRTLExperiment {
                         using: &rng
                     )
 
-                // Uniform spherical-volume distribution.
-                let radialFraction =
-                    pow(
+                // ------------------------------------------------
+                // PLUMMER-PROFILE RADIAL DISTRIBUTION
+                //
+                // Replaces the previous uniform-spherical-volume
+                // draw (r = R * u^(1/3)), which places the same
+                // NUMBER OF STARS PER UNIT VOLUME everywhere inside
+                // the cluster radius — producing a density field
+                // that is flat from the center out to the edge,
+                // with only a soft taper right at the boundary from
+                // kernel smoothing.
+                //
+                // A real globular cluster concentrates most of its
+                // stars within a small core radius and thins out
+                // with a long tail. The Plummer model's inverse CDF
+                // gives exactly that:
+                //
+                //     r = a / sqrt(u^(-2/3) - 1)
+                //
+                // where a = clusterRadiusFloat * plummerScale is the
+                // Plummer scale radius and u is a uniform random
+                // number. This is the same formula already used
+                // (but never wired up) in
+                // LensingSceneController.generateGlobularClusterStarPositions.
+                //
+                // u is floored above zero and the result is
+                // truncated at the cluster radius, since the raw
+                // Plummer profile has an unbounded (if rare) tail.
+                // ------------------------------------------------
+
+                let plummerScale: Float =
+                    0.30
+
+                let safeRandomUnit =
+                    max(
                         randomUnit,
-                        Float(1.0 / 3.0)
+                        1.0e-6
                     )
+
+                let denominator =
+                    pow(
+                        safeRandomUnit,
+                        Float(-2.0 / 3.0)
+                    ) - 1.0
+
+                let radialFraction: Float
+
+                if denominator.isFinite,
+                   denominator > 0.0 {
+
+                    let plummerScaleRadius =
+                        clusterRadiusFloat *
+                        plummerScale
+
+                    let candidateRadius =
+                        plummerScaleRadius /
+                        sqrt(denominator)
+
+                    radialFraction =
+                        min(
+                            candidateRadius,
+                            clusterRadiusFloat
+                        ) /
+                        clusterRadiusFloat
+
+                } else {
+
+                    radialFraction =
+                        0.0
+                }
 
                 let r =
                     clusterRadiusFloat *
@@ -971,4 +1034,3 @@ final class QRTLExperiment {
         )
     }
 }
-
