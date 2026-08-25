@@ -41,6 +41,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     private let gridSize: Int
     private let extent: Float
     private let numberOfStars: Int
+    private let curvatureScale: Float
 
     // ============================================================
     // SCENE CONTENT
@@ -59,8 +60,13 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     private(set) var galaxyProjectionPositions:
         [SIMD3<Double>] = []
 
-    private let lensingParameters =
-        LensingParameters()
+    private let lensingParameters = LensingParameters()
+
+    // ============================================================
+    // VISUALIZATION STATE
+    // ============================================================
+
+    private var maximumPotential: Float = 0.0
 
     // ============================================================
     // INITIALIZATION
@@ -70,7 +76,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         field: QRTLField,
         gridSize: Int = 64,
         extent: Float = 2.0,
-        numberOfStars: Int = 220
+        numberOfStars: Int = 220,
+        curvatureScale: Float = 1.0
     ) {
 
         self.field = field
@@ -90,6 +97,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             1
         )
 
+        self.curvatureScale = max(
+            curvatureScale,
+            0.0001
+        )
+
         super.init()
 
         buildScene(
@@ -107,22 +119,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
     // BUILD SCENE
     // ============================================================
-    //
-    // The gravity visualization is now a FLAT circular plane.
-    //
-    // The plane is visualization only.
-    //
-    // It does NOT:
-    //
-    // - bend photons
-    // - modify photon coordinates
-    // - act as spacetime
-    // - generate photon trajectories
-    //
-    // QRTLPhotonTracer remains the sole authority for photon
-    // propagation.
-    //
-    // ============================================================
 
     func buildScene(
         lensingParameters: LensingParameters
@@ -130,97 +126,196 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         clearScene()
 
-        // --------------------------------------------------------
-        // FLAT CIRCULAR VISUALIZATION PLANE
-        // --------------------------------------------------------
+        maximumPotential = 0.0
 
-        let surface = makeFlatCircularPlane()
+        // ========================================================
+        // FLAT CIRCULAR GRAVITY VISUALIZATION PLANE
+        // ========================================================
+        //
+        // This is visualization only.
+        //
+        // It does NOT represent physical spacetime coordinates.
+        //
+        // It does NOT modify photon positions.
+        //
+        // ========================================================
+
+        let surface = makeSurfaceNode()
 
         surfaceNode = surface
 
-        addChildNode(
-            surface
-        )
+        addChildNode(surface)
 
-        // --------------------------------------------------------
-        // PHOTONS AND PROJECTION RESULTS
-        //
-        // Added later through:
+        // ========================================================
+        // PHOTONS ARE ADDED ONLY THROUGH:
         //
         // setPhotonPathsForDisplay(...)
-        // --------------------------------------------------------
+        //
+        // ========================================================
     }
 
     // ============================================================
-    // FLAT CIRCULAR PLANE
-    // ============================================================
-    //
-    // This replaces the former radial gravity bowl.
-    //
-    // The plane remains geometrically flat.
-    //
-    // The QRTL field is represented by the photon trajectories
-    // and projection results rather than by deforming this plane.
-    //
+    // AUTHORITATIVE POTENTIAL SAMPLE
     // ============================================================
 
-    private func makeFlatCircularPlane() -> SCNNode {
+    func samplePotentialMagnitude(
+        x: Float,
+        z: Float
+    ) -> Float {
 
-        let node = SCNNode()
-
-        let geometry = SCNCylinder(
-            radius: CGFloat(extent),
-            height: 0.001
-        )
-
-        let material = SCNMaterial()
-
-        material.diffuse.contents =
-            UIColor.systemGreen.withAlphaComponent(
-                0.30
+        let displayRadius =
+            sqrt(
+                x * x +
+                z * z
             )
 
-        material.emission.contents =
-            UIColor.systemGreen.withAlphaComponent(
-                0.05
+        let normalizedRadius =
+            min(
+                max(
+                    displayRadius / extent,
+                    0.0
+                ),
+                1.0
             )
 
-        material.specular.contents =
-            UIColor.white.withAlphaComponent(
-                0.15
+        let physicalRadius =
+            Double(normalizedRadius) *
+            Double(field.clusterRadiusMeters)
+
+        let potential =
+            field.interpolateRadialPotential(
+                radius: physicalRadius
             )
 
-        material.isDoubleSided = true
+        guard potential.isFinite else {
+            return 0.0
+        }
 
-        material.transparency = 0.82
+        return Float(
+            abs(potential)
+        )
+    }
 
-        material.lightingModel =
-            .physicallyBased
+    // ============================================================
+    // SURFACE HEIGHT
+    // ============================================================
+    //
+    // The plane is intentionally FLAT.
+    //
+    // There is no radial bowl.
+    //
+    // ============================================================
 
-        geometry.materials = [
-            material
-        ]
+    func surfaceHeight(
+        x: Float,
+        z: Float
+    ) -> Float {
 
-        node.geometry = geometry
+        return 0.0
+    }
 
-        // SCNCylinder is vertical by default.
-        //
-        // Rotate it so the circular surface lies in
-        // the X-Z plane.
+    // ============================================================
+    // CURVATURE INTENSITY
+    // ============================================================
+    //
+    // Used only for visualization/color.
+    //
+    // This does NOT change photon position.
+    //
+    // ============================================================
 
-        node.eulerAngles = SCNVector3(
-            Float.pi / 2.0,
-            0.0,
-            0.0
+    func curvatureIntensity(
+        x: Float,
+        z: Float
+    ) -> Float {
+
+        let potential =
+            samplePotentialMagnitude(
+                x: x,
+                z: z
+            )
+
+        let normalization =
+            max(
+                maximumPotential,
+                1.0e-30
+            )
+
+        let normalized =
+            min(
+                max(
+                    potential / normalization,
+                    0.0
+                ),
+                1.0
+            )
+
+        return pow(
+            normalized,
+            0.45
+        )
+    }
+
+    // ============================================================
+    // CURVATURE COLOR
+    // ============================================================
+
+    static func curvatureColor(
+        intensity: Float,
+        calmColor: UIColor,
+        hotColor: UIColor = .white
+    ) -> UIColor {
+
+        let t =
+            CGFloat(
+                min(
+                    max(
+                        intensity,
+                        0.0
+                    ),
+                    1.0
+                )
+            )
+
+        var calmRed: CGFloat = 0.0
+        var calmGreen: CGFloat = 0.0
+        var calmBlue: CGFloat = 0.0
+        var calmAlpha: CGFloat = 0.0
+
+        calmColor.getRed(
+            &calmRed,
+            green: &calmGreen,
+            blue: &calmBlue,
+            alpha: &calmAlpha
         )
 
-        node.position = SCNVector3(
-            0.0,
-            0.0,
-            0.0
+        var hotRed: CGFloat = 0.0
+        var hotGreen: CGFloat = 0.0
+        var hotBlue: CGFloat = 0.0
+        var hotAlpha: CGFloat = 0.0
+
+        hotColor.getRed(
+            &hotRed,
+            green: &hotGreen,
+            blue: &hotBlue,
+            alpha: &hotAlpha
         )
 
-        return node
+        return UIColor(
+            red:
+                calmRed +
+                (hotRed - calmRed) * t,
+
+            green:
+                calmGreen +
+                (hotGreen - calmGreen) * t,
+
+            blue:
+                calmBlue +
+                (hotBlue - calmBlue) * t,
+
+            alpha: 1.0
+        )
     }
 
     // ============================================================
@@ -247,39 +342,186 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     }
 
     // ============================================================
+    // FLAT CIRCULAR SURFACE
+    // ============================================================
+    //
+    // This replaces the old radial bowl.
+    //
+    // The geometry is physically flat:
+    //
+    //                 Y
+    //                 ↑
+    //
+    //        ┌─────────────────┐
+    //        │                 │
+    //        │   FLAT PLANE    │
+    //        │                 │
+    //        └─────────────────┘
+    //
+    // No potential is added to Y.
+    //
+    // ============================================================
+
+    private func makeSurfaceNode() -> SCNNode {
+
+        let node = SCNNode()
+
+        let radius =
+            CGFloat(extent)
+
+        let geometry =
+            SCNCylinder(
+                radius: radius,
+                height: 0.001
+            )
+
+        // ========================================================
+        // MATERIAL
+        // ========================================================
+
+        let material =
+            SCNMaterial()
+
+        material.diffuse.contents =
+            UIColor.systemGreen.withAlphaComponent(
+                0.82
+            )
+
+        material.specular.contents =
+            UIColor.white.withAlphaComponent(
+                0.45
+            )
+
+        material.emission.contents =
+            UIColor.systemGreen.withAlphaComponent(
+                0.10
+            )
+
+        material.isDoubleSided = true
+
+        material.transparency = 0.82
+
+        material.lightingModel =
+            .physicallyBased
+
+        geometry.materials = [
+            material
+        ]
+
+        node.geometry =
+            geometry
+
+        // ========================================================
+        // FLAT PLANE POSITION
+        // ========================================================
+
+        node.position =
+            SCNVector3(
+                0.0,
+                0.0,
+                0.0
+            )
+
+        return node
+    }
+
+    // ============================================================
+    // INITIALIZE POTENTIAL RANGE
+    // ============================================================
+    //
+    // Because the radial bowl has been removed, we must calculate
+    // maximumPotential independently.
+    //
+    // This samples the same radial potential used by the flat
+    // visualization.
+    //
+    // ============================================================
+
+    private func calculateMaximumPotential() {
+
+        maximumPotential = 0.0
+
+        let sampleCount =
+            max(
+                gridSize,
+                32
+            )
+
+        for index in 0...sampleCount {
+
+            let normalizedRadius =
+                Float(index) /
+                Float(sampleCount)
+
+            let physicalRadius =
+                Double(normalizedRadius) *
+                Double(field.clusterRadiusMeters)
+
+            let potential =
+                field.interpolateRadialPotential(
+                    radius: physicalRadius
+                )
+
+            guard potential.isFinite else {
+                continue
+            }
+
+            let magnitude =
+                Float(abs(potential))
+
+            maximumPotential =
+                max(
+                    maximumPotential,
+                    magnitude
+                )
+        }
+
+        print(
+            """
+            ============================================================
+            QRTL FLAT SURFACE POTENTIAL RANGE
+            ============================================================
+
+            maximumPotential = \(maximumPotential)
+
+            clusterRadiusMeters =
+                \(field.clusterRadiusMeters)
+
+            extent =
+                \(extent)
+
+            ============================================================
+            """
+        )
+    }
+
+    // ============================================================
     // PHOTON PIPELINE
     // ============================================================
-    //
-    // Visualization only.
-    //
-    // The paths MUST already have been calculated by
-    // QRTLPhotonTracer.
-    //
-    // This class does NOT:
-    //
-    // - calculate gravity
-    // - calculate potential
-    // - calculate photon deflection
-    // - modify photon paths
-    // - add surface curvature
-    //
-    // ============================================================
+
+    /// Visualization only.
+    ///
+    /// Paths must already come from QRTLPhotonTracer.
+    ///
+    /// No second photon propagation occurs here.
 
     func setPhotonPathsForDisplay(
         _ paths: [[SIMD3<Float>]],
         projectionHits: [SIMD3<Float>] = []
     ) {
 
-        photonPaths = paths.map { path in
+        photonPaths =
+            paths.map { path in
 
-            path.map {
-                SIMD3<Double>(
-                    Double($0.x),
-                    Double($0.y),
-                    Double($0.z)
-                )
+                path.map {
+
+                    SIMD3<Double>(
+                        Double($0.x),
+                        Double($0.y),
+                        Double($0.z)
+                    )
+                }
             }
-        }
 
         galaxyProjectionPositions =
             projectionHits.map {
@@ -291,17 +533,17 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 )
             }
 
-        // --------------------------------------------------------
-        // REMOVE PREVIOUS PHOTON GRAPHICS
-        // --------------------------------------------------------
+        // ========================================================
+        // REMOVE OLD PHOTON GRAPHICS
+        // ========================================================
 
         photonNode?.removeFromParentNode()
 
         galaxyNode?.removeFromParentNode()
 
-        // --------------------------------------------------------
-        // PHOTON PATHS
-        // --------------------------------------------------------
+        // ========================================================
+        // PHOTONS
+        // ========================================================
 
         let photonGraphicsNode =
             makeTravelingPhotonParticles(
@@ -316,9 +558,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             photonGraphicsNode
         )
 
-        // --------------------------------------------------------
-        // PROJECTED GALAXY
-        // --------------------------------------------------------
+        // ========================================================
+        // PROJECTION
+        // ========================================================
 
         let galaxy =
             makeProjectionNode(
@@ -338,21 +580,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
     // RAW TRAVELING PHOTON PARTICLES
     // ============================================================
-    //
-    // CRITICAL:
-    //
-    // The photon path is rendered exactly as returned by
-    // QRTLPhotonTracer.
-    //
-    // NO surfaceHeight()
-    //
-    // NO gravity-bowl displacement.
-    //
-    // NO additional curvature.
-    //
-    // NO coordinate modification.
-    //
-    // ============================================================
 
     private func makeTravelingPhotonParticles(
         paths: [[SIMD3<Double>]],
@@ -362,10 +589,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         let parent =
             SCNNode()
 
-        // --------------------------------------------------------
-        // PHOTON VISUAL SIZE
-        // --------------------------------------------------------
-
         let particleRadius =
             max(
                 0.008,
@@ -374,27 +597,14 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 0.35
             )
 
-        // --------------------------------------------------------
-        // ANIMATION SPEED
-        // --------------------------------------------------------
-
         let secondsPerPoint =
             0.012
 
-        // --------------------------------------------------------
-        // EACH PHOTON PATH
-        // --------------------------------------------------------
-
         for path in paths {
 
-            guard path.count > 1
-            else {
+            guard path.count > 1 else {
                 continue
             }
-
-            // ----------------------------------------------------
-            // REMOVE INVALID TRACE POINTS
-            // ----------------------------------------------------
 
             let validPoints =
                 path.filter {
@@ -404,14 +614,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     $0.z.isFinite
                 }
 
-            guard validPoints.count > 1
-            else {
+            guard validPoints.count > 1 else {
                 continue
             }
-
-            // ----------------------------------------------------
-            // PHOTON SPHERE
-            // ----------------------------------------------------
 
             let sphere =
                 SCNSphere(
@@ -424,11 +629,31 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             let material =
                 SCNMaterial()
 
+            let initialIntensity =
+                curvatureIntensity(
+                    x:
+                        Float(
+                            validPoints[0].x
+                        ),
+                    z:
+                        Float(
+                            validPoints[0].z
+                        )
+                )
+
+            let initialColor =
+                Self.curvatureColor(
+                    intensity:
+                        initialIntensity,
+                    calmColor:
+                        color
+                )
+
             material.diffuse.contents =
-                color
+                initialColor
 
             material.emission.contents =
-                color
+                initialColor
 
             material.isDoubleSided =
                 true
@@ -446,18 +671,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                         sphere
                 )
 
-            // ----------------------------------------------------
+            // ====================================================
             // RAW INITIAL POSITION
-            // ----------------------------------------------------
-            //
-            // IMPORTANT:
-            //
-            // These coordinates must already be in SceneKit
-            // coordinates when supplied by QRTLPhotonTracer.
-            //
-            // This renderer does NOT convert or deform them.
-            //
-            // ----------------------------------------------------
+            // ====================================================
 
             particleNode.position =
                 SCNVector3(
@@ -472,9 +688,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     )
                 )
 
-            // ----------------------------------------------------
+            // ====================================================
             // RAW TRACE SEQUENCE
-            // ----------------------------------------------------
+            // ====================================================
 
             var moves:
                 [SCNAction] = []
@@ -488,10 +704,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
                 let point =
                     validPoints[index]
-
-                // ------------------------------------------------
-                // RAW PHOTON POSITION
-                // ------------------------------------------------
 
                 let destination =
                     SCNVector3(
@@ -508,19 +720,49 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                             secondsPerPoint
                     )
 
+                // =================================================
+                // VISUAL COLOR ONLY
+                // =================================================
+
+                let intensity =
+                    curvatureIntensity(
+                        x:
+                            Float(point.x),
+                        z:
+                            Float(point.z)
+                    )
+
+                let stepColor =
+                    Self.curvatureColor(
+                        intensity:
+                            intensity,
+                        calmColor:
+                            color
+                    )
+
+                let colorAction =
+                    SCNAction.run { _ in
+
+                        material.diffuse.contents =
+                            stepColor
+
+                        material.emission.contents =
+                            stepColor
+                    }
+
                 moves.append(
-                    moveAction
+                    SCNAction.group(
+                        [
+                            moveAction,
+                            colorAction
+                        ]
+                    )
                 )
             }
 
-            guard !moves.isEmpty
-            else {
+            guard !moves.isEmpty else {
                 continue
             }
-
-            // ----------------------------------------------------
-            // TRAVEL
-            // ----------------------------------------------------
 
             let travel =
                 SCNAction.sequence(
@@ -546,13 +788,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
     // ============================================================
     // PROJECTED GALAXY
-    // ============================================================
-    //
-    // These positions come from the authoritative photon
-    // projection results.
-    //
-    // No additional lensing calculation occurs here.
-    //
     // ============================================================
 
     private func makeProjectionNode(
@@ -584,16 +819,10 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 continue
             }
 
-            // ----------------------------------------------------
-            // PROJECTED STAR
-            // ----------------------------------------------------
-
             let sphere =
                 SCNSphere(
                     radius:
-                        CGFloat(
-                            radius
-                        )
+                        CGFloat(radius)
                 )
 
             let material =
@@ -623,10 +852,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     geometry:
                         sphere
                 )
-
-            // ----------------------------------------------------
-            // PROJECTION POSITION
-            // ----------------------------------------------------
 
             node.position =
                 SCNVector3(
