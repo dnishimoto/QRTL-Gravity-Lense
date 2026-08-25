@@ -56,7 +56,7 @@ struct QRTLParameters {
     var minimumStep: Double = 0.02
 
     /// Safety limit for rays
-    var maximumRaySteps: Int = 2000
+    var maximumRaySteps: Int = 100
 
     // Kept for compatibility with older call sites; prefer `minimumStep` in scene units
     var minimumStepSolarRadii: Double {
