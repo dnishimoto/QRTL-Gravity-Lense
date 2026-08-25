@@ -9,8 +9,32 @@ import Foundation
 import simd
 import SceneKit
 import SwiftUI
+struct MetersPerSceneUnit {
+    /// The number of physical meters per SceneKit scene unit.
+    ///
+    /// CHANGE THIS VALUE to match your actual visualization geometry.
+    /// For most visualizations, this should be:
+    ///     physical cluster radius (meters) / surface grid extent (scene units)
+    static let value: Double = 1.0e9 // Placeholder: replace with the correct scale for your scene
 
+    /// Convert SceneKit units (Float) to physical meters (Double).
+    static func sceneUnitsToMeters(_ sceneUnits: Float) -> Double {
+        return Double(sceneUnits) * value
+    }
 
+    /// Convert physical meters (Double) to SceneKit units (Float).
+    static func metersToSceneUnits(_ meters: Double) -> Float {
+        return Float(meters / value)
+    }
+}
+struct QRTLGravitySurfaceSample {
+    let positionMeters: SIMD3<Float>
+    let massDensity: Double
+    let normalizedDensity: Double
+    let qrtlInfluence: Double
+    let gravitationalPotential: Double
+    let normalizedPotential: Double
+}
 struct PhotonSimulationProgress {
 
     /// Total number of photons emitted during the simulation.

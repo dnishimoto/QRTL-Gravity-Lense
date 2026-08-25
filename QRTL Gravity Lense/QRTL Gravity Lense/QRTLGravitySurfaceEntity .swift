@@ -22,11 +22,15 @@ import SceneKit
 import simd
 import UIKit
 
+// Uses MetersPerSceneUnit.swift for authoritative scene-to-meters conversion
+
 // ============================================================
 // QRTL GRAVITY SURFACE ENTITY
 // ============================================================
 
 final class QRTLGravitySurfaceEntity: SCNNode {
+
+    private let metersPerSceneUnit = MetersPerSceneUnit.value
 
     // ============================================================
     // AUTHORITATIVE PHYSICS
@@ -178,6 +182,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 1.0
             )
 
+        // SceneKit units → physical meters
         let physicalRadius =
             Double(normalizedRadius) *
             Double(field.clusterRadiusMeters)
@@ -453,6 +458,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 Float(index) /
                 Float(sampleCount)
 
+            // SceneKit units → physical meters
             let physicalRadius =
                 Double(normalizedRadius) *
                 Double(field.clusterRadiusMeters)
@@ -493,6 +499,37 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
             ============================================================
             """
+        )
+    }
+    
+    func diagnosticSample(
+        field: QRTLField,
+        positionMeters: SIMD3<Float>
+    ) -> QRTLGravitySurfaceSample {
+
+        let density = field.physicalMassDensity(at: positionMeters)
+
+        let normalizedDensity =
+            Double(field.normalizedDensity(at: positionMeters))
+
+        let influence =
+            Double(field.influence(at: positionMeters))
+
+        let potential =
+            field.gravitationalPotential(at: positionMeters)
+
+        let c = 299_792_458.0
+
+        let normalizedPotential =
+            potential / (c * c)
+
+        return QRTLGravitySurfaceSample(
+            positionMeters: positionMeters,
+            massDensity: density,
+            normalizedDensity: normalizedDensity,
+            qrtlInfluence: influence,
+            gravitationalPotential: potential,
+            normalizedPotential: normalizedPotential
         )
     }
 
@@ -869,4 +906,22 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         return parent
     }
+
+    // ============================================================
+    // EXAMPLE: Converting a scene position to meters before querying the field
+    // ============================================================
+    //
+    // This snippet shows how to convert scene units (SceneKit units)
+    // to physical meters before using them with the authoritative physics field.
+    //
+    // Example usage:
+    //
+    // let scenePosition = SIMD3<Float>(x, 0.0, z)
+    // let positionMeters = scenePosition * Float(metersPerSceneUnit) // SceneKit units → physical meters
+    //
+    // Then pass positionMeters to field queries:
+    //
+    // let density = field.physicalMassDensity(at: positionMeters)
+    // let potential = field.gravitationalPotential(at: positionMeters)
+    //
 }
