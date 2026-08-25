@@ -159,10 +159,11 @@ final class QRTLPhotonTracer {
         // ========================================================
         // INITIAL POSITION
         //
-        // Scene coordinates are converted into dimensionless
-        // coordinates relative to the cluster radius.
+        // q = scene position / cluster radius scale
         //
-        // q = x / R
+        // q¹ = X / R
+        // q² = Y / R
+        // q³ = Z / R
         // ========================================================
 
         var position = SIMD3<Double>(
@@ -189,16 +190,6 @@ final class QRTLPhotonTracer {
 
         // ========================================================
         // INITIAL NULL TANGENT
-        //
-        // In flat spacetime:
-        //
-        //     dq⁰/dλ = 1
-        //
-        //     |d⃗q/dλ| = 1
-        //
-        // Therefore the initial tangent is null:
-        //
-        //     gμν kμ kν = 0
         // ========================================================
 
         var k = SIMD4<Double>(
@@ -222,9 +213,40 @@ final class QRTLPhotonTracer {
             1.0e-6
         )
 
+        // ========================================================
+        // IMPORTANT UNIT FIX
+        //
+        // position is dimensionless:
+        //
+        //     position = scenePosition / sceneToPhysical
+        //
+        // Therefore parameters.maxRadius must NOT be compared
+        // against position.
+        //
+        // The radius safety check below uses scenePosition instead.
+        // ========================================================
+
         let maxRadius = max(
             Double(parameters.maxRadius),
             0.001
+        )
+
+        // ========================================================
+        // PROJECTION BOUNDARY
+        //
+        // The flat circular visualization has an authoritative
+        // scene extent of Self.sceneExtent.
+        //
+        // Do not allow targetPlaneZ to extend beyond that surface.
+        //
+        // NOTE:
+        // targetPlaneZ is historically named Z, but in this
+        // architecture Scene X is the photon propagation axis.
+        // ========================================================
+
+        let targetPlaneX = min(
+            Double(parameters.targetPlaneZ),
+            Double(Self.sceneExtent)
         )
 
         // ========================================================
@@ -266,6 +288,9 @@ final class QRTLPhotonTracer {
 
             // ----------------------------------------------------
             // CURRENT SCENE POSITION
+            //
+            // Convert the dimensionless geodesic coordinates back
+            // into SceneKit coordinates.
             // ----------------------------------------------------
 
             let scenePosition = SIMD3<Float>(
@@ -274,29 +299,46 @@ final class QRTLPhotonTracer {
                 Float(q.w * sceneToPhysical)
             )
 
-            // ----------------------------------------------------
-            // RADIUS
-            // ----------------------------------------------------
-
-            let radius = simd_length(position)
-
-            if !radius.isFinite {
+            guard scenePosition.x.isFinite,
+                  scenePosition.y.isFinite,
+                  scenePosition.z.isFinite
+            else {
                 break
             }
 
             // ----------------------------------------------------
-            // TERMINATION
+            // SCENE-SPACE RADIUS
+            //
+            // IMPORTANT:
+            //
+            // q / position are dimensionless.
+            //
+            // scenePosition is in SceneKit units.
+            //
+            // maxRadius is a scene-space safety boundary.
             // ----------------------------------------------------
 
-            if radius > maxRadius {
+            let sceneRadius = simd_length(scenePosition)
+
+            guard sceneRadius.isFinite
+            else {
+                break
+            }
+
+            // ----------------------------------------------------
+            // SAFETY TERMINATION
+            // ----------------------------------------------------
+
+            if Double(sceneRadius) > maxRadius {
                 break
             }
 
             // ----------------------------------------------------
             // FIELD DIAGNOSTICS
             //
-            // These are observational only.
-            // They do NOT drive the geodesic.
+            // Observational only.
+            //
+            // These do NOT bend the photon.
             // ----------------------------------------------------
 
             updateDiagnostics(
@@ -312,20 +354,20 @@ final class QRTLPhotonTracer {
             )
 
             // ----------------------------------------------------
-            // PROJECTION PLANE
+            // FLAT CIRCULAR PROJECTION PLANE
             //
-            // The existing lensing architecture uses X as the
-            // photon travel direction.
+            // Scene X is the photon propagation direction.
             //
-            // Projection is therefore based on the scene X
-            // coordinate reaching targetPlaneZ only if that
-            // parameter is being used as the existing projection
-            // boundary.
+            // The projection plane is therefore:
             //
-            // Keep this separate from the geodesic physics.
+            //     X = targetPlaneX
+            //
+            // targetPlaneX is capped by Self.sceneExtent so the
+            // photon cannot be projected beyond the circular
+            // visualization.
             // ----------------------------------------------------
 
-            if scenePosition.x >= parameters.targetPlaneZ {
+            if Double(scenePosition.x) >= targetPlaneX {
 
                 hitProjection = true
 
@@ -348,18 +390,27 @@ final class QRTLPhotonTracer {
                 clusterRadius: clusterRadius
             )
 
-            let qIsFinite = q.x.isFinite && q.y.isFinite && q.z.isFinite && q.w.isFinite
-            let kIsFinite = k.x.isFinite && k.y.isFinite && k.z.isFinite && k.w.isFinite
-
             let stepQIsFinite = step.q.x.isFinite && step.q.y.isFinite && step.q.z.isFinite && step.q.w.isFinite
             let stepKIsFinite = step.k.x.isFinite && step.k.y.isFinite && step.k.z.isFinite && step.k.w.isFinite
 
-            if !stepQIsFinite || !stepKIsFinite {
+            guard stepQIsFinite,
+                  stepKIsFinite
+            else {
                 break
             }
 
             q = step.q
             k = step.k
+
+            // ----------------------------------------------------
+            // UPDATE DIMENSIONLESS SPATIAL POSITION
+            //
+            // This remains dimensionless.
+            //
+            // q¹ = X/R
+            // q² = Y/R
+            // q³ = Z/R
+            // ----------------------------------------------------
 
             position = SIMD3<Double>(
                 q.y,

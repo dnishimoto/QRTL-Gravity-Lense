@@ -3700,7 +3700,7 @@ final class LensingSceneController:
 
         cameraNode.position =
             SCNVector3(
-                120,
+                50,
                 6,
                 0
             )
