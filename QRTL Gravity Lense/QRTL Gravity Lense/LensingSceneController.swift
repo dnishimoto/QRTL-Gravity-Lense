@@ -363,8 +363,7 @@ final class LensingSceneController:
                 field: field,
                 gridSize: 64,
                 extent: 18.0,
-                numberOfStars: 220,
-                curvatureScale: 1.0
+                numberOfStars: 220
             )
 
         qrtlGravitySurface =
@@ -3701,7 +3700,7 @@ final class LensingSceneController:
 
         cameraNode.position =
             SCNVector3(
-                60,
+                120,
                 6,
                 0
             )
