@@ -478,6 +478,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         print(
             """
+            QRTL Gravity Surface Entity
             ============================================================
             QRTL FLAT SURFACE POTENTIAL RANGE
             ============================================================

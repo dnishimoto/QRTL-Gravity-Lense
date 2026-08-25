@@ -14,58 +14,29 @@ import simd
 //
 // Authoritative physics experiment.
 //
-// COORDINATE CONVENTION (authoritative — matches
-// QRTLGravitySurfaceEntity exactly):
+// COORDINATE CONVENTION:
 //
 //     X = photon propagation direction
-//     Y = transverse coordinate
+//     Y = transverse coordinate / impact parameter
 //     Z = transverse coordinate
 //
-// The stellar distribution generated below is a UNIFORM SPHERE —
-// symmetric under rotation about any axis — so it carries no
-// axis-specific assumption of its own and cannot conflict with
-// this convention. Any code that later samples the field along a
-// specific axis (e.g. QRTLField.buildRadialGravityTable, which
-// samples along physical X) relies on that same spherical
-// symmetry, not on any particular axis being "special."
+// UNIT CONTRACT:
 //
-// Physical pipeline:
+//     run(...) accepts SI distances in metres:
 //
-// BARYONIC MASS
-//      ↓
-// GLOBULAR CLUSTER STAR POSITIONS
-//      ↓
-// GLOBULAR CLUSTER DENSITY MAP
-//      ↓
-// PHYSICAL MASS DENSITY
-//      ↓
-// STELLAR GRAVITATIONAL POTENTIAL
-//      ↓
-// STELLAR GRAVITATIONAL ACCELERATION
-//      ↓
-// QRTL FIELD
-//      ↓
-// QRTL ENERGY DENSITY
-//      ↓
-// QRTL GRAVITY INDEX
-//      ↓
-// QRTL GRAVITATIONAL POTENTIAL
-//      ↓
-// QRTL GRAVITATIONAL ACCELERATION
-//      ↓
-// TRANSVERSE GRAVITY
-//      ↓
-// EINSTEIN-STYLE PHOTON CURVATURE
-//      ↓
-// PHOTON TRACER
-//      ↓
-// PHOTON TRACE RESULT
-//      ↓
-// MEASURED QRTL PHOTON DEFLECTION
-//      ↓
-// GENERAL RELATIVITY REFERENCE
-//      ↓
-// QRTL / GR COMPARISON
+//         impactParameter = metres
+//         startDistance   = metres
+//         endDistance     = metres
+//         stepSize        = metres
+//
+//     QRTLPhotonTracer integrates normalized coordinates:
+//
+//         q¹ = X / Rcluster
+//         q² = Y / Rcluster
+//         q³ = Z / Rcluster
+//
+//     The GR reference continues to use the original physical
+//     impact parameter in metres.
 //
 // ============================================================
 
@@ -74,27 +45,12 @@ final class QRTLExperiment {
     // ========================================================
     // DETERMINISTIC RANDOM NUMBER GENERATOR (SplitMix64)
     // ========================================================
-    //
-    // Swift's `Float.random(in:)` with no generator argument uses
-    // SystemRandomNumberGenerator, which is intentionally
-    // non-deterministic — a different stellar distribution (and
-    // therefore a different lens) every run. That makes QRTL-vs-GR
-    // comparisons impossible to reproduce.
-    //
-    // SeededGenerator is a small, fast, deterministic generator:
-    // the SAME seed always produces the SAME sequence of star
-    // positions, so an experiment can be re-run — or compared
-    // against a GR reference run — with an identical lens.
-    // ========================================================
 
     struct SeededGenerator: RandomNumberGenerator {
 
         private var state: UInt64
 
         init(seed: UInt64) {
-
-            // Avoid a zero state, which would produce a degenerate
-            // (all-zero) sequence from SplitMix64.
             self.state =
                 seed == 0
                 ? 0x9E3779B97F4A7C15
@@ -102,7 +58,6 @@ final class QRTLExperiment {
         }
 
         mutating func next() -> UInt64 {
-
             state = state &+ 0x9E3779B97F4A7C15
 
             var z = state
@@ -149,15 +104,6 @@ final class QRTLExperiment {
     // ========================================================
     // REPRODUCIBILITY
     // ========================================================
-    //
-    // The seed actually used to generate starPositions (when no
-    // external distribution was supplied). Exposed so a caller can
-    // read back exactly what produced this experiment's lens, log
-    // it alongside results, and reuse it later.
-    //
-    // nil when an externally supplied star distribution was used
-    // instead — the seed is meaningless in that case.
-    // ========================================================
 
     let starPositionSeed: UInt64?
 
@@ -165,28 +111,10 @@ final class QRTLExperiment {
     // STAR POSITIONS
     // ========================================================
 
-    //
-    // These positions are retained so the experiment and
-    // density map use the SAME physical stellar distribution.
-    //
     let starPositions: [SIMD3<Float>]
 
     // ========================================================
     // INITIALIZATION
-    // ========================================================
-    //
-    // For repeatable experiments (e.g. QRTL vs. GR comparisons
-    // that must use the same lens), either:
-    //
-    //   • pass `starPositions:` with an externally supplied
-    //     distribution — nothing is generated, and
-    //     starPositionSeed is nil, OR
-    //   • rely on the default deterministic `seed:` (or pass your
-    //     own) — the same seed always reproduces the same
-    //     distribution.
-    //
-    // The old behavior — a fresh, unseeded, unreproducible
-    // distribution every call — is no longer the default.
     // ========================================================
 
     init(
@@ -206,11 +134,8 @@ final class QRTLExperiment {
         let resolvedClusterMassKg: Double
 
         if mass.isFinite && mass > 0.0 {
-
             resolvedClusterMassKg = mass
-
         } else {
-
             resolvedClusterMassKg =
                 Self.defaultClusterMassKg
         }
@@ -236,36 +161,11 @@ final class QRTLExperiment {
         // ====================================================
         // STAR DISTRIBUTION
         // ====================================================
-        //
-        // Generate the physical 3D stellar distribution.
-        //
-        // The same positions are passed directly into
-        // GlobularClusterDensityMap.
-        //
-        // Therefore:
-        //
-        //     stars
-        //       ↓
-        //     density map
-        //       ↓
-        //     QRTLField
-        //
-        // all describe the same lens.
-        //
-        // ====================================================
 
         let positions: [SIMD3<Float>]
 
         if let externalStarPositions,
            !externalStarPositions.isEmpty {
-
-            // ------------------------------------------------
-            // EXTERNALLY SUPPLIED DISTRIBUTION
-            //
-            // No generation, no randomness at all — the caller
-            // is fully in control of the lens (e.g. reusing an
-            // exact distribution from a prior experiment).
-            // ------------------------------------------------
 
             positions =
                 externalStarPositions
@@ -277,13 +177,6 @@ final class QRTLExperiment {
                 nil
 
         } else {
-
-            // ------------------------------------------------
-            // DETERMINISTIC GENERATION
-            //
-            // Same seed → same sequence → same stellar
-            // distribution → same lens, every time.
-            // ------------------------------------------------
 
             let resolvedStarCount = 1000
 
@@ -334,35 +227,6 @@ final class QRTLExperiment {
                         in: 0.0...1.0,
                         using: &rng
                     )
-
-                // ------------------------------------------------
-                // PLUMMER-PROFILE RADIAL DISTRIBUTION
-                //
-                // Replaces the previous uniform-spherical-volume
-                // draw (r = R * u^(1/3)), which places the same
-                // NUMBER OF STARS PER UNIT VOLUME everywhere inside
-                // the cluster radius — producing a density field
-                // that is flat from the center out to the edge,
-                // with only a soft taper right at the boundary from
-                // kernel smoothing.
-                //
-                // A real globular cluster concentrates most of its
-                // stars within a small core radius and thins out
-                // with a long tail. The Plummer model's inverse CDF
-                // gives exactly that:
-                //
-                //     r = a / sqrt(u^(-2/3) - 1)
-                //
-                // where a = clusterRadiusFloat * plummerScale is the
-                // Plummer scale radius and u is a uniform random
-                // number. This is the same formula already used
-                // (but never wired up) in
-                // LensingSceneController.generateGlobularClusterStarPositions.
-                //
-                // u is floored above zero and the result is
-                // truncated at the cluster radius, since the raw
-                // Plummer profile has an unbounded (if rare) tail.
-                // ------------------------------------------------
 
                 let plummerScale: Float =
                     0.30
@@ -442,21 +306,6 @@ final class QRTLExperiment {
         // ====================================================
         // GLOBULAR CLUSTER DENSITY MAP
         // ====================================================
-        //
-        // This is the physical source of the lens.
-        //
-        // It contains:
-        //
-        // • total cluster mass
-        // • cluster radius
-        // • 3,000 stars
-        // • per-star mass
-        // • actual 3D star positions
-        // • physical mass density
-        // • stellar gravitational potential
-        // • stellar gravitational acceleration
-        //
-        // ====================================================
 
         let densityMap =
             GlobularClusterDensityMap(
@@ -476,32 +325,6 @@ final class QRTLExperiment {
         // ====================================================
         // AUTHORITATIVE QRTL FIELD
         // ====================================================
-        //
-        // IMPORTANT:
-        //
-        // Current QRTLField owns the QRTL gravity model.
-        //
-        // The field receives the actual 3D stellar mass model.
-        //
-        // It then calculates:
-        //
-        // physical density
-        //       ↓
-        // QRTL source
-        //       ↓
-        // Bolgarino flux
-        //       ↓
-        // QRTL current
-        //       ↓
-        // QRTL energy density
-        //       ↓
-        // QRTL gravity index
-        //       ↓
-        // QRTL gravitational acceleration
-        //       ↓
-        // photon curvature
-        //
-        // ====================================================
 
         self.field =
             QRTLField(
@@ -516,6 +339,21 @@ final class QRTLExperiment {
     // ========================================================
     // RUN EXPERIMENT
     // ========================================================
+    //
+    // INPUT UNIT CONTRACT:
+    //
+    // impactParameter = metres
+    // startDistance   = metres
+    // endDistance     = metres
+    // stepSize        = metres
+    //
+    // The GR formula uses physical SI values directly.
+    //
+    // QRTLPhotonTracer receives values normalized by:
+    //
+    //     q = physicalDistanceMeters / clusterRadiusMeters
+    //
+    // ========================================================
 
     func run(
         impactParameter: Double,
@@ -525,7 +363,7 @@ final class QRTLExperiment {
     ) -> QRTLExperimentResult {
 
         // ====================================================
-        // SAFE INPUTS
+        // SAFE PHYSICAL INPUTS — METRES
         // ====================================================
 
         let safeImpactParameter =
@@ -553,23 +391,84 @@ final class QRTLExperiment {
             )
 
         // ====================================================
-        // PHOTON ORIGIN
+        // PHYSICAL INPUTS — METRES
+        //
+        // Keep these values separate from q-space values.
+        // They are used by the GR reference equation.
         // ====================================================
+
+        let impactParameterMeters =
+            safeImpactParameter
+
+        let startDistanceMeters =
+            safeStartDistance
+
+        let endDistanceMeters =
+            safeEndDistance
+
+        let stepSizeMeters =
+            safeStepSize
+
+        guard clusterRadiusMeters.isFinite,
+              clusterRadiusMeters > 0.0
+        else {
+            return zeroResult()
+        }
+
+        // ====================================================
+        // NORMALIZED PHOTON-TRACER COORDINATES
         //
-        // Physical coordinates:
+        // QRTLPhotonTracer integrates:
         //
-        //     X = photon propagation direction
-        //     Y = impact parameter
-        //     Z = transverse direction
+        //     q¹ = X / Rcluster
+        //     q² = Y / Rcluster
+        //     q³ = Z / Rcluster
         //
-        // Photon starts at -X and travels toward +X.
+        // These values are dimensionless.
+        // ====================================================
+
+        let normalizedImpactParameter =
+            impactParameterMeters /
+            clusterRadiusMeters
+
+        let normalizedStartDistance =
+            startDistanceMeters /
+            clusterRadiusMeters
+
+        let normalizedEndDistance =
+            endDistanceMeters /
+            clusterRadiusMeters
+
+        let normalizedStepSize =
+            stepSizeMeters /
+            clusterRadiusMeters
+
+        guard normalizedImpactParameter.isFinite,
+              normalizedStartDistance.isFinite,
+              normalizedEndDistance.isFinite,
+              normalizedStepSize.isFinite,
+              normalizedImpactParameter >= 0.0,
+              normalizedStartDistance > 0.0,
+              normalizedEndDistance > 0.0,
+              normalizedStepSize > 0.0
+        else {
+            return zeroResult()
+        }
+
+        // ====================================================
+        // PHOTON ORIGIN — NORMALIZED q COORDINATES
         //
+        // X = propagation direction
+        // Y = normalized impact parameter
+        // Z = transverse coordinate
+        //
+        // The photon begins at -X and travels toward +X.
         // ====================================================
 
         let origin =
             SIMD3<Float>(
-                Float(-safeStartDistance),
-                Float(safeImpactParameter),
+                Float(-normalizedStartDistance),
+                Float(normalizedImpactParameter),
                 0.0
             )
 
@@ -581,23 +480,19 @@ final class QRTLExperiment {
             )
 
         // ====================================================
-        // TOTAL TRAVEL DISTANCE
+        // NORMALIZED TRACE EXTENT
         // ====================================================
 
-        let totalDistance =
-            safeStartDistance +
-            safeEndDistance
-
-        // ====================================================
-        // INTEGRATION STEPS
-        // ====================================================
+        let totalNormalizedDistance =
+            normalizedStartDistance +
+            normalizedEndDistance
 
         let calculatedMaxSteps =
             max(
                 Int(
                     ceil(
-                        totalDistance /
-                        safeStepSize
+                        totalNormalizedDistance /
+                        normalizedStepSize
                     )
                 ),
                 1
@@ -605,33 +500,9 @@ final class QRTLExperiment {
 
         // ====================================================
         // CURRENT LENSING PARAMETERS
-        // ====================================================
         //
-        // The photon tracer queries the current QRTLField.
-        //
-        // In particular, QRTLField supplies:
-        //
-        //     qrtlGravitationalAcceleration(at:)
-        //
-        //     qrtlTransverseGravity(
-        //         at:photonDirection:
-        //     )
-        //
-        //     qrtlPhotonCurvature(
-        //         at:direction:
-        //     )
-        //
-        //     qrtlLensingAcceleration(
-        //         at:direction:
-        //     )
-        //
-        // The QRTL gravity index is therefore part of the
-        // actual photon-curvature calculation.
-        //
-        // Electromagnetic photon bending remains disabled
-        // here so the gravitational QRTL prediction can be
-        // compared independently with GR.
-        //
+        // All propagation values passed to QRTLPhotonTracer are
+        // normalized q-space quantities.
         // ====================================================
 
         let lensingParameters =
@@ -639,26 +510,25 @@ final class QRTLExperiment {
                 maximumPhotonSteps:
                     calculatedMaxSteps,
 
-                   deflectionStrength:
+                deflectionStrength:
                     1.0,
-                   projectionPlaneHalfExtent:
-                       18.0,
-                      maximumPropagationRadius:
+
+                projectionPlaneHalfExtent:
+                    18.0,
+
+                maximumPropagationRadius:
                     Float(
                         max(
-                            totalDistance,
+                            totalNormalizedDistance,
                             0.001
                         )
                     ),
 
                 photonStepSize:
                     Float(
-                        safeStepSize
+                        normalizedStepSize
                     ),
 
-
-         
-            
                 qrtlLensingStrength:
                     Float(
                         parameters.chiQ
@@ -687,49 +557,42 @@ final class QRTLExperiment {
 
                 targetPlaneX:
                     Float(
-                        safeEndDistance
+                        normalizedEndDistance
                     ),
-
-           
 
                 interactionRate:
                     0.0
             )
 
         // ====================================================
-        // QRTL GRAVITY INDEX DIAGNOSTIC
-        // ====================================================
-        //
-        // The QRTLField now contains a global calibration
-        // relationship between the physical stellar mass
-        // density and the QRTL effective energy density.
-        //
-        // This is NOT a GR value.
-        //
-        // It is a QRTL calibration quantity used to put the
-        // QRTL gravitational prediction onto the physical
-        // mass scale.
-        //
+        // QRTL EXPERIMENT DEBUG
         // ====================================================
 
-      
-        print("")
-        print("============================================================")
-        print("QRTL EXPERIMENT")
-        print("============================================================")
-        print("Cluster mass:")
-        print(clusterMassKg)
-        print("Cluster radius:")
-        print(clusterRadiusMeters)
-        print("Star count:")
-        print(starPositions.count)
-        print("Per-star mass:")
-        print("QRTL gravity index:")
-           print("============================================================")
-        print("")
+        print(
+            """
+            ============================================================
+            QRTL EXPERIMENT
+            ============================================================
+            clusterMassKg              = \(String(format: "%.6e", clusterMassKg))
+            clusterRadiusMeters        = \(String(format: "%.6e", clusterRadiusMeters))
+            starCount                  = \(starPositions.count)
+            impactParameterMeters      = \(String(format: "%.6e", impactParameterMeters))
+            startDistanceMeters        = \(String(format: "%.6e", startDistanceMeters))
+            endDistanceMeters          = \(String(format: "%.6e", endDistanceMeters))
+            stepSizeMeters             = \(String(format: "%.6e", stepSizeMeters))
+            normalizedImpactParameter  = \(String(format: "%.6e", normalizedImpactParameter))
+            normalizedStartDistance    = \(String(format: "%.6e", normalizedStartDistance))
+            normalizedEndDistance      = \(String(format: "%.6e", normalizedEndDistance))
+            normalizedStepSize         = \(String(format: "%.6e", normalizedStepSize))
+            ============================================================
+            """
+        )
 
         // ====================================================
         // PHOTON TRACER
+        //
+        // 1.0 means one visual scene unit corresponds to one
+        // normalized cluster radius.
         // ====================================================
 
         let tracer =
@@ -748,8 +611,9 @@ final class QRTLExperiment {
 
                 parameters:
                     lensingParameters,
-                
-                sceneToPhysicalScale: 1.0
+
+                sceneToPhysicalScale:
+                    1.0
             )
 
         // ====================================================
@@ -759,7 +623,6 @@ final class QRTLExperiment {
         guard
             trace.positions.count >= 2
         else {
-
             return zeroResult()
         }
 
@@ -787,7 +650,6 @@ final class QRTLExperiment {
             incomingLength.isFinite,
             incomingLength > 0.000001
         else {
-
             return zeroResult()
         }
 
@@ -811,7 +673,6 @@ final class QRTLExperiment {
             !outgoingLength.isFinite ||
             outgoingLength <= 0.000001
         {
-
             let finalIndex =
                 positions.count - 1
 
@@ -828,7 +689,6 @@ final class QRTLExperiment {
                 fallbackLength.isFinite,
                 fallbackLength > 0.000001
             else {
-
                 return zeroResult()
             }
 
@@ -844,11 +704,6 @@ final class QRTLExperiment {
 
         // ====================================================
         // DEFLECTION ANGLE
-        // ====================================================
-        //
-        // This is the measured deflection produced by the
-        // QRTLField-driven photon integration.
-        //
         // ====================================================
 
         let dotProduct =
@@ -874,7 +729,6 @@ final class QRTLExperiment {
         guard
             qrtlAngleFloat.isFinite
         else {
-
             return zeroResult()
         }
 
@@ -886,25 +740,15 @@ final class QRTLExperiment {
         guard
             qrtlAngle.isFinite
         else {
-
             return zeroResult()
         }
 
         // ====================================================
         // GENERAL RELATIVITY REFERENCE
-        // ====================================================
         //
-        // Weak-field point-mass reference:
+        // alpha_GR = 4GM / (b c²)
         //
-        //     alpha_GR = 4GM / (b c²)
-        //
-        // This is intentionally independent of the QRTL
-        // calculation.
-        //
-        // QRTL predicts its own deflection.
-        //
-        // GR supplies the reference prediction.
-        //
+        // b is explicitly the physical SI impact parameter.
         // ====================================================
 
         let G =
@@ -921,14 +765,13 @@ final class QRTLExperiment {
             c * c
 
         let denominator =
-            safeImpactParameter *
+            impactParameterMeters *
             cSquared
 
         guard
             denominator.isFinite,
             denominator > 0.0
         else {
-
             return zeroResult()
         }
 
@@ -941,7 +784,6 @@ final class QRTLExperiment {
         guard
             grAngle.isFinite
         else {
-
             return zeroResult()
         }
 
@@ -990,7 +832,6 @@ final class QRTLExperiment {
         // ====================================================
 
         return QRTLExperimentResult(
-
             qrtlDeflection:
                 qrtlAngle,
 
@@ -1016,7 +857,6 @@ final class QRTLExperiment {
         -> QRTLExperimentResult {
 
         return QRTLExperimentResult(
-
             qrtlDeflection:
                 0.0,
 
