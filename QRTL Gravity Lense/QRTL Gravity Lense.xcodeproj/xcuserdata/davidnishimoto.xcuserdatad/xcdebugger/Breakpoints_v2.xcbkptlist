@@ -46,8 +46,8 @@
             filePath = "QRTL Gravity Lense/QRTLField.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "2568"
-            endingLineNumber = "2568"
+            startingLineNumber = "2575"
+            endingLineNumber = "2575"
             landmarkName = "gravitationalPotential(at:effectiveEnergyDensity:)"
             landmarkType = "7">
          </BreakpointContent>
@@ -62,8 +62,8 @@
             filePath = "QRTL Gravity Lense/QRTLField.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "2122"
-            endingLineNumber = "2122"
+            startingLineNumber = "2125"
+            endingLineNumber = "2125"
             landmarkName = "physicalMassDensity(at:)"
             landmarkType = "7">
          </BreakpointContent>
@@ -78,10 +78,10 @@
             filePath = "QRTL Gravity Lense/QRTLField.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "1892"
-            endingLineNumber = "1892"
-            landmarkName = "buildRadialGravityTable(densitySource:parameters:sampleCount:)"
-            landmarkType = "7">
+            startingLineNumber = "1895"
+            endingLineNumber = "1895"
+            landmarkName = "QRTLField"
+            landmarkType = "3">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy

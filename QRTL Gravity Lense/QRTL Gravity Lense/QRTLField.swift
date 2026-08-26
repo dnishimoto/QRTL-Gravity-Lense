@@ -858,6 +858,7 @@ final class QRTLField {
                 at: position
             )
 
+        /*
 
 #if DEBUG
 
@@ -890,6 +891,7 @@ final class QRTLField {
     """)
 
 #endif
+         */
     }
     private func qrtlEnergyDensityFromClusterDensity(
         at position: SIMD3<Float>
@@ -1762,6 +1764,7 @@ final class QRTLField {
               directPotentialAtRadius
             : 0.0
 
+   /*
         #if DEBUG
 
         print("""
@@ -1887,7 +1890,7 @@ final class QRTLField {
         """)
 
         #endif
-
+*/
         return samples
     }
 
@@ -2092,7 +2095,7 @@ final class QRTLField {
         guard density.isFinite,
               density >= 0.0
         else {
-
+/*
             print("""
             ============================================================
             QRTL MASS DENSITY DEBUG — INVALID
@@ -2103,10 +2106,10 @@ final class QRTLField {
             units              = kg/m³
             ============================================================
             """)
-
+*/
             return 0.0
         }
-
+/*
         print("""
         ============================================================
         QRTL MASS DENSITY DEBUG
@@ -2118,7 +2121,7 @@ final class QRTLField {
         clusterRadius     = \(clusterRadiusMeters) m
         ============================================================
         """)
-
+*/
         return density
     }
     func normalizedDensity(
@@ -2477,6 +2480,7 @@ final class QRTLField {
             let potential =
                 Double(firstSample.potential)
 
+            /*
             print(
                 "QRTL Φ DEBUG CENTER:",
                 "position =", position,
@@ -2486,6 +2490,7 @@ final class QRTLField {
                 "units = m²/s²",
                 "source = radialGravityTable.first.potential"
             )
+             */
 
             guard potential.isFinite else {
                 return 0.0
@@ -2504,7 +2509,7 @@ final class QRTLField {
                 interpolateRadialPotential(
                     radius: radius
                 )
-
+/*
             print(
                 "QRTL Φ DEBUG INTERIOR:",
                 "position =", position,
@@ -2517,6 +2522,7 @@ final class QRTLField {
                 "units = m²/s²",
                 "source = interpolateRadialPotential"
             )
+ */
 
             guard potential.isFinite else {
                 return 0.0
@@ -2547,7 +2553,7 @@ final class QRTLField {
             -gravitationalConstant *
             clusterMassKg /
             radius
-
+/*
         print(
             "QRTL Φ DEBUG EXTERIOR:",
             "position =", position,
@@ -2559,6 +2565,7 @@ final class QRTLField {
             "units = m²/s²",
             "source = -G*M/r"
         )
+ */
 
         guard potential.isFinite else {
             return 0.0
@@ -4233,7 +4240,7 @@ final class QRTLField {
             sample(
                 at: position
             )
-
+/*
         print(
             """
             ============================================================
@@ -4294,5 +4301,6 @@ final class QRTLField {
             ============================================================
             """
         )
+ */
     }
 }
