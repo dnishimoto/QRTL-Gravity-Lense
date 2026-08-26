@@ -934,3 +934,235 @@ struct QRTL_Gravity_LenseTests {
     }
 }
 
+@Test
+ func testSurfaceHeightAgainstPredictedValues() {
+     var extent: Float = 1.0
+     var curvatureScale: Float = 1.0
+
+     let field = makeTestField()
+
+     let surface =
+         QRTLGravitySurfaceEntity(
+             field: field,
+             gridSize: 65,
+             extent: extent,
+             numberOfStars: 1000,
+             curvatureScale: curvatureScale
+         )
+
+     // --------------------------------------------------------
+     // Calculate the authoritative maximum potential.
+     // --------------------------------------------------------
+
+     let maximumPotential =
+         calculateMaximumPotential(
+             field: field
+         )
+
+     XCTAssertGreaterThan(
+         maximumPotential,
+         0.0,
+         "Maximum potential must be greater than zero."
+     )
+
+     // --------------------------------------------------------
+     // Test radial positions.
+     // --------------------------------------------------------
+
+     let testRadii: [Float] = [
+         0.00,
+         0.10,
+         0.25,
+         0.50,
+         0.75,
+         1.00
+     ]
+
+     for radius in testRadii {
+
+         let actual =
+             surface.surfaceHeight(
+                 x: radius,
+                 z: 0.0
+             )
+
+         let predicted =
+             predictedSurfaceHeight(
+                 radius: radius,
+                 field: field,
+                 maximumPotential: maximumPotential
+             )
+
+         XCTAssertEqual(
+             actual,
+             predicted,
+             accuracy: 0.0001,
+             """
+             Surface height prediction failed.
+
+             radius       = \(radius)
+             actual       = \(actual)
+             predicted    = \(predicted)
+             error        = \(actual - predicted)
+             """
+         )
+     }
+ }
+
+
+ // ============================================================
+ // INDEPENDENT PREDICTION
+ // ============================================================
+ //
+ // Einstein/QRTL gravity surface representation:
+ //
+ //     Phi(r)
+ //        ↓
+ //     |Phi(r)|
+ //        ↓
+ //     normalize
+ //        ↓
+ //     curvature exponent
+ //        ↓
+ //     curvature scale
+ //        ↓
+ //     NEGATIVE Y DEPTH
+ //
+ // ============================================================
+
+ private func predictedSurfaceHeight(
+     radius: Float,
+     field: QRTLField,
+     maximumPotential: Float
+ ) -> Float {
+
+     let clampedRadius =
+         min(
+             max(radius, 0.0),
+             extent
+         )
+
+     let physicalRadius =
+         MetersPerSceneUnit.sceneUnitsToMeters(
+             clampedRadius
+         )
+
+     let potential =
+         field.interpolateRadialPotential(
+             radius: physicalRadius
+         )
+
+     XCTAssertTrue(
+         potential.isFinite,
+         "Predicted potential must be finite."
+     )
+
+     let magnitude =
+         abs(potential)
+
+     let normalized =
+         min(
+             max(
+                 Float(magnitude) /
+                 max(
+                     maximumPotential,
+                     1.0e-30
+                 ),
+                 0.0
+             ),
+             1.0
+         )
+
+     let curvature =
+         pow(
+             normalized,
+             0.45
+         )
+
+     // --------------------------------------------------------
+     // IMPORTANT:
+     //
+     // Gravity potential is negative.
+     //
+     // The visual surface represents the gravitational well,
+     // therefore stronger gravity produces NEGATIVE Y.
+     // --------------------------------------------------------
+
+     return -curvature * curvatureScale
+ }
+
+
+ // ============================================================
+ // PREDICTED MAXIMUM POTENTIAL
+ // ============================================================
+
+ private func calculateMaximumPotential(
+     field: QRTLField
+ ) -> Float {
+
+     var maximum: Float = 0.0
+
+     let sampleCount = 512
+
+     for index in 0...sampleCount {
+
+         let normalizedRadius =
+             Float(index) /
+             Float(sampleCount)
+
+         let physicalRadius =
+             Double(normalizedRadius) *
+             Double(field.clusterRadiusMeters)
+
+         let potential =
+             field.interpolateRadialPotential(
+                 radius: physicalRadius
+             )
+
+         guard potential.isFinite else {
+             continue
+         }
+
+         let magnitude =
+             Float(abs(potential))
+
+         maximum =
+             max(
+                 maximum,
+                 magnitude
+             )
+     }
+
+     return maximum
+ }
+
+
+ // ============================================================
+ // TEST FIELD
+ // ============================================================
+
+ private func makeTestField() -> QRTLField {
+
+     let parameters =
+         QRTLParameters(
+             epsilon: 1.0e-6,
+             alphaQ: 1.0,
+             qrtlVelocity: 1.0e3,
+             interactionRate: 0.1,
+             etaQ: 1.0,
+             chiQ: 1.0,
+             electromagneticCoupling: 1.0,
+             photonEMCoupling: 1.0
+         )
+
+     let experiment =
+         QRTLExperiment(
+             clusterMassKg: 1.98847e36,
+             clusterRadiusMeters: 2.43495e10,
+             starCount: 1000,
+             parameters: parameters
+         )
+
+     return experiment.field
+ }
+}

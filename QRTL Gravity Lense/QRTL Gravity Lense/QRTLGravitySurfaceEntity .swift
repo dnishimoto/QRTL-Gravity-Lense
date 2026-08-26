@@ -1,4 +1,4 @@
-
+//
 // QRTLGravitySurfaceEntity.swift
 // QRTL Gravity Lense
 //
@@ -22,25 +22,12 @@ import SceneKit
 import simd
 import UIKit
 
-// Uses MetersPerSceneUnit.swift for authoritative scene-to-meters conversion.
 
 // ============================================================
 // QRTL GRAVITY SURFACE ENTITY
 // ============================================================
 
 final class QRTLGravitySurfaceEntity: SCNNode {
-
-    // ============================================================
-    // AUTHORITATIVE SCENE↔PHYSICAL CONVERSION
-    // ============================================================
-    //
-    // Configured in init() from the real field.clusterRadiusMeters
-    // and the real extent this surface is drawn at.
-    //
-    // Every scene-to-meter conversion in this file goes through
-    // MetersPerSceneUnit.
-    //
-    // ============================================================
 
     // ============================================================
     // AUTHORITATIVE PHYSICS
@@ -74,12 +61,14 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // AUTHORITATIVE PHOTON RESULTS
     // ============================================================
 
-    private(set) var photonPaths: [[SIMD3<Double>]] = []
+    private(set) var photonPaths:
+        [[SIMD3<Double>]] = []
 
     private(set) var galaxyProjectionPositions:
         [SIMD3<Double>] = []
 
-    private let lensingParameters = LensingParameters()
+    private let lensingParameters =
+        LensingParameters()
 
     // ============================================================
     // VISUALIZATION STATE
@@ -122,7 +111,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         )
 
         // ========================================================
-        // CONFIGURE AUTHORITATIVE SCENE↔PHYSICAL CONVERSION
+        // AUTHORITATIVE SCENE ↔ PHYSICAL CONVERSION
         // ========================================================
 
         MetersPerSceneUnit.configure(
@@ -157,31 +146,37 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         clearScene()
 
-        // ========================================================
-        // AUTHORITATIVE POTENTIAL RANGE
-        // ========================================================
+        // --------------------------------------------------------
+        // CALCULATE AUTHORITATIVE POTENTIAL RANGE FIRST
+        // --------------------------------------------------------
 
         calculateMaximumPotential()
 
-        // ========================================================
-        // EINSTEIN CURVILINEAR SPATIAL SURFACE
-        // ========================================================
-        //
-        // X/Y are the coordinate-plane directions.
-        //
-        // Z is the embedding/depth direction generated from the
-        // relativistic radial spatial metric.
-        //
-        // Photon propagation remains authoritative in
-        // QRTLPhotonTracer.
-        //
-        // ========================================================
+        // --------------------------------------------------------
+        // CURVED GRAVITY SURFACE
+        // --------------------------------------------------------
 
-        let surface = makeSurfaceNode()
+        let surface =
+            makeSurfaceNode()
 
-        surfaceNode = surface
+        surfaceNode =
+            surface
 
-        addChildNode(surface)
+        addChildNode(
+            surface
+        )
+
+        // --------------------------------------------------------
+        // IMPORTANT:
+        //
+        // NO PHOTON PROPAGATION OCCURS HERE.
+        //
+        // Photon paths are supplied separately by
+        // QRTLPhotonTracer through:
+        //
+        // setPhotonPathsForDisplay(...)
+        //
+        // --------------------------------------------------------
     }
 
     // ============================================================
@@ -193,23 +188,37 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         z: Float
     ) -> Float {
 
-        let displayRadius = sqrt(
-            x * x +
-            z * z
-        )
+        let displayRadius =
+            sqrt(
+                x * x +
+                z * z
+            )
 
-        let clampedDisplayRadius = min(
-            max(
-                displayRadius,
-                0.0
-            ),
-            extent
-        )
+        // --------------------------------------------------------
+        // Clamp in SceneKit space.
+        // --------------------------------------------------------
+
+        let clampedDisplayRadius =
+            min(
+                max(
+                    displayRadius,
+                    0.0
+                ),
+                extent
+            )
+
+        // --------------------------------------------------------
+        // Convert SceneKit units → physical meters.
+        // --------------------------------------------------------
 
         let physicalRadius =
             MetersPerSceneUnit.sceneUnitsToMeters(
                 clampedDisplayRadius
             )
+
+        // --------------------------------------------------------
+        // Authoritative radial potential.
+        // --------------------------------------------------------
 
         let potential =
             field.interpolateRadialPotential(
@@ -221,242 +230,33 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             return 0.0
         }
 
+        // Gravitational potential is negative.
+        // Surface depth uses its positive magnitude.
         return Float(
             abs(potential)
         )
     }
 
     // ============================================================
-    // EINSTEIN CURVILINEAR SPATIAL METRIC
-    // ============================================================
-    //
-    // For the static spherical spatial metric:
-    //
-    //     ds_r² = g_rr dr²
-    //
-    // with
-    //
-    //     g_rr = 1 / (1 + 2Φ/c²)
-    //
-    // where Φ is the authoritative QRTL gravitational potential.
-    //
-    // The corresponding embedding surface satisfies:
-    //
-    //     dz/dr = sqrt(g_rr - 1)
-    //
-    // Therefore Z is calculated by integrating the relativistic
-    // spatial metric instead of assigning normalized potential
-    // directly to a visual height.
-    //
-    // ============================================================
-
-    private func relativisticRadialMetric(
-        radiusMeters: Double
-    ) -> Double {
-
-        let c = 299_792_458.0
-
-        let potential =
-            field.interpolateRadialPotential(
-                radius:
-                    max(
-                        radiusMeters,
-                        0.0
-                    )
-            )
-
-        guard potential.isFinite else {
-            return 1.0
-        }
-
-        let phiOverC2 =
-            potential /
-            (c * c)
-
-        let denominator =
-            1.0 +
-            2.0 *
-            phiOverC2
-
-        guard
-            denominator.isFinite,
-            denominator > 0.0
-        else {
-            return 1.0
-        }
-
-        let metric =
-            1.0 /
-            denominator
-
-        guard
-            metric.isFinite,
-            metric >= 1.0
-        else {
-            return 1.0
-        }
-
-        return metric
-    }
-
-    // ============================================================
-    // RADIAL EMBEDDING DEPTH
-    // ============================================================
-    //
-    // Integrates:
-    //
-    //     dz/dr = sqrt(g_rr - 1)
-    //
-    // from the center to the requested radial coordinate.
-    //
-    // ============================================================
-
-    private func radialEmbeddingDepthMeters(
-        radiusMeters: Double
-    ) -> Double {
-
-        guard
-            radiusMeters.isFinite,
-            radiusMeters > 0.0
-        else {
-            return 0.0
-        }
-
-        let integrationSteps =
-            max(
-                gridSize * 2,
-                128
-            )
-
-        let dr =
-            radiusMeters /
-            Double(integrationSteps)
-
-        var depthMeters = 0.0
-
-        for index in 1...integrationSteps {
-
-            let r0 =
-                Double(index - 1) *
-                dr
-
-            let r1 =
-                Double(index) *
-                dr
-
-            let rm =
-                0.5 *
-                (r0 + r1)
-
-            let metric =
-                relativisticRadialMetric(
-                    radiusMeters:
-                        rm
-                )
-
-            let slope =
-                sqrt(
-                    max(
-                        metric - 1.0,
-                        0.0
-                    )
-                )
-
-            if slope.isFinite {
-
-                depthMeters +=
-                    slope *
-                    dr
-            }
-        }
-
-        return depthMeters
-    }
-
-    // ============================================================
-    // SURFACE DEPTH
-    // ============================================================
-    //
-    // X/Y define radial distance in the coordinate plane.
-    //
-    // Z is the Einstein curvilinear embedding depth.
-    //
-    // ============================================================
-
-    private func surfaceDepth(
-        x: Float,
-        y: Float
-    ) -> Float {
-
-        let displayRadius =
-            sqrt(
-                x * x +
-                y * y
-            )
-
-        let clampedDisplayRadius =
-            min(
-                max(
-                    displayRadius,
-                    0.0
-                ),
-                extent
-            )
-
-        let radiusMeters =
-            MetersPerSceneUnit.sceneUnitsToMeters(
-                clampedDisplayRadius
-            )
-
-        let depthMeters =
-            radialEmbeddingDepthMeters(
-                radiusMeters:
-                    radiusMeters
-            )
-
-        // MetersPerSceneUnit does not require a second conversion
-        // implementation. Obtain the configured meters represented
-        // by one SceneKit unit and invert that scale.
-
-        let metersPerSceneUnit =
-            MetersPerSceneUnit.sceneUnitsToMeters(
-                1.0
-            )
-
-        guard
-            metersPerSceneUnit.isFinite,
-            metersPerSceneUnit > 0.0
-        else {
-            return 0.0
-        }
-
-        let depthSceneUnits =
-            depthMeters /
-            metersPerSceneUnit
-
-        guard depthSceneUnits.isFinite else {
-            return 0.0
-        }
-
-        // Negative Z places the gravitational embedding toward
-        // negative depth.
-        //
-        // The magnitude comes from the Einstein metric.
-        //
-        return -Float(depthSceneUnits) *
-            curvatureScale
-    }
-
-    // ============================================================
     // SURFACE HEIGHT
     // ============================================================
     //
-    // Backward-compatible entry point.
+    // The surface represents a gravitational well.
     //
-    // The parameter historically named "z" is treated as the
-    // second coordinate of the radial surface.
+    // At the center:
     //
-    // The returned value is now Einstein-metric embedding depth.
+    //     |Phi| = maximum
+    //     Y    = negative maximum depth
+    //
+    // Far from the source:
+    //
+    //     |Phi| → smaller
+    //     Y    → 0
+    //
+    // Therefore:
+    //
+    //     center = LOWEST point
+    //     edge   = HIGHER point
     //
     // ============================================================
 
@@ -465,19 +265,67 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         z: Float
     ) -> Float {
 
-        return surfaceDepth(
-            x: x,
-            y: z
-        )
+        let potentialMagnitude =
+            samplePotentialMagnitude(
+                x: x,
+                z: z
+            )
+
+        let normalization =
+            max(
+                maximumPotential,
+                1.0e-30
+            )
+
+        let normalized =
+            min(
+                max(
+                    potentialMagnitude /
+                        normalization,
+                    0.0
+                ),
+                1.0
+            )
+
+        // --------------------------------------------------------
+        // Curvilinear visual mapping.
+        //
+        // The exponent controls visual compression only.
+        // It does not alter the authoritative potential.
+        // --------------------------------------------------------
+
+        let curvature =
+            pow(
+                normalized,
+                0.45
+            )
+
+        // --------------------------------------------------------
+        // IMPORTANT:
+        //
+        // Negative sign makes gravity depth DOWNWARD.
+        //
+        // Without this sign the bowl is inverted.
+        // --------------------------------------------------------
+
+        let depth =
+            -curvature *
+            curvatureScale
+
+        guard depth.isFinite else {
+            return 0.0
+        }
+
+        return depth
     }
 
     // ============================================================
     // CURVATURE INTENSITY
     // ============================================================
     //
-    // Used only for visualization/color.
+    // Visualization/color only.
     //
-    // This does not change photon position.
+    // This does not modify photon propagation.
     //
     // ============================================================
 
@@ -602,287 +450,137 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     }
 
     // ============================================================
-    // EINSTEIN CURVILINEAR SURFACE MESH
+    // CURVILINEAR GRAVITY SURFACE
     // ============================================================
     //
-    // X/Y form the coordinate plane.
+    // X/Z are the spatial coordinates.
     //
-    // Z is the embedding/depth coordinate.
+    // Y is the visual depth produced by the gravitational
+    // potential.
     //
-    // Each vertex follows:
+    //                 Y
+    //                 ↑
     //
-    //     X/Y radius
-    //          ↓
-    //     physical radius
-    //          ↓
-    //     QRTL potential Φ
-    //          ↓
-    //     g_rr
-    //          ↓
-    //     sqrt(g_rr - 1)
-    //          ↓
-    //     radial integration
-    //          ↓
-    //     Z depth
+    //        \                 /
+    //         \               /
+    //          \             /
+    //           \           /
+    //            \         /
+    //             \       /
+    //              \     /
+    //               \   /
+    //                \_/
+    //                 ●
+    //              center
+    //
+    // The center is the deepest point.
     //
     // ============================================================
 
-    private func makeSurfaceNode() -> SCNNode {
+    private func makeSurfaceGeometry()
+        -> SCNGeometry
+    {
 
-        let node = SCNNode()
-
-        let resolution =
+        let n =
             max(
                 gridSize,
                 4
             )
 
-        let vertexCount =
-            resolution + 1
+        let size =
+            extent
 
-        var vertices:
+        let start =
+            -size
+
+        let step =
+            (
+                2.0 *
+                size
+            ) /
+            Float(
+                n - 1
+            )
+
+        var positions:
             [SCNVector3] = []
 
-        var normals:
-            [SCNVector3] = []
+        positions.reserveCapacity(
+            n * n
+        )
 
         var indices:
             [Int32] = []
 
-        vertices.reserveCapacity(
-            vertexCount *
-            vertexCount
-        )
-
-        normals.reserveCapacity(
-            vertexCount *
-            vertexCount
-        )
-
         indices.reserveCapacity(
-            resolution *
-            resolution *
+            (
+                n - 1
+            ) *
+            (
+                n - 1
+            ) *
             6
         )
 
         // ========================================================
-        // BUILD CURVED VERTICES
+        // CREATE CURVED GRID
         // ========================================================
 
-        for row in 0...resolution {
+        for j in 0..<n {
 
-            let y =
-                -extent +
-                (2.0 * extent) *
-                Float(row) /
-                Float(resolution)
-
-            for column in 0...resolution {
+            for i in 0..<n {
 
                 let x =
-                    -extent +
-                    (2.0 * extent) *
-                    Float(column) /
-                    Float(resolution)
+                    start +
+                    Float(i) *
+                    step
 
-                let radius =
-                    sqrt(
-                        x * x +
-                        y * y
+                let z =
+                    start +
+                    Float(j) *
+                    step
+
+                let y =
+                    surfaceHeight(
+                        x: x,
+                        z: z
                     )
 
-                let z: Float
-
-                if radius <= extent {
-
-                    z =
-                        surfaceDepth(
-                            x: x,
-                            y: y
-                        )
-
-                } else {
-
-                    z = 0.0
-                }
-
-                vertices.append(
+                positions.append(
                     SCNVector3(
                         x,
                         y,
                         z
                     )
                 )
-
-                normals.append(
-                    SCNVector3(
-                        0.0,
-                        0.0,
-                        1.0
-                    )
-                )
             }
         }
 
         // ========================================================
-        // BUILD TRIANGLES
+        // TRIANGULATE GRID
         // ========================================================
 
-        for row in 0..<resolution {
+        for j in 0..<(n - 1) {
 
-            for column in 0..<resolution {
+            for i in 0..<(n - 1) {
 
-                let topLeft =
+                let index =
                     Int32(
-                        row *
-                        vertexCount +
-                        column
+                        j * n + i
                     )
 
-                let topRight =
-                    topLeft + 1
-
-                let bottomLeft =
-                    Int32(
-                        (row + 1) *
-                        vertexCount +
-                        column
-                    )
-
-                let bottomRight =
-                    bottomLeft + 1
-
                 indices.append(
-                    topLeft
-                )
+                    contentsOf: [
+                        index,
+                        index + 1,
+                        index + Int32(n),
 
-                indices.append(
-                    topRight
-                )
-
-                indices.append(
-                    bottomLeft
-                )
-
-                indices.append(
-                    topRight
-                )
-
-                indices.append(
-                    bottomRight
-                )
-
-                indices.append(
-                    bottomLeft
-                )
-            }
-        }
-
-        // ========================================================
-        // CALCULATE SMOOTH SURFACE NORMALS
-        // ========================================================
-
-        for row in 0...resolution {
-
-            for column in 0...resolution {
-
-                let leftColumn =
-                    max(
-                        column - 1,
-                        0
-                    )
-
-                let rightColumn =
-                    min(
-                        column + 1,
-                        resolution
-                    )
-
-                let upperRow =
-                    max(
-                        row - 1,
-                        0
-                    )
-
-                let lowerRow =
-                    min(
-                        row + 1,
-                        resolution
-                    )
-
-                let left =
-                    vertices[
-                        row *
-                        vertexCount +
-                        leftColumn
+                        index + 1,
+                        index + 1 +
+                            Int32(n),
+                        index + Int32(n)
                     ]
-
-                let right =
-                    vertices[
-                        row *
-                        vertexCount +
-                        rightColumn
-                    ]
-
-                let upper =
-                    vertices[
-                        upperRow *
-                        vertexCount +
-                        column
-                    ]
-
-                let lower =
-                    vertices[
-                        lowerRow *
-                        vertexCount +
-                        column
-                    ]
-
-                let dx =
-                    SIMD3<Float>(
-                        right.x - left.x,
-                        right.y - left.y,
-                        right.z - left.z
-                    )
-
-                let dy =
-                    SIMD3<Float>(
-                        lower.x - upper.x,
-                        lower.y - upper.y,
-                        lower.z - upper.z
-                    )
-
-                let crossProduct =
-                    simd_cross(
-                        dx,
-                        dy
-                    )
-
-                let length =
-                    simd_length(
-                        crossProduct
-                    )
-
-                if
-                    length.isFinite &&
-                    length > 1.0e-12
-                {
-
-                    let normal =
-                        crossProduct /
-                        length
-
-                    normals[
-                        row *
-                        vertexCount +
-                        column
-                    ] =
-                        SCNVector3(
-                            normal.x,
-                            normal.y,
-                            normal.z
-                        )
-                }
+                )
             }
         }
 
@@ -890,51 +588,43 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         // GEOMETRY SOURCES
         // ========================================================
 
-        let vertexSource =
+        let source =
             SCNGeometrySource(
                 vertices:
-                    vertices
+                    positions
             )
-
-        let normalSource =
-            SCNGeometrySource(
-                normals:
-                    normals
-            )
-
-        let indexData =
-            indices.withUnsafeBufferPointer {
-                Data(
-                    buffer: $0
-                )
-            }
 
         let element =
             SCNGeometryElement(
-                data:
-                    indexData,
-
+                indices:
+                    indices,
                 primitiveType:
-                    .triangles,
-
-                primitiveCount:
-                    indices.count / 3,
-
-                bytesPerIndex:
-                    MemoryLayout<Int32>.size
+                    .triangles
             )
+
+        return SCNGeometry(
+            sources: [
+                source
+            ],
+            elements: [
+                element
+            ]
+        )
+    }
+
+    // ============================================================
+    // SURFACE NODE
+    // ============================================================
+
+    private func makeSurfaceNode()
+        -> SCNNode
+    {
+
+        let node =
+            SCNNode()
 
         let geometry =
-            SCNGeometry(
-                sources: [
-                    vertexSource,
-                    normalSource
-                ],
-
-                elements: [
-                    element
-                ]
-            )
+            makeSurfaceGeometry()
 
         // ========================================================
         // MATERIAL
@@ -993,12 +683,13 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
     private func calculateMaximumPotential() {
 
-        maximumPotential = 0.0
+        maximumPotential =
+            0.0
 
         let sampleCount =
             max(
-                gridSize,
-                32
+                gridSize * 8,
+                512
             )
 
         for index in 0...sampleCount {
@@ -1008,8 +699,12 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 Float(sampleCount)
 
             let physicalRadius =
-                Double(normalizedRadius) *
-                Double(field.clusterRadiusMeters)
+                Double(
+                    normalizedRadius
+                ) *
+                Double(
+                    field.clusterRadiusMeters
+                )
 
             let potential =
                 field.interpolateRadialPotential(
@@ -1023,7 +718,9 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
             let magnitude =
                 Float(
-                    abs(potential)
+                    abs(
+                        potential
+                    )
                 )
 
             maximumPotential =
@@ -1035,7 +732,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     }
 
     // ============================================================
-    // DIAGNOSTIC SAMPLE
+    // DIAGNOSTIC PHYSICS SAMPLE
     // ============================================================
 
     func diagnosticSample(
@@ -1100,14 +797,17 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     }
 
     // ============================================================
-    // PHOTON PIPELINE
+    // PHOTON PATH DISPLAY
     // ============================================================
     //
-    // Visualization only.
+    // IMPORTANT:
     //
-    // Paths must already come from QRTLPhotonTracer.
+    // This class does NOT calculate photon trajectories.
     //
-    // No second photon propagation occurs here.
+    // QRTLPhotonTracer is authoritative.
+    //
+    // This method only receives already calculated paths and
+    // renders them.
     //
     // ============================================================
 
@@ -1122,27 +822,29 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 path in
 
                 path.map {
+                    point in
 
                     SIMD3<Double>(
-                        Double($0.x),
-                        Double($0.y),
-                        Double($0.z)
+                        Double(point.x),
+                        Double(point.y),
+                        Double(point.z)
                     )
                 }
             }
 
         galaxyProjectionPositions =
             projectionHits.map {
+                point in
 
                 SIMD3<Double>(
-                    Double($0.x),
-                    Double($0.y),
-                    Double($0.z)
+                    Double(point.x),
+                    Double(point.y),
+                    Double(point.z)
                 )
             }
 
         // ========================================================
-        // REMOVE OLD PHOTON GRAPHICS
+        // REMOVE OLD GRAPHICS
         // ========================================================
 
         photonNode?
@@ -1152,14 +854,13 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             .removeFromParentNode()
 
         // ========================================================
-        // PHOTONS
+        // PHOTON PATHS
         // ========================================================
 
         let photonGraphicsNode =
             makeTravelingPhotonParticles(
                 paths:
                     photonPaths,
-
                 color:
                     .white
             )
@@ -1172,14 +873,13 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         )
 
         // ========================================================
-        // PROJECTION
+        // PROJECTED GALAXY
         // ========================================================
 
         let galaxy =
             makeProjectionNode(
                 positions:
                     galaxyProjectionPositions,
-
                 color:
                     .white
             )
@@ -1197,8 +897,10 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
 
     private func makeTravelingPhotonParticles(
-        paths: [[SIMD3<Double>]],
-        color: UIColor
+        paths:
+            [[SIMD3<Double>]],
+        color:
+            UIColor
     ) -> SCNNode {
 
         let parent =
@@ -1207,7 +909,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         let particleRadius =
             max(
                 0.008,
-
                 Double(extent) /
                 Double(gridSize) *
                 0.35
@@ -1224,10 +925,11 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
             let validPoints =
                 path.filter {
+                    point in
 
-                    $0.x.isFinite &&
-                    $0.y.isFinite &&
-                    $0.z.isFinite
+                    point.x.isFinite &&
+                    point.y.isFinite &&
+                    point.z.isFinite
                 }
 
             guard validPoints.count > 1 else {
@@ -1251,7 +953,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                         Float(
                             validPoints[0].x
                         ),
-
                     z:
                         Float(
                             validPoints[0].z
@@ -1262,7 +963,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 Self.curvatureColor(
                     intensity:
                         initialIntensity,
-
                     calmColor:
                         color
                 )
@@ -1290,7 +990,7 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                 )
 
             // ====================================================
-            // RAW INITIAL POSITION
+            // INITIAL POSITION
             // ====================================================
 
             particleNode.position =
@@ -1298,18 +998,16 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     Float(
                         validPoints[0].x
                     ),
-
                     Float(
                         validPoints[0].y
                     ),
-
                     Float(
                         validPoints[0].z
                     )
                 )
 
             // ====================================================
-            // RAW TRACE SEQUENCE
+            // TRACE SEQUENCE
             // ====================================================
 
             var moves:
@@ -1320,7 +1018,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             )
 
             for index in
-                1..<validPoints.count {
+                1..<validPoints.count
+            {
 
                 let point =
                     validPoints[index]
@@ -1336,7 +1035,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     SCNAction.move(
                         to:
                             destination,
-
                         duration:
                             secondsPerPoint
                     )
@@ -1349,7 +1047,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     curvatureIntensity(
                         x:
                             Float(point.x),
-
                         z:
                             Float(point.z)
                     )
@@ -1358,7 +1055,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     Self.curvatureColor(
                         intensity:
                             intensity,
-
                         calmColor:
                             color
                     )
@@ -1415,8 +1111,10 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
 
     private func makeProjectionNode(
-        positions: [SIMD3<Double>],
-        color: UIColor
+        positions:
+            [SIMD3<Double>],
+        color:
+            UIColor
     ) -> SCNNode {
 
         let parent =
@@ -1425,7 +1123,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         let radius =
             max(
                 0.012,
-
                 Double(extent) /
                 Double(gridSize) *
                 0.55
@@ -1499,9 +1196,13 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     }
 
     // ============================================================
-    // EXAMPLE:
-    // CONVERTING SCENE POSITION TO METERS
+    // SCENE → METERS EXAMPLE
     // ============================================================
+    //
+    // SceneKit coordinates must be converted before they are
+    // passed into the authoritative physical field.
+    //
+    // Example:
     //
     // let scenePosition =
     //     SIMD3<Float>(
@@ -1512,7 +1213,6 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     //
     // let positionMeters =
     //     SIMD3<Float>(
-    //
     //         Float(
     //             MetersPerSceneUnit
     //                 .sceneUnitsToMeters(
@@ -1534,6 +1234,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     //                 )
     //         )
     //     )
+    //
+    // Then:
     //
     // let density =
     //     field.physicalMassDensity(
