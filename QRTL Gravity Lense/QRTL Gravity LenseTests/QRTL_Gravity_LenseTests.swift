@@ -933,4 +933,303 @@ struct QRTL_Gravity_LenseTests {
         """)
     }
 }
+@Test
+func testQRTLGravitySurfaceHeight() async throws {
+
+    // ============================================================
+    // QRTL GRAVITY SURFACE HEIGHT TEST
+    // ============================================================
+    //
+    // Purpose:
+    //
+    // Verify that QRTLGravitySurfaceEntity converts the
+    // authoritative gravitational potential into the expected
+    // visual surface height.
+    //
+    // Required geometry:
+    //
+    //          CENTER
+    //            ↑
+    //            │ highest
+    //            │
+    //       ─────┴─────
+    //      /           \
+    //     /             \
+    //    /               \
+    //   boundary        boundary
+    //
+    // The center must be the highest point.
+    //
+    // The surface height must decrease as radius increases.
+    //
+    // ============================================================
+
+    print("")
+    print("============================================================")
+    print("QRTL GRAVITY SURFACE HEIGHT TEST")
+    print("============================================================")
+
+    // ============================================================
+    // 1. PHYSICAL INPUT
+    // ============================================================
+
+    let clusterMassKg = 1.98847e36
+    let clusterRadiusMeters = 24_349_500_000.0
+
+    // ============================================================
+    // 2. QRTL PARAMETERS
+    // ============================================================
+
+    var params = QRTLParameters()
+
+    params.alphaQ = 1.0
+    params.etaQ = 1.0
+    params.gammaQ = 1.0
+    params.chiQ = 1.0
+    params.interactionRate = 0.1
+    params.electromagneticCoupling = 1.0
+    params.photonEMCoupling = 1.0
+
+    // ============================================================
+    // 3. AUTHORITATIVE QRTL FIELD
+    // ============================================================
+
+    let experiment = QRTLExperiment(
+        mass: clusterMassKg,
+        radius: clusterRadiusMeters,
+        parameters: params
+    )
+
+    let field = experiment.field
+
+    let surface = QRTLGravitySurfaceEntity(
+        field: field
+    )
+
+    // ============================================================
+    // 4. TEST RADII
+    // ============================================================
+    //
+    // These are PHYSICAL distances in meters.
+    //
+    // ============================================================
+
+    let testFractions: [Double] = [
+        0.00,
+        0.01,
+        0.05,
+        0.10,
+        0.25,
+        0.50,
+        0.75,
+        1.00
+    ]
+
+    // ============================================================
+    // 5. SURFACE HEIGHT SAMPLES
+    // ============================================================
+
+    var heights: [Double] = []
+
+    print("")
+    print("SURFACE HEIGHT SAMPLES")
+    print("------------------------------------------------------------")
+    print("Radius/R       Radius(m)             Height")
+    print("------------------------------------------------------------")
+
+    for fraction in testFractions {
+
+        let radiusMeters =
+            clusterRadiusMeters * fraction
+
+        let physicalPosition = SIMD3<Float>(
+            Float(radiusMeters),
+            0.0,
+            0.0
+        )
+
+        // --------------------------------------------------------
+        // AUTHORITATIVE POTENTIAL
+        // --------------------------------------------------------
+
+        let potential =
+            Double(
+                field.gravitationalPotential(
+                    at: physicalPosition
+                )
+            )
+
+        #expect(
+            potential.isFinite,
+            "Potential must be finite at radius fraction \(fraction)"
+        )
+
+        // --------------------------------------------------------
+        // SURFACE HEIGHT
+        // --------------------------------------------------------
+        //
+        // IMPORTANT:
+        //
+        // This call MUST be the same conversion used by
+        // QRTLGravitySurfaceEntity when constructing the visible
+        // surface.
+        //
+        // Replace the method name below only if your current
+        // QRTLGravitySurfaceEntity uses a different existing
+        // height function.
+        //
+        // --------------------------------------------------------
+
+        let height = surface.surfaceHeight(
+            x: physicalPosition.x,
+            z: physicalPosition.z
+        )
+        let heightDouble = Double(height)
+
+        #expect(
+            heightDouble.isFinite,
+            "Surface height must be finite at radius fraction \(fraction)"
+        )
+
+        heights.append(heightDouble)
+
+        print(
+            String(
+                format:
+                    "%8.4f       %18.6e       %18.6e",
+                fraction,
+                radiusMeters,
+                heightDouble
+            )
+        )
+    }
+
+    // ============================================================
+    // 6. CENTER MUST BE HIGHEST
+    // ============================================================
+
+    guard let centerHeight = heights.first else {
+        #expect(false, "No center height was produced")
+        return
+    }
+
+    for index in 1..<heights.count {
+
+        let radiusFraction =
+            testFractions[index]
+
+        let height =
+            heights[index]
+
+        #expect(
+            centerHeight > height,
+            """
+            Surface height is inverted.
+
+            Center height = \(centerHeight)
+            Height at R = \(radiusFraction) = \(height)
+
+            The center must be the highest point.
+            """
+        )
+    }
+
+    // ============================================================
+    // 7. SURFACE MUST GENERALLY FALL WITH RADIUS
+    // ============================================================
+    //
+    // Verify that each successive sample is lower than the
+    // previous sample.
+    //
+    // ============================================================
+
+    for index in 1..<heights.count {
+
+        let previousHeight =
+            heights[index - 1]
+
+        let currentHeight =
+            heights[index]
+
+        #expect(
+            previousHeight >= currentHeight,
+            """
+            Surface height did not decrease with radius.
+
+            Radius/R previous:
+                \(testFractions[index - 1])
+
+            Height previous:
+                \(previousHeight)
+
+            Radius/R current:
+                \(testFractions[index])
+
+            Height current:
+                \(currentHeight)
+            """
+        )
+    }
+
+    // ============================================================
+    // 8. EXPECTED CENTER / BOUNDARY RELATIONSHIP
+    // ============================================================
+    //
+    // The exact visualization scale is not assumed here.
+    //
+    // What is physically required is:
+    //
+    //     center height > boundary height
+    //
+    // ============================================================
+
+    let boundaryHeight =
+        heights[heights.count - 1]
+
+    #expect(
+        centerHeight > boundaryHeight,
+        """
+        Surface is inverted.
+
+        Center height:
+            \(centerHeight)
+
+        Boundary height:
+            \(boundaryHeight)
+
+        Expected:
+            center > boundary
+        """
+    )
+
+    // ============================================================
+    // 9. REPORT
+    // ============================================================
+
+    print("")
+    print("============================================================")
+    print("SURFACE HEIGHT TEST RESULT")
+    print("============================================================")
+    print("")
+    print("Center height:")
+    print("    \(centerHeight)")
+    print("")
+    print("Boundary height:")
+    print("    \(boundaryHeight)")
+    print("")
+    print("Height difference:")
+    print("    \(centerHeight - boundaryHeight)")
+    print("")
+
+    if centerHeight > boundaryHeight {
+        print("PASS: CENTER IS HIGHER THAN BOUNDARY")
+    } else {
+        print("FAIL: SURFACE IS INVERTED")
+    }
+
+    print("")
+    print("============================================================")
+    print("END SURFACE HEIGHT TEST")
+    print("============================================================")
+}
 

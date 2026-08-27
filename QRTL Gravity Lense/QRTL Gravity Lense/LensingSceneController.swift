@@ -3698,21 +3698,10 @@ final class LensingSceneController:
         cameraNode.camera =
             camera
 
-        cameraNode.position =
-            SCNVector3(
-                50,
-                6,
-                0
-            )
-
-        cameraNode.look(
-            at:
-                SCNVector3(
-                    0,
-                    0,
-                    0
-                )
-        )
+        
+        cameraNode.position = SCNVector3(30, 28, 30)
+        cameraNode.look(at: SCNVector3(0, 0, 0))
+ 
 
         scene.rootNode.addChildNode(
             cameraNode

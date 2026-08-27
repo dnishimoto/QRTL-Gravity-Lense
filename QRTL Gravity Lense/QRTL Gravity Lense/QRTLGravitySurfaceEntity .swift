@@ -265,58 +265,62 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         z: Float
     ) -> Float {
 
+        // --------------------------------------------------------
+        // AUTHORITATIVE QRTL POTENTIAL MAGNITUDE
+        // --------------------------------------------------------
+
         let potentialMagnitude =
             samplePotentialMagnitude(
                 x: x,
                 z: z
             )
 
-        let normalization =
-            max(
-                maximumPotential,
-                1.0e-30
-            )
+        guard
+            potentialMagnitude.isFinite,
+            maximumPotential.isFinite,
+            maximumPotential > 0.0
+        else {
+            return 0.0
+        }
 
-        let normalized =
+        // --------------------------------------------------------
+        // NORMALIZE THE ACTUAL POTENTIAL
+        //
+        // Strongest gravitational potential:
+        //     normalized = 1
+        //
+        // Weakest potential:
+        //     normalized = 0
+        // --------------------------------------------------------
+
+        let normalizedPotential =
             min(
                 max(
                     potentialMagnitude /
-                        normalization,
+                        maximumPotential,
                     0.0
                 ),
                 1.0
             )
 
         // --------------------------------------------------------
-        // Curvilinear visual mapping.
+        // INVERT FOR VISUAL SURFACE HEIGHT
         //
-        // The exponent controls visual compression only.
-        // It does not alter the authoritative potential.
+        // We want the gravitational center to be the HIGHEST
+        // point on the rendered surface.
+        //
+        // normalizedPotential = 1
+        //     → height = 0
+        //
+        // normalizedPotential = 0
+        //     → height = -curvatureScale
         // --------------------------------------------------------
 
-        let curvature =
-            pow(
-                normalized,
-                0.45
-            )
+        let height =
+            -curvatureScale *
+            (1.0 - normalizedPotential)
 
-        // --------------------------------------------------------
-        // IMPORTANT:
-        //
-        // Negative sign makes gravity depth DOWNWARD.
-        //
-        // Without this sign the bowl is inverted.
-        // --------------------------------------------------------
-
-        let depth =
-            -curvature *
-            curvatureScale
-
-        guard depth.isFinite else {
-            return 0.0
-        }
-
-        return depth
+        return height
     }
 
     // ============================================================
@@ -585,6 +589,36 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         }
 
         // ========================================================
+        // TEXTURE COORDINATES
+        // ========================================================
+        //
+        // Normalized 0...1 UVs matching the same (i, j) grid used
+        // for the positions above, so a heatmap image sampled over
+        // the SAME physical extent as this mesh lines up exactly —
+        // no separate grid, no separate extent, no separate origin.
+        // ========================================================
+
+        var texcoords:
+            [CGPoint] = []
+
+        texcoords.reserveCapacity(
+            n * n
+        )
+
+        for j in 0..<n {
+
+            for i in 0..<n {
+
+                texcoords.append(
+                    CGPoint(
+                        x: Double(i) / Double(n - 1),
+                        y: Double(j) / Double(n - 1)
+                    )
+                )
+            }
+        }
+
+        // ========================================================
         // GEOMETRY SOURCES
         // ========================================================
 
@@ -592,6 +626,12 @@ final class QRTLGravitySurfaceEntity: SCNNode {
             SCNGeometrySource(
                 vertices:
                     positions
+            )
+
+        let uvSource =
+            SCNGeometrySource(
+                textureCoordinates:
+                    texcoords
             )
 
         let element =
@@ -604,7 +644,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
 
         return SCNGeometry(
             sources: [
-                source
+                source,
+                uvSource
             ],
             elements: [
                 element
@@ -615,6 +656,45 @@ final class QRTLGravitySurfaceEntity: SCNNode {
     // ============================================================
     // SURFACE NODE
     // ============================================================
+
+    // ============================================================
+    // HEATMAP TEXTURE (applied to the SAME authoritative mesh)
+    // ============================================================
+    //
+    // Previously a SEPARATE mesh ("DeformedSpacetimeSurface" in
+    // LensingSceneController) was built at a different extent and
+    // position to display the heatmap image. That created two
+    // independent bowls for one physical field. The heatmap is now
+    // applied directly onto this entity's own surfaceNode, using
+    // the texcoords generated in makeSurfaceGeometry(), so there is
+    // exactly one mesh, one extent, and one origin.
+    // ============================================================
+
+    private var heatmapImage: UIImage?
+
+    func applyHeatmapTexture(
+        _ image: UIImage
+    ) {
+
+        heatmapImage =
+            image
+
+        guard
+            let material =
+                surfaceNode?.geometry?.firstMaterial
+        else {
+            return
+        }
+
+        material.diffuse.contents =
+            image
+
+        material.emission.contents =
+            image
+
+        material.transparency =
+            1.0
+    }
 
     private func makeSurfaceNode()
         -> SCNNode
@@ -633,11 +713,34 @@ final class QRTLGravitySurfaceEntity: SCNNode {
         let material =
             SCNMaterial()
 
-        material.diffuse.contents =
-            UIColor.systemGreen
-                .withAlphaComponent(
-                    0.82
-                )
+        if let heatmapImage {
+
+            material.diffuse.contents =
+                heatmapImage
+
+            material.emission.contents =
+                heatmapImage
+
+            material.transparency =
+                1.0
+
+        } else {
+
+            material.diffuse.contents =
+                UIColor.systemGreen
+                    .withAlphaComponent(
+                        0.82
+                    )
+
+            material.emission.contents =
+                UIColor.systemGreen
+                    .withAlphaComponent(
+                        0.10
+                    )
+
+            material.transparency =
+                0.82
+        }
 
         material.specular.contents =
             UIColor.white
@@ -645,17 +748,8 @@ final class QRTLGravitySurfaceEntity: SCNNode {
                     0.45
                 )
 
-        material.emission.contents =
-            UIColor.systemGreen
-                .withAlphaComponent(
-                    0.10
-                )
-
         material.isDoubleSided =
             true
-
-        material.transparency =
-            0.82
 
         material.lightingModel =
             .physicallyBased

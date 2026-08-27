@@ -1622,13 +1622,6 @@ struct ContentView: View {
                     }
 
                     // =================================================
-                    // PHYSICAL HEATMAP EXTENT
-                    // =================================================
-
-                    let heatmapHalfExtentMeters =
-                        radiusMetersCaptured
-
-                    // =================================================
                     // GENERATE HEATMAP
                     // =================================================
                     //
@@ -1640,16 +1633,26 @@ struct ContentView: View {
                     // size:
                     //     image resolution
                     //
-                    // halfExtent:
-                    //     physical meters
+                    // BUG FIX: this used to also pass a `halfExtent:`
+                    // argument (heatmapHalfExtentMeters, itself equal to
+                    // radiusMetersCaptured — an ALREADY-PHYSICAL, meters
+                    // value) into a parameter that
+                    // QRTLHeatmapGenerator then multiplied by
+                    // clusterRadiusMeters again, squaring the extent to
+                    // ~5.93e20 m instead of the intended ~2.43e10 m.
+                    //
+                    // QRTLHeatmapGenerator now always derives its extent
+                    // directly from field.clusterRadiusMeters, so there
+                    // is no second value to pass here at all.
                     // =================================================
+
+                    let physicalHalfExtent = Double(field.clusterRadiusMeters)
 
                     let heatmapImage =
                         QRTLHeatmapGenerator.makeHeatmapImage(
                             field: field,
                             size: 128,
-                            halfExtent:
-                                heatmapHalfExtentMeters
+                            physicalHalfExtentMeters: physicalHalfExtent
                         )
 
                     // =================================================
@@ -1705,17 +1708,26 @@ struct ContentView: View {
                         )
 
                         // =================================================
-                        // HEATMAP-TEXTURED SPACETIME SURFACE
+                        // HEATMAP TEXTURE — APPLIED TO THE SAME
+                        // AUTHORITATIVE SURFACE
                         // =================================================
                         //
-                        // heatmapImage was generated using physical
-                        // meters. The scene controller now handles the
-                        // conversion into its SceneKit visualization.
+                        // Previously this built a SECOND, separately
+                        // scaled/positioned mesh ("DeformedSpacetimeSurface")
+                        // via scene.addDeformedSpacetimeSurface(field:heatmap:).
+                        // That mesh used its own fixed extent (5.0) and an
+                        // offset position, independent of the 18.0-extent,
+                        // origin-centered QRTLGravitySurfaceEntity installed
+                        // just above — producing two inconsistent bowls for
+                        // one physical field.
+                        //
+                        // The heatmap is now applied directly onto the
+                        // authoritative surface's own mesh, so there is
+                        // exactly one bowl, one extent, one origin.
                         // =================================================
 
-                        self.scene.addDeformedSpacetimeSurface(
-                            field: field,
-                            heatmap: heatmapImage
+                        self.scene.qrtlGravitySurface?.applyHeatmapTexture(
+                            heatmapImage
                         )
 
                         // =================================================
